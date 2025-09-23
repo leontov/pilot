@@ -1,28 +1,3 @@
-interface TraceEntry {
-  step: number;
-  ip: number;
-  op: number;
-  stack: number;
-  gas: number;
-}
-
-interface RunResponse {
-  status: number;
-  steps: number;
-  result: number;
-  trace: TraceEntry[];
-}
-
-interface DialogResponse extends RunResponse {}
-
-interface FkvEntry {
-  key: string;
-  value: string;
-}
-
-interface FkvResponse {
-  entries: FkvEntry[];
-}
 
 const tabs = [
   { id: "dialog", label: "Диалог" },
@@ -30,6 +5,7 @@ const tabs = [
   { id: "programs", label: "Программы" },
   { id: "synth", label: "Синтез" },
   { id: "chain", label: "Блокчейн" },
+  { id: "status", label: "Статус" },
   { id: "cluster", label: "Кластер" }
 ];
 
@@ -40,75 +16,6 @@ function createElement(tag: string, className?: string, text?: string): HTMLElem
   return el;
 }
 
-function isTraceEntry(value: unknown): value is TraceEntry {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.step === "number" &&
-    typeof candidate.ip === "number" &&
-    typeof candidate.op === "number" &&
-    typeof candidate.stack === "number" &&
-    typeof candidate.gas === "number"
-  );
-}
-
-function isRunResponse(value: unknown): value is RunResponse {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.status === "number" &&
-    typeof candidate.steps === "number" &&
-    typeof candidate.result === "number" &&
-    Array.isArray(candidate.trace) &&
-    candidate.trace.every(isTraceEntry)
-  );
-}
-
-function isFkvEntry(value: unknown): value is FkvEntry {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.key === "string" && typeof candidate.value === "string";
-}
-
-function isFkvResponse(value: unknown): value is FkvResponse {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return Array.isArray(candidate.entries) && candidate.entries.every(isFkvEntry);
-}
-
-function formatRunResponse(data: RunResponse): string {
-  const lines = [
-    `Статус: ${data.status}`,
-    `Шаги: ${data.steps}`,
-    `Результат: ${data.result}`
-  ];
-  if (data.trace.length === 0) {
-    lines.push("Трассировка: отсутствует");
-  } else {
-    lines.push(
-      "Трассировка:",
-      ...data.trace.map(
-        (entry) =>
-          `  #${entry.step} ip=${entry.ip} op=${entry.op} stack=${entry.stack} gas=${entry.gas}`
-      )
-    );
-  }
-  return lines.join("\n");
-}
-
-function formatFkvResponse(data: FkvResponse): string {
-  if (data.entries.length === 0) {
-    return "Совпадений не найдено.";
-  }
-  return data.entries.map((entry) => `${entry.key} → ${entry.value}`).join("\n");
 }
 
 function digitsFromExpression(expr: string): number[] {
@@ -129,7 +36,69 @@ function digitsFromExpression(expr: string): number[] {
   return result;
 }
 
+type TraceEntry = {
+  step?: number;
+  ip?: number | string;
+  opcode?: string;
+  stack?: unknown;
+  gas?: number | string;
+  [key: string]: unknown;
+};
+
+function buildTraceTable(trace: TraceEntry[]): HTMLElement {
+  const table = createElement("table", "trace-table") as HTMLTableElement;
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  const headers: (keyof TraceEntry | "step")[] = [
+    "step",
+    "ip",
+    "opcode",
+    "stack",
+    "gas"
+  ];
+
+  headers.forEach((key) => {
+    const th = document.createElement("th");
+    th.textContent = key;
+    headerRow.appendChild(th);
+  });
+
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  trace.forEach((entry, idx) => {
+    const tr = document.createElement("tr");
+    headers.forEach((key) => {
+      const td = document.createElement("td");
+      const record = entry as Record<string, unknown>;
+      const rawValue =
+        key === "step" ? record[key] ?? idx : record[key as string];
+      let value: string;
+      if (rawValue === undefined || rawValue === null) {
+        value = "";
+      } else if (Array.isArray(rawValue) || typeof rawValue === "object") {
+        try {
+          value = JSON.stringify(rawValue);
+        } catch (err) {
+          value = String(rawValue);
+        }
+      } else {
+        value = String(rawValue);
+      }
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  return table;
+}
+
 function renderDialog(container: HTMLElement) {
+  const historyEntries: { input: string; answer: unknown; timestamp: string }[] = [];
+
   const form = createElement("form", "panel form") as HTMLFormElement;
   const input = document.createElement("input");
   input.type = "text";
@@ -138,11 +107,64 @@ function renderDialog(container: HTMLElement) {
   submit.type = "submit";
   submit.textContent = "Выполнить";
   const output = createElement("pre", "output");
+  const traceContainer = createElement("div", "trace-container");
+
+  const historyContainer = createElement("div", "history-container");
+  const historyTitle = createElement("h3", "history-title", "История");
+  const historyList = createElement("ul", "history-list");
+  const historyEmpty = createElement("p", "history-empty", "Диалогов пока нет.");
+
+  const renderHistory = () => {
+    historyList.innerHTML = "";
+    if (historyEntries.length === 0) {
+      if (!historyContainer.contains(historyEmpty)) {
+        historyContainer.appendChild(historyEmpty);
+      }
+      if (historyContainer.contains(historyList)) {
+        historyContainer.removeChild(historyList);
+      }
+      return;
+    }
+
+    if (historyContainer.contains(historyEmpty)) {
+      historyContainer.removeChild(historyEmpty);
+    }
+    if (!historyContainer.contains(historyList)) {
+      historyContainer.appendChild(historyList);
+    }
+
+    historyEntries.forEach((entry) => {
+      const item = createElement("li", "history-item");
+      const meta = createElement("div", "history-meta");
+      const inputLabel = createElement("span", "history-input", entry.input);
+      const timeLabel = createElement("time", "history-time", entry.timestamp);
+      meta.appendChild(inputLabel);
+      meta.appendChild(timeLabel);
+
+      const answer = createElement("pre", "history-answer");
+      const answerText =
+        typeof entry.answer === "string"
+          ? entry.answer
+          : JSON.stringify(entry.answer, null, 2);
+      answer.textContent = answerText;
+
+      item.appendChild(meta);
+      item.appendChild(answer);
+      historyList.appendChild(item);
+    });
+  };
+
+  historyContainer.appendChild(historyTitle);
+  historyContainer.appendChild(historyEmpty);
+
+  const resultWrapper = createElement("div", "dialog-result");
+  resultWrapper.appendChild(output);
+  resultWrapper.appendChild(historyContainer);
 
   form.appendChild(input);
   form.appendChild(submit);
   container.appendChild(form);
-  container.appendChild(output);
+
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -150,6 +172,7 @@ function renderDialog(container: HTMLElement) {
     if (!expr) return;
     const payload = { digits: digitsFromExpression(expr) };
     output.textContent = "Загрузка...";
+    traceContainer.innerHTML = "";
     try {
       const res = await fetch("/dialog", {
         method: "POST",
@@ -157,34 +180,23 @@ function renderDialog(container: HTMLElement) {
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
-        const errorBody: unknown = await res.json().catch(() => null);
-        const message =
-          errorBody &&
-          typeof errorBody === "object" &&
-          errorBody !== null &&
-          "error" in errorBody &&
-          typeof (errorBody as { error?: unknown }).error === "string"
-            ? (errorBody as { error: string }).error
-            : `HTTP ${res.status}`;
-        throw new Error(message);
-      }
-      const json: unknown = await res.json();
-      if (!isRunResponse(json)) {
-        throw new Error("Некорректный ответ сервера");
-      }
-      const data: DialogResponse = json;
-      output.textContent = formatRunResponse(data);
+
     } catch (err) {
-      output.textContent = `Ошибка: ${String(err)}`;
+      showError(`Ошибка: ${String(err)}`);
     }
   });
 }
 
 function renderStatus(container: HTMLElement) {
-  const button = createElement("button", "refresh", "Обновить статус");
+  const panel = createElement("div", "panel");
+  const button = createElement("button", "button-primary", "Обновить статус") as HTMLButtonElement;
+  button.type = "button";
   const pre = createElement("pre", "output");
-  container.appendChild(button);
+  panel.appendChild(button);
+  container.appendChild(panel);
   container.appendChild(pre);
+  container.classList.add("split-view");
+
   button.addEventListener("click", async () => {
     pre.textContent = "Загрузка...";
     try {
@@ -237,7 +249,7 @@ function renderMemory(container: HTMLElement) {
       const data: FkvResponse = json;
       pre.textContent = formatFkvResponse(data);
     } catch (err) {
-      pre.textContent = `Ошибка: ${String(err)}`;
+      showError(`Ошибка: ${String(err)}`);
     }
   });
 }
@@ -269,6 +281,7 @@ const renderers: Record<string, (container: HTMLElement) => void> = {
   programs: renderPrograms,
   synth: renderSynth,
   chain: renderChain,
+  status: renderStatus,
   cluster: renderCluster
 };
 
@@ -277,8 +290,29 @@ function mountApp() {
   if (!app) return;
 
   const wrapper = createElement("div", "app-wrapper");
+  const header = createElement("header", "app-header");
   const nav = createElement("nav", "tabs");
+  nav.setAttribute("aria-label", "Основные разделы Kolibri Studio");
+  const controls = createElement("div", "header-controls");
+  const themeToggle = createElement("button", "theme-toggle") as HTMLButtonElement;
+  themeToggle.type = "button";
+
+  let theme = determineInitialTheme();
+  applyTheme(theme);
+  updateThemeToggle(themeToggle, theme);
+
+  themeToggle.addEventListener("click", () => {
+    theme = theme === "dark" ? "light" : "dark";
+    applyTheme(theme);
+    updateThemeToggle(themeToggle, theme);
+  });
+
+  controls.appendChild(themeToggle);
+  header.appendChild(nav);
+  header.appendChild(controls);
+
   const content = createElement("section", "content");
+  content.setAttribute("role", "region");
 
   tabs.forEach((tab, idx) => {
     const btn = createElement("button", idx === 0 ? "tab active" : "tab", tab.label);
@@ -286,36 +320,19 @@ function mountApp() {
       nav.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
       btn.classList.add("active");
       content.innerHTML = "";
+      content.className = "content";
       const renderer = renderers[tab.id];
       renderer(content);
     });
     nav.appendChild(btn);
   });
 
-  wrapper.appendChild(nav);
+  wrapper.appendChild(header);
   wrapper.appendChild(content);
   app.appendChild(wrapper);
 
   renderers["dialog"](content);
 }
 
-function injectStyles() {
-  const style = document.createElement("style");
-  style.textContent = `
-    body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #f5f5f5; }
-    .app-wrapper { display: flex; flex-direction: column; height: 100vh; }
-    .tabs { display: flex; gap: 8px; padding: 12px; background: #1b1b1b; }
-    .tab { background: #2c2c2c; border: none; color: #f5f5f5; padding: 8px 14px; cursor: pointer; border-radius: 4px; }
-    .tab.active { background: #3f64ff; }
-    .content { flex: 1; padding: 16px; overflow-y: auto; }
-    .panel { display: flex; gap: 12px; margin-bottom: 16px; }
-    input { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #222; color: #f5f5f5; }
-    button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
-    pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
-    .placeholder { opacity: 0.7; }
-  `;
-  document.head.appendChild(style);
-}
-
-injectStyles();
+<
 mountApp();
