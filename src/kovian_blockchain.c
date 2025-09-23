@@ -209,18 +209,33 @@ int verify_block_effectiveness(const Block* block, double difficulty) {
 void adjust_chain_difficulty(KovianChain* chain) {
     if (!chain || chain->length < 100) return;
     
-    // Анализируем последние 100 блоков
-    Block* current = chain->latest;
-    int count = 0;
-    double total_effectiveness = 0.0;
-    
-    while (current && count < 100) {
-        total_effectiveness += calculate_block_effectiveness(current);
+    // Анализируем последние 100 блоков, проходя цепочку от genesis
+    double window[100] = {0};
+    size_t count = 0;
+    size_t index = 0;
+    double window_sum = 0.0;
+
+    Block* current = chain->genesis;
+    while (current) {
+        double effectiveness = calculate_block_effectiveness(current);
+        if (count < 100) {
+            window[count++] = effectiveness;
+            window_sum += effectiveness;
+        } else {
+            window_sum -= window[index];
+            window[index] = effectiveness;
+            window_sum += effectiveness;
+            index = (index + 1) % 100;
+        }
+
         current = current->next;
-        count++;
     }
-    
-    double avg_effectiveness = total_effectiveness / count;
+
+    if (count < 100) {
+        return;
+    }
+
+    double avg_effectiveness = window_sum / 100.0;
     
     // Корректируем сложность
     if (avg_effectiveness > chain->difficulty * 1.1) {
