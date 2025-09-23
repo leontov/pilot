@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,30 @@ static void send_buffer(int client, const char* data, size_t len) {
     }
 }
 
+static void append_format(char* buffer, size_t size, size_t* offset,
+                          const char* fmt, ...) {
+    if (*offset >= size) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(buffer + *offset, size - *offset, fmt, args);
+    va_end(args);
+
+    if (written < 0) {
+        *offset = size > 0 ? size - 1 : 0;
+        return;
+    }
+
+    size_t remaining = size - *offset;
+    if ((size_t)written >= remaining) {
+        *offset = size > 0 ? size - 1 : 0;
+    } else {
+        *offset += (size_t)written;
+    }
+}
+
 static void handle_client(int client) {
     char req[1024] = {0};
     ssize_t r = read(client, req, sizeof(req) - 1);
@@ -39,13 +64,37 @@ static void handle_client(int client) {
 
     if (strstr(req, "GET /status")) {
         char resp[4096];
-        int written = snprintf(resp, sizeof(resp),
-                               "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nDigit: %d\nNeighbors: %u\nRules: %d\n",
-                               status_cell->node_digit, status_cell->n_neighbors, status_rules->count);
-        if (written > 0) {
-            size_t len = (written >= (int)sizeof(resp)) ? sizeof(resp) - 1 : (size_t)written;
-            send_buffer(client, resp, len);
+        size_t off = 0;
+
+        append_format(resp, sizeof(resp), &off,
+                      "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n");
+
+        uint8_t active_digits[DECIMAL_CELL_FANOUT] = {0};
+        size_t active_count = decimal_cell_collect_active_children(
+            status_cell, active_digits, DECIMAL_CELL_FANOUT);
+
+        append_format(resp, sizeof(resp), &off,
+                      "Digit: %u\nDepth: %u\nActive: %s\nLastSync: %llu\nSyncInterval: %llu\n",
+                      status_cell->digit,
+                      status_cell->depth,
+                      status_cell->is_active ? "true" : "false",
+                      (unsigned long long)status_cell->last_sync_time,
+                      (unsigned long long)status_cell->sync_interval);
+        append_format(resp, sizeof(resp), &off,
+                      "ActiveChildren: %zu\nRules: %d\n",
+                      active_count,
+                      status_rules ? status_rules->count : 0);
+
+        if (active_count > 0) {
+            append_format(resp, sizeof(resp), &off, "ActiveChildDigits:");
+            for (size_t i = 0; i < active_count; i++) {
+                append_format(resp, sizeof(resp), &off, " %u", active_digits[i]);
+            }
+            append_format(resp, sizeof(resp), &off, "\n");
         }
+
+        size_t len = off >= sizeof(resp) ? sizeof(resp) - 1 : off;
+        send_buffer(client, resp, len);
     } else if (strstr(req, "GET /rules")) {
         char resp[4096];
         int header = snprintf(resp, sizeof(resp),
@@ -75,31 +124,35 @@ static void handle_client(int client) {
         send_buffer(client, resp, off);
     } else if (strstr(req, "GET /neighbors")) {
         char resp[4096];
-        int header = snprintf(resp, sizeof(resp),
-                              "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n");
-        if (header < 0) {
-            close(client);
-            return;
-        }
-        size_t off = (size_t)header;
-        if (off >= sizeof(resp)) {
-            off = sizeof(resp) - 1;
-        }
-        for (int i = 0; i < status_cell->n_neighbors && off < sizeof(resp) - 128; i++) {
-            int body = snprintf(resp + off, sizeof(resp) - off,
-                                "Neighbor %d: digit=%d active=%d last_sync=%llu\n",
-                                i, status_cell->neighbor_digits[i], status_cell->is_active[i],
-                                (unsigned long long)status_cell->last_sync[i]);
-            if (body <= 0) {
-                break;
+        size_t off = 0;
+
+        append_format(resp, sizeof(resp), &off,
+                      "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n");
+
+        uint8_t active_digits[DECIMAL_CELL_FANOUT] = {0};
+        size_t active_count = decimal_cell_collect_active_children(
+            status_cell, active_digits, DECIMAL_CELL_FANOUT);
+
+        if (active_count == 0) {
+            append_format(resp, sizeof(resp), &off, "No active neighbors\n");
+        } else {
+            for (size_t i = 0; i < active_count; i++) {
+                uint8_t digit = active_digits[i];
+                const decimal_cell_t* child = status_cell->children[digit];
+                append_format(resp, sizeof(resp), &off,
+                              "Neighbor %zu: digit=%u child_active=%d child_last_sync=%llu child_last_state_change=%llu node_active=%s node_last_sync=%llu\n",
+                              i,
+                              digit,
+                              status_cell->child_active[digit] ? 1 : 0,
+                              (unsigned long long)status_cell->child_last_sync[digit],
+                              (unsigned long long)status_cell->child_last_state_change[digit],
+                              (child && child->is_active) ? "true" : "false",
+                              child ? (unsigned long long)child->last_sync_time : 0ULL);
             }
-            if ((size_t)body >= sizeof(resp) - off) {
-                off = sizeof(resp) - 1;
-                break;
-            }
-            off += (size_t)body;
         }
-        send_buffer(client, resp, off);
+
+        size_t len = off >= sizeof(resp) ? sizeof(resp) - 1 : off;
+        send_buffer(client, resp, len);
     } else {
         const char resp[] =
             "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot found\n";
