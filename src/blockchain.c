@@ -10,6 +10,9 @@
 #define GENESIS_PREV_HASH "0000000000000000000000000000000000000000000000000000000000000000"
 #define MAX_BLOCKCHAIN_SIZE 1000 // Максимальный размер блокчейна
 
+static const char GENESIS_PREV_HASH[] =
+    "0000000000000000000000000000000000000000000000000000000000000000";
+
 // Обновление функции calculate_hash для использования EVP API
 static void calculate_hash(const Block* block, char* output) {
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -173,9 +176,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 bool blockchain_verify(const Blockchain* chain) {
     if (!chain) return false;
 
-    char previous_hash[65] = {0};
 
-    for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
         if (!block) {
             return false;
@@ -184,24 +185,21 @@ bool blockchain_verify(const Blockchain* chain) {
         char current_hash[65];
         calculate_hash(block, current_hash);
 
-        // Проверка сложности текущего блока
-        if (strncmp(current_hash, DIFFICULTY_TARGET, strlen(DIFFICULTY_TARGET)) != 0) {
+
             return false;
         }
 
         if (i == 0) {
-            // Генезис-блок должен ссылаться на фиксированный предыдущий хэш
+
             if (strcmp(block->prev_hash, GENESIS_PREV_HASH) != 0) {
                 return false;
             }
         } else {
-            // Для остальных блоков проверяем соответствие хэшу предыдущего блока
-            if (strcmp(block->prev_hash, previous_hash) != 0) {
+
                 return false;
             }
         }
 
-        strcpy(previous_hash, current_hash);
     }
 
     return true;

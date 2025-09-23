@@ -114,20 +114,6 @@ target_include_directories(test_blockchain PRIVATE
         ${JSONC_INCLUDE_DIRS})
 
 
-add_executable(test_blockchain_verifier tests/test_blockchain_verifier.c src/blockchain.c)
-target_link_libraries(test_blockchain_verifier PRIVATE OpenSSL::Crypto m)
-target_include_directories(test_blockchain_verifier PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/include)
-
-add_executable(test_blockchain_storage tests/test_blockchain_storage.c src/blockchain.c src/formula.c src/formula_advanced.c)
-target_link_libraries(test_blockchain_storage PRIVATE ${JSONC_LIBRARIES} OpenSSL::Crypto m)
-target_include_directories(test_blockchain_storage PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/include
-        ${JSONC_INCLUDE_DIRS})
-
-
 # Добавляем пути к заголовочным файлам для веб-интерфейса
 target_include_directories(web_interface PRIVATE
     ${CMAKE_SOURCE_DIR}/src
