@@ -61,6 +61,26 @@ typedef struct {
 } FormulaDataset;
 
 typedef struct {
+    size_t input_dim;
+    size_t hidden_dim;
+    size_t output_dim;
+    double* input_weights;   // input_dim x hidden_dim
+    double* hidden_bias;     // hidden_dim
+    double* output_weights;  // hidden_dim x output_dim
+    double* output_bias;     // output_dim
+} FormulaMLPModel;
+
+typedef struct {
+    size_t input_dim;
+    size_t model_dim;
+    double* w_q;  // model_dim x input_dim
+    double* w_k;  // model_dim x input_dim
+    double* w_v;  // model_dim x input_dim
+    double* w_o;  // model_dim
+    double bias;  // scalar projection bias
+} FormulaTransformerModel;
+
+typedef struct {
     double reward;
     double imitation_score;
     double accuracy;
@@ -85,6 +105,9 @@ typedef struct {
     double average_imitation;
     double success_rate;
     size_t total_evaluated;
+    double last_mlp_loss;
+    double last_transformer_loss;
+    size_t total_training_steps;
 } FormulaTrainingMetrics;
 
 typedef struct {
@@ -92,6 +115,8 @@ typedef struct {
     FormulaTrainingMetrics metrics;
     FormulaDataset dataset;
     FormulaMemorySnapshot memory_snapshot;
+    FormulaMLPModel mlp_model;
+    FormulaTransformerModel transformer_model;
     unsigned char* weights;
     size_t weights_size;
 } FormulaTrainingPipeline;
@@ -106,6 +131,7 @@ int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
                                           const char* path);
 int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,
                                           const char* path);
+int formula_training_pipeline_sync_weights_buffer(FormulaTrainingPipeline* pipeline);
 int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
                                       const FormulaCollection* library,
                                       const FormulaMemorySnapshot* snapshot,
