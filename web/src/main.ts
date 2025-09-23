@@ -1,3 +1,5 @@
+import "./main.css";
+
 const tabs = [
   { id: "dialog", label: "Диалог" },
   { id: "memory", label: "Память" },
@@ -6,6 +8,52 @@ const tabs = [
   { id: "chain", label: "Блокчейн" },
   { id: "cluster", label: "Кластер" }
 ];
+
+type ThemeMode = "light" | "dark";
+
+const THEME_STORAGE_KEY = "kolibri-theme";
+
+function readStoredTheme(): ThemeMode | null {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") {
+      return stored;
+    }
+  } catch (error) {
+    console.warn("Не удалось прочитать тему из localStorage", error);
+  }
+  return null;
+}
+
+function systemPreferredTheme(): ThemeMode {
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function applyTheme(theme: ThemeMode) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.body.classList.remove("theme-light", "theme-dark");
+  document.body.classList.add(theme === "dark" ? "theme-dark" : "theme-light");
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (error) {
+    console.warn("Не удалось сохранить тему", error);
+  }
+}
+
+function initializeTheme(): ThemeMode {
+  const preferred = readStoredTheme() ?? systemPreferredTheme();
+  applyTheme(preferred);
+  return preferred;
+}
+
+let activeTheme: ThemeMode = initializeTheme();
+
+function toggleTheme(): ThemeMode {
+  const nextTheme: ThemeMode = activeTheme === "dark" ? "light" : "dark";
+  activeTheme = nextTheme;
+  applyTheme(nextTheme);
+  return nextTheme;
+}
 
 function createElement(tag: string, className?: string, text?: string): HTMLElement {
   const el = document.createElement(tag);
@@ -148,45 +196,53 @@ function mountApp() {
   if (!app) return;
 
   const wrapper = createElement("div", "app-wrapper");
+  const topBar = createElement("header", "top-bar");
   const nav = createElement("nav", "tabs");
-  const content = createElement("section", "content");
+  nav.setAttribute("aria-label", "Основные разделы");
+  const actions = createElement("div", "top-bar__actions");
+  const themeToggle = createElement("button", "theme-toggle") as HTMLButtonElement;
+  themeToggle.type = "button";
+
+  const updateThemeToggle = (theme: ThemeMode) => {
+    const nextThemeLabel = theme === "dark" ? "светлую" : "тёмную";
+    themeToggle.textContent = theme === "dark" ? "Светлая тема" : "Тёмная тема";
+    themeToggle.setAttribute("aria-label", `Переключить на ${nextThemeLabel} тему`);
+    themeToggle.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+  };
+
+  themeToggle.addEventListener("click", () => {
+    const next = toggleTheme();
+    updateThemeToggle(next);
+  });
+  updateThemeToggle(activeTheme);
+
+  actions.appendChild(themeToggle);
+
+  const content = createElement("section", "content content-single");
+  content.setAttribute("role", "region");
 
   tabs.forEach((tab, idx) => {
-    const btn = createElement("button", idx === 0 ? "tab active" : "tab", tab.label);
+    const btn = createElement("button", idx === 0 ? "tab active" : "tab", tab.label) as HTMLButtonElement;
+    btn.type = "button";
     btn.addEventListener("click", () => {
-      nav.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
+      nav.querySelectorAll<HTMLButtonElement>(".tab").forEach((el) => el.classList.remove("active"));
       btn.classList.add("active");
       content.innerHTML = "";
       const renderer = renderers[tab.id];
       renderer(content);
+      content.setAttribute("data-view", tab.id);
     });
     nav.appendChild(btn);
   });
 
-  wrapper.appendChild(nav);
+  topBar.appendChild(nav);
+  topBar.appendChild(actions);
+  wrapper.appendChild(topBar);
   wrapper.appendChild(content);
   app.appendChild(wrapper);
 
   renderers["dialog"](content);
+  content.setAttribute("data-view", "dialog");
 }
 
-function injectStyles() {
-  const style = document.createElement("style");
-  style.textContent = `
-    body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #f5f5f5; }
-    .app-wrapper { display: flex; flex-direction: column; height: 100vh; }
-    .tabs { display: flex; gap: 8px; padding: 12px; background: #1b1b1b; }
-    .tab { background: #2c2c2c; border: none; color: #f5f5f5; padding: 8px 14px; cursor: pointer; border-radius: 4px; }
-    .tab.active { background: #3f64ff; }
-    .content { flex: 1; padding: 16px; overflow-y: auto; }
-    .panel { display: flex; gap: 12px; margin-bottom: 16px; }
-    input { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #222; color: #f5f5f5; }
-    button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
-    pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
-    .placeholder { opacity: 0.7; }
-  `;
-  document.head.appendChild(style);
-}
-
-injectStyles();
 mountApp();
