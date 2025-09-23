@@ -1,4 +1,5 @@
 #include "kolibri_ai.h"
+#include "formula.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -25,10 +26,24 @@ int main(void) {
     nanosleep(&ts, NULL);
     kolibri_ai_stop(ai);
 
+    Formula formula = {0};
+    formula.representation = FORMULA_REPRESENTATION_TEXT;
+    strncpy(formula.id, "test.reinforce", sizeof(formula.id) - 1);
+    strncpy(formula.content, "1+1", sizeof(formula.content) - 1);
+
+    FormulaExperience experience = {0};
+    experience.reward = 0.8;
+    experience.poe = 0.9;
+    experience.mdl = 0.05;
+    assert(kolibri_ai_apply_reinforcement(ai, &formula, &experience) == 0);
+
     char *state = kolibri_ai_serialize_state(ai);
     assert(state != NULL);
     ensure_contains(state, "\"iterations\"");
     ensure_contains(state, "\"formula_count\"");
+    ensure_contains(state, "\"planning_score\"");
+    ensure_contains(state, "\"recent_poe\"");
+    ensure_contains(state, "\"recent_mdl\"");
     free(state);
 
     char *formulas = kolibri_ai_serialize_formulas(ai, 3);

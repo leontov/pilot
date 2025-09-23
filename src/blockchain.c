@@ -74,6 +74,55 @@ static void calculate_hash(const Block* block, char* output) {
     EVP_MD_CTX_free(ctx);
 }
 
+double blockchain_score_formula(const Formula* formula, double* poe_out, double* mdl_out) {
+    if (!formula) {
+        if (poe_out) {
+            *poe_out = 0.0;
+        }
+        if (mdl_out) {
+            *mdl_out = 0.0;
+        }
+        return 0.0;
+    }
+
+    double poe = formula->effectiveness;
+    if (poe < 0.0) {
+        poe = 0.0;
+    } else if (poe > 1.0) {
+        poe = 1.0;
+    }
+
+    double mdl = 0.0;
+    if (formula->representation == FORMULA_REPRESENTATION_TEXT) {
+        mdl = (double)safe_strnlen(formula->content, sizeof(formula->content));
+    } else if (formula->representation == FORMULA_REPRESENTATION_ANALYTIC) {
+        if (formula->coefficients && formula->coeff_count > 0) {
+            mdl += (double)formula->coeff_count * 4.0;
+        }
+        if (formula->expression) {
+            mdl += (double)strlen(formula->expression);
+        }
+        mdl += 8.0; // базовая стоимость аналитической формулы
+    }
+
+    if (mdl < 0.0) {
+        mdl = 0.0;
+    }
+
+    if (poe_out) {
+        *poe_out = poe;
+    }
+    if (mdl_out) {
+        *mdl_out = mdl;
+    }
+
+    double score = poe - 0.01 * mdl;
+    if (score < 0.0) {
+        score = 0.0;
+    }
+    return score;
+}
+
 static Formula* blockchain_clone_formula(const Formula* src) {
     if (!src) {
         return NULL;
@@ -160,7 +209,42 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 
         block->formulas[i] = dest;
     }
-    
+
+    double total_poe = 0.0;
+    double total_mdl = 0.0;
+    double total_score = 0.0;
+    size_t sampled = 0;
+
+    for (size_t i = 0; i < block->formula_count; ++i) {
+        Formula* formula = block->formulas[i];
+        if (!formula) {
+            continue;
+        }
+        double formula_poe = 0.0;
+        double formula_mdl = 0.0;
+        double formula_score = blockchain_score_formula(formula, &formula_poe, &formula_mdl);
+        total_poe += formula_poe;
+        total_mdl += formula_mdl;
+        total_score += formula_score;
+        sampled++;
+    }
+
+    if (sampled > 0) {
+        block->poe_sum = total_poe;
+        block->mdl_sum = total_mdl;
+        block->score_sum = total_score;
+        block->poe_average = total_poe / (double)sampled;
+        block->mdl_average = total_mdl / (double)sampled;
+        block->score_average = total_score / (double)sampled;
+    } else {
+        block->poe_sum = 0.0;
+        block->mdl_sum = 0.0;
+        block->score_sum = 0.0;
+        block->poe_average = 0.0;
+        block->mdl_average = 0.0;
+        block->score_average = 0.0;
+    }
+
     // Установка времени создания
     block->timestamp = time(NULL);
     

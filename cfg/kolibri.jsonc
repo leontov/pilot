@@ -11,6 +11,10 @@
     "max_stack": 128,
     "trace_depth": 64
   },
+  "selfplay": {
+    "tasks_per_iteration": 2,
+    "max_difficulty": 3
+  },
   // PRNG seed for RANDOM10 opcode
   "seed": 1337,
   // Kolibri AI persistence

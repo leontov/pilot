@@ -24,6 +24,8 @@ static fkv_node_t *node_create(void) {
 }
 
 static void node_free(fkv_node_t *node);
+static int fkv_put_locked(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn,
+                          fkv_entry_type_t type);
 
 int fkv_init(void) {
     pthread_mutex_lock(&fkv_lock);
@@ -56,10 +58,9 @@ void fkv_shutdown(void) {
     root = NULL;
     pthread_mutex_unlock(&fkv_lock);
 }
-static int fkv_put_locked(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn, fkv_entry_type_t type) {
-    if (!key || !val || kn == 0 || vn == 0) {
-        return -1;
+
     }
+
     fkv_node_t *node = root;
     for (size_t i = 0; i < kn; ++i) {
         uint8_t idx = key[i];
@@ -74,23 +75,20 @@ static int fkv_put_locked(const uint8_t *key, size_t kn, const uint8_t *val, siz
         }
         node = node->child[idx];
     }
-    free(node->value);
-    free(node->key);
 
     uint8_t *new_value = malloc(vn);
     uint8_t *new_key = malloc(kn);
     if (!new_value || !new_key) {
         free(new_value);
         free(new_key);
-        node->value = NULL;
-        node->key = NULL;
-        node->value_len = 0;
-        node->key_len = 0;
         return -1;
     }
 
     memcpy(new_value, val, vn);
     memcpy(new_key, key, kn);
+
+    free(node->value);
+    free(node->key);
 
     node->value = new_value;
     node->value_len = vn;
@@ -104,11 +102,6 @@ static int fkv_put_locked(const uint8_t *key, size_t kn, const uint8_t *val, siz
 int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn, fkv_entry_type_t type) {
     if (!key || !val || kn == 0 || vn == 0) {
         return -1;
-    }
-    if (!root) {
-        if (fkv_init() != 0) {
-            return -1;
-        }
     }
     pthread_mutex_lock(&fkv_lock);
     int rc = fkv_put_locked(key, kn, val, vn, type);
@@ -192,6 +185,7 @@ static int serialize_node(FILE *fp, const fkv_node_t *node) {
     if (node->value) {
         uint64_t key_len = node->key_len;
         uint64_t value_len = node->value_len;
+        uint8_t type = (uint8_t)node->type;
         if (fwrite(&key_len, sizeof(key_len), 1, fp) != 1) {
             return -1;
         }
@@ -202,6 +196,9 @@ static int serialize_node(FILE *fp, const fkv_node_t *node) {
             return -1;
         }
         if (node->value_len && fwrite(node->value, 1, node->value_len, fp) != node->value_len) {
+            return -1;
+        }
+        if (fwrite(&type, sizeof(type), 1, fp) != 1) {
             return -1;
         }
     }
@@ -321,7 +318,7 @@ int fkv_load(const char *path) {
                 break;
             }
         }
-        if (fkv_put_locked(key_buf, key_len, value_buf, value_len, FKV_ENTRY_TYPE_VALUE) != 0) {
+
             free(key_buf);
             free(value_buf);
             rc = -1;
