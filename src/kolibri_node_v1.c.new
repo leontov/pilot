@@ -1,0 +1,232 @@
+#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+
+#include <assert.h>
+
+#include <openssl/evp.h>
+#include <openssl/core_names.h>
+
+#include "kolibri_proto.h"
+#include "kolibri_ping.h"
+#include "kolibri_knowledge.h"
+#include "kolibri_rules.h"
+
+// ==========================
+// Configuration and Constants
+
+#define MAGIC_BYTES "KLB1"
+#define MAGIC_LEN 4
+#define BUFFER_SIZE 8192
+#define DEFAULT_PORT 9000
+
+// ==========================
+// Global state
+
+static int server_sock = -1;
+static char* root_key = NULL;
+static size_t root_key_len = 0;
+static char node_id[32] = "node1";
+static rules_t rules;
+
+// ==========================
+// Utilities
+
+uint64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+static int rand_digit(void) {
+    return rand() % 10;
+}
+
+static void to_digits(const char* src, char* dst, size_t dstsz) {
+    unsigned long acc = 0;
+    for (const unsigned char* p = (const unsigned char*)src; *p; ++p) {
+        acc = acc * 131 + *p;
+    }
+    
+    size_t i = 0;
+    if (acc == 0) {
+        if (dstsz > 1) {
+            dst[0] = '0';
+            dst[1] = '\0';
+        }
+        return;
+    }
+    
+    char tmp[128];
+    size_t t = 0;
+    while (acc > 0 && t < sizeof(tmp) - 1) {
+        tmp[t++] = '0' + (acc % 10);
+        acc /= 10;
+    }
+    
+    for (size_t k = 0; k < t && i + 1 < dstsz; ++k) {
+        dst[i++] = tmp[t - 1 - k];
+    }
+    dst[i] = '\0';
+}
+
+static void random_digits(char* dst, size_t len) {
+    for (size_t i = 0; i < len - 1; i++) {
+        dst[i] = '0' + rand_digit();
+    }
+    dst[len - 1] = '\0';
+}
+
+// ==========================
+// Network handling
+
+static void init_server(uint16_t port) {
+    struct sockaddr_in addr = {0};
+    
+    server_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server_sock < 0) {
+        perror("socket");
+        exit(1);
+    }
+    
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    
+    if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        exit(1);
+    }
+    
+    printf("Server started on port %d\n", port);
+}
+
+static void process_message(const char* data, size_t len, struct sockaddr_in* src_addr) {
+    if (len < MAGIC_LEN + 1) return;
+    
+    if (memcmp(data, MAGIC_BYTES, MAGIC_LEN) != 0) {
+        printf("Invalid magic bytes\n");
+        return;
+    }
+    
+    uint8_t type = data[MAGIC_LEN];
+    const char* payload = data + MAGIC_LEN + 1;
+    size_t payload_len = len - MAGIC_LEN - 1;
+    
+    char response[BUFFER_SIZE];
+    size_t response_len = 0;
+    
+    switch (type) {
+        case MSG_PING:
+            response[MAGIC_LEN] = MSG_PONG;
+            memcpy(response, MAGIC_BYTES, MAGIC_LEN);
+            response_len = MAGIC_LEN + 1;
+            break;
+            
+        case MSG_PONG:
+            // Handle pong
+            break;
+            
+        case MSG_RULE: {
+            // Handle rule transmission
+            if (payload_len < sizeof(rules_t)) break;
+            memcpy(&rules, payload, sizeof(rules_t));
+            break;
+        }
+            
+        case MSG_SYNC:
+            // Handle sync request
+            break;
+            
+        case MSG_DATA:
+            // Handle data transmission
+            break;
+            
+        default:
+            printf("Unknown message type: %d\n", type);
+            break;
+    }
+    
+    if (response_len > 0) {
+        sendto(server_sock, response, response_len, 0,
+               (struct sockaddr*)src_addr, sizeof(*src_addr));
+    }
+}
+
+// ==========================
+// Main loop
+
+static void run_server(void) {
+    char buffer[BUFFER_SIZE];
+    struct sockaddr_in src_addr;
+    socklen_t src_len = sizeof(src_addr);
+    
+    uint64_t last_ping = 0;
+    
+    while (1) {
+        ssize_t len = recvfrom(server_sock, buffer, sizeof(buffer), 0,
+                              (struct sockaddr*)&src_addr, &src_len);
+        if (len < 0) {
+            if (errno == EINTR) continue;
+            perror("recvfrom");
+            break;
+        }
+        
+        process_message(buffer, len, &src_addr);
+        
+        uint64_t t = now_ms();
+        if (t - last_ping > 10000) {
+            check_peers_availability();
+            last_ping = t;
+        }
+    }
+}
+
+// ==========================
+// Entry point
+
+int main(int argc, char** argv) {
+    uint16_t port = DEFAULT_PORT;
+    const char* data_file = "chain.db";
+    const char* root_key_file = "root.key";
+    
+    // Initialize random seed
+    srand(time(NULL));
+    
+    // Initialize rules system
+    init_rules(&rules);
+    
+    // Load base knowledge
+    const char* specializations[] = {"math", "text", "logic", "memory"};
+    size_t spec_count = sizeof(specializations) / sizeof(specializations[0]);
+    
+    // Randomly select a specialization
+    const char* selected_spec = specializations[rand() % spec_count];
+    printf("Selected specialization: %s\n", selected_spec);
+    
+    if (load_base_knowledge("rules/base_knowledge.json", selected_spec, &rules) != 0) {
+        fprintf(stderr, "Failed to load base knowledge\n");
+        return 1;
+    }
+    
+    // Initialize network and subsystems
+    init_ping_stats();
+    init_server(port);
+    
+    // Run main loop
+    run_server();
+    
+    return 0;
+}

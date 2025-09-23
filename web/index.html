@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KolibriAI — Веб-интерфейс</title>
+  <link rel="stylesheet" href="/web/styles.css">
+</head>
+<body>
+  <div id="app" class="container">
+    <header class="header">
+      <h1>KolibriAI</h1>
+      <p class="muted">Самонаучающийся узел — Web UI</p>
+      <div class="status-bar">
+        <span id="connDot" class="dot dot-off"></span>
+        <span id="uptime" class="muted">uptime: --</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Быстрый расчёт</h2>
+        <div class="row">
+          <input id="taskInput" placeholder="Например: 2+2 или привет" />
+          <button id="solveBtn">Решить</button>
+        </div>
+        <div id="loader" class="loader" style="display:none"></div>
+        <pre id="result" class="result">Результат появится здесь</pre>
+      </section>
+
+      <section class="panel">
+        <h2>История (последние 20)</h2>
+        <ul id="history" class="history"></ul>
+      </section>
+
+      <section class="panel small">
+        <h3>Метрики</h3>
+        <pre id="metrics">loading...</pre>
+      </section>
+    </main>
+
+    <footer class="footer">Локально: <code>scripts/run_server.sh start</code> — API: <code>/api/v1/solve</code></footer>
+  </div>
+  <script type="module" src="/web/app.js"></script>
+</body>
+</html>

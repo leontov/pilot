@@ -1,0 +1,10 @@
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/kolibri_node.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/web_interface.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/test_arithmetic.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/test_rule_engine.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/edit_cache.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/rebuild_cache.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/list_install_components.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/install.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/install/local.dir
+/Users/kolibri/Projekt/kolibriai/build/CMakeFiles/install/strip.dir

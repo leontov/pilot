@@ -1,0 +1,4 @@
+kolibri_node_v1
+*.o
+*.out
+*.log

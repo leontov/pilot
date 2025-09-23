@@ -1,0 +1,261 @@
+Formulas:
+Formula 0: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.724284
+  Coeff[1]=-0.000016
+Formula 1: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.942376
+  Coeff[1]=-0.000027
+Formula 2: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.808347
+  Coeff[1]=-0.000018
+Formula 3: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.027332
+  Coeff[1]=0.000018
+Formula 4: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.356388
+  Coeff[1]=-0.000024
+Formula 5: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.327863
+  Coeff[1]=-0.000021
+Formula 6: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.619590
+  Coeff[1]=0.000017
+Formula 7: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.680162
+  Coeff[1]=0.000036
+Formula 8: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.342737
+  Coeff[1]=-0.000018
+Formula 9: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.232064
+  Coeff[1]=0.000005
+Formula 10: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.538356
+  Coeff[1]=-0.000001
+Formula 11: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.410454
+  Coeff[1]=0.000009
+Formula 12: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.052042
+  Coeff[1]=-0.000008
+Formula 13: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.411428
+  Coeff[1]=0.000019
+Formula 14: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.366932
+  Coeff[1]=-0.000000
+Formula 15: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.236226
+  Coeff[1]=0.000011
+Formula 16: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.713461
+  Coeff[1]=0.000018
+Formula 17: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.454715
+  Coeff[1]=0.000013
+Formula 18: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.458122
+  Coeff[1]=-0.000023
+Formula 19: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.187415
+  Coeff[1]=-0.000034
+Formula 20: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.609337
+  Coeff[1]=0.000016
+Formula 21: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.113211
+  Coeff[1]=-0.000015
+Formula 22: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.864492
+  Coeff[1]=-0.000009
+Formula 23: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.950641
+  Coeff[1]=-0.000036
+Formula 24: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.105211
+  Coeff[1]=-0.000033
+Formula 25: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.829459
+  Coeff[1]=0.000006
+Formula 26: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.524830
+  Coeff[1]=0.000002
+Formula 27: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.866689
+  Coeff[1]=-0.000042
+Formula 28: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.527750
+  Coeff[1]=0.000014
+Formula 29: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.162840
+  Coeff[1]=0.000036
+Formula 30: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.077992
+  Coeff[1]=-0.000033
+Formula 31: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.439163
+  Coeff[1]=0.000018
+Formula 32: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.663278
+  Coeff[1]=0.000016
+Formula 33: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.617462
+  Coeff[1]=0.000042
+Formula 34: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.101344
+  Coeff[1]=-0.000031
+Formula 35: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.365853
+  Coeff[1]=0.000037
+Formula 36: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.156009
+  Coeff[1]=-0.000034
+Formula 37: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.439101
+  Coeff[1]=0.000006
+Formula 38: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.951816
+  Coeff[1]=-0.000029
+Formula 39: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.602711
+  Coeff[1]=0.000011
+Formula 40: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.403001
+  Coeff[1]=-0.000008
+Formula 41: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.605292
+  Coeff[1]=-0.000007
+Formula 42: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.930462
+  Coeff[1]=-0.000015
+Formula 43: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.384567
+  Coeff[1]=-0.000021
+Formula 44: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.251980
+  Coeff[1]=-0.000030
+Formula 45: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.060820
+  Coeff[1]=0.000031
+Formula 46: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.410670
+  Coeff[1]=0.000020
+Formula 47: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.449889
+  Coeff[1]=0.000017
+Formula 48: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.635408
+  Coeff[1]=-0.000028
+Formula 49: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.115606
+  Coeff[1]=-0.000014
+Formula 50: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.495803
+  Coeff[1]=-0.000002
+Formula 51: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.576930
+  Coeff[1]=-0.000027
+Formula 52: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.620961
+  Coeff[1]=0.000004
+Formula 53: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.310885
+  Coeff[1]=0.000041
+Formula 54: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.267941
+  Coeff[1]=-0.000026
+Formula 55: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.226952
+  Coeff[1]=0.000020
+Formula 56: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.015920
+  Coeff[1]=0.000018
+Formula 57: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.224408
+  Coeff[1]=-0.000040
+Formula 58: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.742666
+  Coeff[1]=-0.000041
+Formula 59: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.067763
+  Coeff[1]=0.000013
+Formula 60: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.139078
+  Coeff[1]=0.000034
+Formula 61: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.178260
+  Coeff[1]=-0.000015
+Formula 62: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.146124
+  Coeff[1]=-0.000021
+Formula 63: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.762659
+  Coeff[1]=-0.000007
+Formula 64: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.137907
+  Coeff[1]=-0.000005
+Formula 65: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.533790
+  Coeff[1]=0.000005
+Formula 66: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.928937
+  Coeff[1]=0.000024
+Formula 67: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.052645
+  Coeff[1]=0.000028
+Formula 68: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.840843
+  Coeff[1]=0.000004
+Formula 69: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.246176
+  Coeff[1]=-0.000006
+Formula 70: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.558832
+  Coeff[1]=0.000036
+Formula 71: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.223810
+  Coeff[1]=-0.000002
+Formula 72: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.112468
+  Coeff[1]=0.000027
+Formula 73: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.359498
+  Coeff[1]=-0.000001
+Formula 74: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.418884
+  Coeff[1]=0.000013
+Formula 75: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.040700
+  Coeff[1]=0.000029
+Formula 76: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.246329
+  Coeff[1]=-0.000027
+Formula 77: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.106819
+  Coeff[1]=-0.000007
+Formula 78: Type=0, Effectiveness=1.0000
+  Coeff[0]=-0.962783
+  Coeff[1]=0.000017
+Formula 79: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.003904
+  Coeff[1]=0.000007
+Formula 80: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.621740
+  Coeff[1]=-0.000041
+Formula 81: Type=0, Effectiveness=1.0000
+  Coeff[0]=-1.198888
+  Coeff[1]=0.000043
+Formula 82: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.086798
+  Coeff[1]=-0.000028
+Formula 83: Type=0, Effectiveness=1.0000
+  Coeff[0]=0.382378
+  Coeff[1]=-0.000015
+Formula 84: Type=0, Effectiveness=1.0000
+  Coeff[0]=1.565195
+  Coeff[1]=-0.000033
+
+Rules:
+Rule 0: Weight=0.8000, Enabled=1
+  Condition: value > threshold
+  Action: activate_neighbors
