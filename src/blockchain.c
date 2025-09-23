@@ -1,4 +1,5 @@
 #include "blockchain.h"
+#include "formula.h"
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/evp.h>
@@ -92,16 +93,42 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     // Создание нового блока
     Block* block = (Block*)malloc(sizeof(Block));
     if (!block) return false;
-    
+
+    block->owned_formulas = NULL;
+
     block->formulas = (Formula**)malloc(sizeof(Formula*) * count);
     if (!block->formulas) {
         free(block);
         return false;
     }
-    
-    // Копирование формул
-    memcpy(block->formulas, formulas, sizeof(Formula*) * count);
+
+    block->owned_formulas = (Formula*)calloc(count, sizeof(Formula));
+    if (!block->owned_formulas) {
+        free(block->formulas);
+        free(block);
+        return false;
+    }
+
     block->formula_count = count;
+
+    for (size_t i = 0; i < count; ++i) {
+        Formula* src = formulas[i];
+        Formula* dest = &block->owned_formulas[i];
+
+        if (src) {
+            if (formula_copy(dest, src) != 0) {
+                for (size_t j = 0; j < i; ++j) {
+                    formula_clear(&block->owned_formulas[j]);
+                }
+                free(block->owned_formulas);
+                free(block->formulas);
+                free(block);
+                return false;
+            }
+        }
+
+        block->formulas[i] = dest;
+    }
     
     // Установка времени создания
     block->timestamp = time(NULL);
@@ -170,6 +197,12 @@ void blockchain_destroy(Blockchain* chain) {
     for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
         if (block) {
+            if (block->owned_formulas) {
+                for (size_t j = 0; j < block->formula_count; ++j) {
+                    formula_clear(&block->owned_formulas[j]);
+                }
+                free(block->owned_formulas);
+            }
             free(block->formulas);
             free(block);
         }
