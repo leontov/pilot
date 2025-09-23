@@ -5,10 +5,15 @@
 #include <string.h>
 #include <time.h>
 #include <uuid/uuid.h>
+#include <stdint.h>
 
 #include "decimal_cell.h"
 #include "formula.h"
 #include "formula_advanced.h"
+
+uint64_t now_ms(void) {
+    return (uint64_t)time(NULL) * 1000ULL;
+}
 
 static Formula* create_text_formula(const char* content) {
     Formula* formula = calloc(1, sizeof(Formula));
@@ -120,6 +125,70 @@ static void test_formula_collection_copy(void) {
     formula_collection_destroy(collection);
 }
 
+static void test_formula_collection_remove_stability(void) {
+    FormulaCollection* collection = formula_collection_create(4);
+    assert(collection);
+
+    const char* contents[] = {"f(x)=x", "g(x)=x^2", "h(x)=x^3"};
+    char ids[3][37] = {{0}};
+    Formula* formulas[3] = {0};
+
+    for (size_t i = 0; i < 3; ++i) {
+        formulas[i] = create_text_formula(contents[i]);
+        assert(formulas[i]);
+        assert(formula_collection_add(collection, formulas[i]) == 0);
+        strncpy(ids[i], formulas[i]->id, sizeof(ids[i]) - 1);
+    }
+
+    for (size_t i = 0; i < 3; ++i) {
+        formula_clear(formulas[i]);
+        free(formulas[i]);
+    }
+
+    assert(collection->count == 3);
+
+    formula_collection_remove(collection, ids[1]);
+    assert(collection->count == 2);
+    assert(strcmp(collection->formulas[0].id, ids[0]) == 0);
+    assert(strcmp(collection->formulas[1].id, ids[2]) == 0);
+    for (size_t j = 0; j < sizeof(collection->formulas[2].id); ++j) {
+        assert(collection->formulas[2].id[j] == '\0');
+    }
+
+    formula_collection_remove(collection, ids[0]);
+    assert(collection->count == 1);
+    assert(strcmp(collection->formulas[0].id, ids[2]) == 0);
+    for (size_t j = 0; j < sizeof(collection->formulas[1].id); ++j) {
+        assert(collection->formulas[1].id[j] == '\0');
+    }
+
+    formula_collection_remove(collection, ids[2]);
+    assert(collection->count == 0);
+    for (size_t j = 0; j < sizeof(collection->formulas[0].id); ++j) {
+        assert(collection->formulas[0].id[j] == '\0');
+    }
+
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "iter_%d", iteration);
+        Formula* temp = create_text_formula(buffer);
+        assert(temp);
+        assert(formula_collection_add(collection, temp) == 0);
+        char remove_id[37] = {0};
+        strncpy(remove_id, temp->id, sizeof(remove_id) - 1);
+        formula_clear(temp);
+        free(temp);
+
+        formula_collection_remove(collection, remove_id);
+        assert(collection->count == 0);
+        for (size_t j = 0; j < sizeof(collection->formulas[0].id); ++j) {
+            assert(collection->formulas[0].id[j] == '\0');
+        }
+    }
+
+    formula_collection_destroy(collection);
+}
+
 static void test_analytic_formula_flow(void) {
     Formula* analytic = formula_create(FORMULA_LINEAR, 2);
     assert(analytic);
@@ -178,6 +247,7 @@ static void test_analytic_formula_flow(void) {
 int main(void) {
     test_text_formula_roundtrip();
     test_formula_collection_copy();
+    test_formula_collection_remove_stability();
     test_analytic_formula_flow();
     test_training_pipeline_integration();
     return 0;
