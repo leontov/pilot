@@ -8,6 +8,7 @@
 #include <time.h>
 #include <uuid/uuid.h>
 #include <json-c/json.h>
+#include <stdint.h>
 
 static void formula_collection_reset_top(FormulaCollection* collection) {
     if (!collection) {
@@ -321,6 +322,309 @@ static void formula_dataset_clear(FormulaDataset* dataset) {
     dataset->count = 0;
 }
 
+static const size_t k_default_feature_dim = 8;
+static const size_t k_default_hidden_dim = 12;
+static const size_t k_default_transformer_dim = 8;
+
+typedef struct {
+    char magic[4];
+    uint32_t version;
+    uint32_t mlp_input_dim;
+    uint32_t mlp_hidden_dim;
+    uint32_t mlp_output_dim;
+    uint32_t transformer_input_dim;
+    uint32_t transformer_model_dim;
+} FormulaWeightsHeader;
+
+static void formula_mlp_model_release(FormulaMLPModel* model) {
+    if (!model) {
+        return;
+    }
+    free(model->input_weights);
+    free(model->hidden_bias);
+    free(model->output_weights);
+    free(model->output_bias);
+    memset(model, 0, sizeof(*model));
+}
+
+static int formula_mlp_model_configure(FormulaMLPModel* model,
+                                       size_t input_dim,
+                                       size_t hidden_dim,
+                                       size_t output_dim) {
+    if (!model || input_dim == 0 || hidden_dim == 0 || output_dim == 0) {
+        return -1;
+    }
+
+    if (model->input_dim == input_dim && model->hidden_dim == hidden_dim &&
+        model->output_dim == output_dim && model->input_weights &&
+        model->hidden_bias && model->output_weights && model->output_bias) {
+        return 0;
+    }
+
+    formula_mlp_model_release(model);
+
+    model->input_dim = input_dim;
+    model->hidden_dim = hidden_dim;
+    model->output_dim = output_dim;
+
+    size_t input_weights = input_dim * hidden_dim;
+    size_t output_weights = hidden_dim * output_dim;
+
+    model->input_weights = calloc(input_weights, sizeof(double));
+    model->hidden_bias = calloc(hidden_dim, sizeof(double));
+    model->output_weights = calloc(output_weights, sizeof(double));
+    model->output_bias = calloc(output_dim, sizeof(double));
+
+    if (!model->input_weights || !model->hidden_bias || !model->output_weights ||
+        !model->output_bias) {
+        formula_mlp_model_release(model);
+        return -1;
+    }
+
+    return 0;
+}
+
+static void formula_transformer_model_release(FormulaTransformerModel* model) {
+    if (!model) {
+        return;
+    }
+    free(model->w_q);
+    free(model->w_k);
+    free(model->w_v);
+    free(model->w_o);
+    memset(model, 0, sizeof(*model));
+}
+
+static int formula_transformer_model_configure(FormulaTransformerModel* model,
+                                               size_t input_dim,
+                                               size_t model_dim) {
+    if (!model || input_dim == 0 || model_dim == 0) {
+        return -1;
+    }
+
+    if (model->input_dim == input_dim && model->model_dim == model_dim &&
+        model->w_q && model->w_k && model->w_v && model->w_o) {
+        return 0;
+    }
+
+    formula_transformer_model_release(model);
+
+    model->input_dim = input_dim;
+    model->model_dim = model_dim;
+    model->bias = 0.0;
+
+    size_t matrix_size = model_dim * input_dim;
+
+    model->w_q = calloc(matrix_size, sizeof(double));
+    model->w_k = calloc(matrix_size, sizeof(double));
+    model->w_v = calloc(matrix_size, sizeof(double));
+    model->w_o = calloc(model_dim, sizeof(double));
+
+    if (!model->w_q || !model->w_k || !model->w_v || !model->w_o) {
+        formula_transformer_model_release(model);
+        return -1;
+    }
+
+    return 0;
+}
+
+static double random_weight(double scale) {
+    if (scale <= 0.0) {
+        scale = 1.0;
+    }
+    double unit = (double)rand() / (double)RAND_MAX;
+    return (unit * 2.0 - 1.0) * scale;
+}
+
+static void fill_random(double* data, size_t count, double scale) {
+    if (!data) {
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        data[i] = random_weight(scale);
+    }
+}
+
+static void formula_training_pipeline_randomize_models(FormulaTrainingPipeline* pipeline) {
+    if (!pipeline) {
+        return;
+    }
+
+    FormulaMLPModel* mlp = &pipeline->mlp_model;
+    FormulaTransformerModel* transformer = &pipeline->transformer_model;
+
+    if (!mlp->input_weights || !mlp->hidden_bias || !mlp->output_weights || !mlp->output_bias) {
+        return;
+    }
+
+    size_t mlp_input_weights = mlp->input_dim * mlp->hidden_dim;
+    size_t mlp_output_weights = mlp->hidden_dim * mlp->output_dim;
+
+    fill_random(mlp->input_weights, mlp_input_weights, 0.15);
+    fill_random(mlp->hidden_bias, mlp->hidden_dim, 0.05);
+    fill_random(mlp->output_weights, mlp_output_weights, 0.15);
+    fill_random(mlp->output_bias, mlp->output_dim, 0.05);
+
+    if (!transformer->w_q || !transformer->w_k || !transformer->w_v || !transformer->w_o) {
+        return;
+    }
+
+    size_t transformer_matrix = transformer->model_dim * transformer->input_dim;
+    fill_random(transformer->w_q, transformer_matrix, 0.1);
+    fill_random(transformer->w_k, transformer_matrix, 0.1);
+    fill_random(transformer->w_v, transformer_matrix, 0.1);
+    fill_random(transformer->w_o, transformer->model_dim, 0.1);
+    transformer->bias = random_weight(0.05);
+}
+
+static int read_double_array(const unsigned char** cursor,
+                             size_t* remaining,
+                             double* destination,
+                             size_t count) {
+    if (!cursor || !remaining || !destination) {
+        return -1;
+    }
+
+    size_t bytes_needed = count * sizeof(double);
+    if (*remaining < bytes_needed) {
+        return -1;
+    }
+
+    memcpy(destination, *cursor, bytes_needed);
+    *cursor += bytes_needed;
+    *remaining -= bytes_needed;
+    return 0;
+}
+
+static int formula_training_pipeline_apply_weights_buffer(FormulaTrainingPipeline* pipeline,
+                                                          const unsigned char* buffer,
+                                                          size_t size) {
+    if (!pipeline || !buffer || size < sizeof(FormulaWeightsHeader)) {
+        return -1;
+    }
+
+    FormulaWeightsHeader header;
+    memcpy(&header, buffer, sizeof(header));
+    if (memcmp(header.magic, "KAIW", sizeof(header.magic)) != 0 || header.version != 1) {
+        return -1;
+    }
+
+    size_t mlp_input_dim = header.mlp_input_dim;
+    size_t mlp_hidden_dim = header.mlp_hidden_dim;
+    size_t mlp_output_dim = header.mlp_output_dim;
+    size_t transformer_input_dim = header.transformer_input_dim;
+    size_t transformer_model_dim = header.transformer_model_dim;
+
+    if (mlp_input_dim == 0 || mlp_hidden_dim == 0 || mlp_output_dim == 0 ||
+        transformer_input_dim == 0 || transformer_model_dim == 0) {
+        return -1;
+    }
+
+    if (formula_mlp_model_configure(&pipeline->mlp_model,
+                                    mlp_input_dim,
+                                    mlp_hidden_dim,
+                                    mlp_output_dim) != 0) {
+        return -1;
+    }
+
+    if (formula_transformer_model_configure(&pipeline->transformer_model,
+                                            transformer_input_dim,
+                                            transformer_model_dim) != 0) {
+        return -1;
+    }
+
+    const unsigned char* cursor = buffer + sizeof(header);
+    size_t remaining = size - sizeof(header);
+
+    size_t mlp_input_weights = mlp_input_dim * mlp_hidden_dim;
+    size_t mlp_output_weights = mlp_hidden_dim * mlp_output_dim;
+    size_t transformer_matrix = transformer_model_dim * transformer_input_dim;
+
+    if (read_double_array(&cursor, &remaining, pipeline->mlp_model.input_weights, mlp_input_weights) != 0 ||
+        read_double_array(&cursor, &remaining, pipeline->mlp_model.hidden_bias, mlp_hidden_dim) != 0 ||
+        read_double_array(&cursor, &remaining, pipeline->mlp_model.output_weights, mlp_output_weights) != 0 ||
+        read_double_array(&cursor, &remaining, pipeline->mlp_model.output_bias, mlp_output_dim) != 0 ||
+        read_double_array(&cursor, &remaining, pipeline->transformer_model.w_q, transformer_matrix) != 0 ||
+        read_double_array(&cursor, &remaining, pipeline->transformer_model.w_k, transformer_matrix) != 0 ||
+        read_double_array(&cursor, &remaining, pipeline->transformer_model.w_v, transformer_matrix) != 0 ||
+        read_double_array(&cursor, &remaining, pipeline->transformer_model.w_o, transformer_model_dim) != 0) {
+        return -1;
+    }
+
+    if (remaining < sizeof(double)) {
+        return -1;
+    }
+
+    double bias = 0.0;
+    memcpy(&bias, cursor, sizeof(double));
+    pipeline->transformer_model.bias = bias;
+
+    return 0;
+}
+
+static void write_double_array(unsigned char** cursor,
+                               const double* source,
+                               size_t count) {
+    if (!cursor || !*cursor || !source) {
+        return;
+    }
+    size_t bytes = count * sizeof(double);
+    memcpy(*cursor, source, bytes);
+    *cursor += bytes;
+}
+
+int formula_training_pipeline_sync_weights_buffer(FormulaTrainingPipeline* pipeline) {
+    if (!pipeline) {
+        return -1;
+    }
+
+    FormulaMLPModel* mlp = &pipeline->mlp_model;
+    FormulaTransformerModel* transformer = &pipeline->transformer_model;
+
+    if (!mlp->input_weights || !mlp->hidden_bias || !mlp->output_weights || !mlp->output_bias ||
+        !transformer->w_q || !transformer->w_k || !transformer->w_v || !transformer->w_o) {
+        return -1;
+    }
+
+    size_t mlp_input_weights = mlp->input_dim * mlp->hidden_dim;
+    size_t mlp_output_weights = mlp->hidden_dim * mlp->output_dim;
+    size_t transformer_matrix = transformer->model_dim * transformer->input_dim;
+
+    size_t total_doubles = mlp_input_weights + mlp->hidden_dim + mlp_output_weights + mlp->output_dim +
+                           transformer_matrix * 3 + transformer->model_dim + 1;
+    size_t total_bytes = sizeof(FormulaWeightsHeader) + total_doubles * sizeof(double);
+
+    unsigned char* buffer = malloc(total_bytes);
+    if (!buffer) {
+        return -1;
+    }
+
+    FormulaWeightsHeader header = {{'K', 'A', 'I', 'W'},
+                                   1,
+                                   (uint32_t)mlp->input_dim,
+                                   (uint32_t)mlp->hidden_dim,
+                                   (uint32_t)mlp->output_dim,
+                                   (uint32_t)transformer->input_dim,
+                                   (uint32_t)transformer->model_dim};
+    memcpy(buffer, &header, sizeof(header));
+
+    unsigned char* cursor = buffer + sizeof(header);
+    write_double_array(&cursor, mlp->input_weights, mlp_input_weights);
+    write_double_array(&cursor, mlp->hidden_bias, mlp->hidden_dim);
+    write_double_array(&cursor, mlp->output_weights, mlp_output_weights);
+    write_double_array(&cursor, mlp->output_bias, mlp->output_dim);
+    write_double_array(&cursor, transformer->w_q, transformer_matrix);
+    write_double_array(&cursor, transformer->w_k, transformer_matrix);
+    write_double_array(&cursor, transformer->w_v, transformer_matrix);
+    write_double_array(&cursor, transformer->w_o, transformer->model_dim);
+    memcpy(cursor, &transformer->bias, sizeof(double));
+
+    free(pipeline->weights);
+    pipeline->weights = buffer;
+    pipeline->weights_size = total_bytes;
+    return 0;
+}
+
 static void formula_training_metrics_reset(FormulaTrainingMetrics* metrics) {
     if (!metrics) {
         return;
@@ -343,6 +647,34 @@ FormulaTrainingPipeline* formula_training_pipeline_create(size_t capacity) {
     pipeline->candidates.capacity = capacity;
     pipeline->candidates.count = 0;
     formula_training_metrics_reset(&pipeline->metrics);
+
+    if (formula_mlp_model_configure(&pipeline->mlp_model,
+                                    k_default_feature_dim,
+                                    k_default_hidden_dim,
+                                    1) != 0) {
+        free(pipeline->candidates.hypotheses);
+        free(pipeline);
+        return NULL;
+    }
+
+    if (formula_transformer_model_configure(&pipeline->transformer_model,
+                                            k_default_feature_dim,
+                                            k_default_transformer_dim) != 0) {
+        formula_mlp_model_release(&pipeline->mlp_model);
+        free(pipeline->candidates.hypotheses);
+        free(pipeline);
+        return NULL;
+    }
+
+    formula_training_pipeline_randomize_models(pipeline);
+    if (formula_training_pipeline_sync_weights_buffer(pipeline) != 0) {
+        formula_transformer_model_release(&pipeline->transformer_model);
+        formula_mlp_model_release(&pipeline->mlp_model);
+        free(pipeline->candidates.hypotheses);
+        free(pipeline);
+        return NULL;
+    }
+
     return pipeline;
 }
 
@@ -361,6 +693,9 @@ void formula_training_pipeline_destroy(FormulaTrainingPipeline* pipeline) {
 
     formula_dataset_clear(&pipeline->dataset);
     formula_memory_snapshot_release(&pipeline->memory_snapshot);
+
+    formula_transformer_model_release(&pipeline->transformer_model);
+    formula_mlp_model_release(&pipeline->mlp_model);
 
     free(pipeline->weights);
     pipeline->weights = NULL;
@@ -485,11 +820,23 @@ int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,
         return -1;
     }
 
-    free(pipeline->weights);
-    pipeline->weights = NULL;
-    pipeline->weights_size = 0;
+    unsigned char* buffer = NULL;
+    size_t size = 0;
+    if (read_file_bytes(path, &buffer, &size) != 0) {
+        formula_training_pipeline_randomize_models(pipeline);
+        formula_training_pipeline_sync_weights_buffer(pipeline);
+        return -1;
+    }
 
-    return read_file_bytes(path, &pipeline->weights, &pipeline->weights_size);
+    int rc = formula_training_pipeline_apply_weights_buffer(pipeline, buffer, size);
+    free(buffer);
+    if (rc != 0) {
+        formula_training_pipeline_randomize_models(pipeline);
+        formula_training_pipeline_sync_weights_buffer(pipeline);
+        return -1;
+    }
+
+    return formula_training_pipeline_sync_weights_buffer(pipeline);
 }
 
 static void formula_training_pipeline_reset_candidates(FormulaTrainingPipeline* pipeline) {
@@ -632,7 +979,13 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
         return -1;
     }
 
+    double preserved_mlp_loss = pipeline->metrics.last_mlp_loss;
+    double preserved_transformer_loss = pipeline->metrics.last_transformer_loss;
+    size_t preserved_training_steps = pipeline->metrics.total_training_steps;
     formula_training_metrics_reset(&pipeline->metrics);
+    pipeline->metrics.last_mlp_loss = preserved_mlp_loss;
+    pipeline->metrics.last_transformer_loss = preserved_transformer_loss;
+    pipeline->metrics.total_training_steps = preserved_training_steps;
     if (pipeline->candidates.count == 0) {
         return 0;
     }

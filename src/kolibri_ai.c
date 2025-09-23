@@ -6,8 +6,7 @@
 #include "util/config.h"
 #include "util/log.h"
 
-#include <curl/curl.h>
-#include <json-c/json.h>
+
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -28,9 +27,7 @@ struct KolibriAI {
 
     FormulaCollection *library;
     FormulaTrainingPipeline *pipeline;
-    formula_experience_record_t *experience_records;
-    size_t experience_count;
-    size_t experience_capacity;
+
 
     double average_reward;
     double exploration_rate;
@@ -40,13 +37,6 @@ struct KolibriAI {
     double recent_mdl;
     uint64_t iterations;
 
-    KolibriAISelfplayConfig selfplay_config;
-    uint32_t selfplay_current_difficulty;
-    size_t selfplay_recent_success;
-    size_t selfplay_recent_total;
-    double selfplay_reward_avg;
-    uint64_t selfplay_total_interactions;
-    unsigned int rng_state;
 };
 
 typedef struct {
@@ -62,271 +52,10 @@ static const default_formula_t k_default_formulas[] = {
 };
 
 
-static double kolibri_ai_reduce_task(const KolibriSelfplayTask *task) {
-    if (!task || task->operand_count == 0) {
-        return 0.0;
-    }
-
-    double value = task->operands[0];
-    for (size_t i = 0; i < task->operator_count && i + 1 < task->operand_count; ++i) {
-        char op = task->operators[i];
-        double rhs = task->operands[i + 1];
-        switch (op) {
-        case '+':
-            value += rhs;
-            break;
-        case '-':
-            value -= rhs;
-            break;
-        case '*':
-            value *= rhs;
-            break;
-        default:
-            value += rhs;
-            break;
-        }
     }
     return value;
 }
 
-static double kolibri_ai_apply_formula_to_task(const Formula *formula,
-                                               const KolibriSelfplayTask *task,
-                                               int *handled) {
-    if (handled) {
-        *handled = 0;
-    }
-    if (!formula || !task || formula->representation != FORMULA_REPRESENTATION_TEXT) {
-        return 0.0;
-    }
-
-    if (strstr(formula->content, "x + y") != NULL) {
-        for (size_t i = 0; i < task->operator_count; ++i) {
-            if (task->operators[i] != '+') {
-                return 0.0;
-            }
-        }
-        if (handled) {
-            *handled = 1;
-        }
-        return kolibri_ai_reduce_task(task);
-    }
-
-    if (strstr(formula->content, "x - y") != NULL) {
-        for (size_t i = 0; i < task->operator_count; ++i) {
-            if (task->operators[i] != '-') {
-                return 0.0;
-            }
-        }
-        if (handled) {
-            *handled = 1;
-        }
-        return kolibri_ai_reduce_task(task);
-    }
-
-    if (strstr(formula->content, "x * y") != NULL) {
-        for (size_t i = 0; i < task->operator_count; ++i) {
-            if (task->operators[i] != '*') {
-                return 0.0;
-            }
-        }
-        if (handled) {
-            *handled = 1;
-        }
-        return kolibri_ai_reduce_task(task);
-    }
-
-    return 0.0;
-}
-
-static double kolibri_ai_predict_on_task(KolibriAI *ai,
-                                         const KolibriSelfplayTask *task,
-                                         int *handled) {
-    if (handled) {
-        *handled = 0;
-    }
-    const Formula *candidates[3] = {0};
-    size_t count = (ai && ai->library) ? formula_collection_get_top(ai->library, candidates, 3) : 0;
-    for (size_t i = 0; i < count; ++i) {
-        int local_handled = 0;
-        double value = kolibri_ai_apply_formula_to_task(candidates[i], task, &local_handled);
-        if (local_handled) {
-            if (handled) {
-                *handled = 1;
-            }
-            return value;
-        }
-    }
-
-    double baseline = kolibri_ai_reduce_task(task);
-    if (!ai) {
-        return baseline;
-    }
-    unsigned int noise_raw = rand_r(&ai->rng_state);
-    double magnitude = fabs(baseline);
-    if (magnitude < 1.0) {
-        magnitude = 1.0;
-    }
-    double jitter = ((int)(noise_raw % 201) - 100) / 1000.0; // [-0.1, 0.1]
-    return baseline + magnitude * jitter * 0.05;
-
-static FormulaExperience *kolibri_ai_get_experience_record(KolibriAI *ai,
-                                                           const char *id,
-                                                           int create_if_missing) {
-    if (!ai || !id) {
-        return NULL;
-    }
-    for (size_t i = 0; i < ai->experience_count; ++i) {
-        if (strcmp(ai->experience_records[i].id, id) == 0) {
-            return &ai->experience_records[i].experience;
-        }
-    }
-    if (!create_if_missing) {
-        return NULL;
-    }
-    size_t new_count = ai->experience_count + 1;
-    if (new_count > ai->experience_capacity) {
-        size_t new_cap = ai->experience_capacity == 0 ? 8 : ai->experience_capacity * 2;
-        while (new_cap < new_count) {
-            new_cap *= 2;
-        }
-        formula_experience_record_t *tmp = realloc(ai->experience_records,
-                                                   new_cap * sizeof(formula_experience_record_t));
-        if (!tmp) {
-            return NULL;
-        }
-        ai->experience_records = tmp;
-        ai->experience_capacity = new_cap;
-    }
-    formula_experience_record_t *slot = &ai->experience_records[ai->experience_count++];
-    memset(slot, 0, sizeof(*slot));
-    strncpy(slot->id, id, sizeof(slot->id) - 1);
-    slot->id[sizeof(slot->id) - 1] = '\0';
-    return &slot->experience;
-}
-
-static int pipeline_append_dataset_entry(FormulaTrainingPipeline *pipeline,
-                                         const FormulaDatasetEntry *entry) {
-    if (!pipeline || !entry) {
-        return -1;
-    }
-    FormulaDataset *dataset = &pipeline->dataset;
-    for (size_t i = 0; i < dataset->count; ++i) {
-        if (strncmp(dataset->entries[i].task, entry->task,
-                    sizeof(dataset->entries[i].task)) == 0) {
-            return 0;
-        }
-    }
-    FormulaDatasetEntry *tmp = realloc(dataset->entries,
-                                       (dataset->count + 1) * sizeof(FormulaDatasetEntry));
-    if (!tmp) {
-        return -1;
-    }
-    dataset->entries = tmp;
-    dataset->entries[dataset->count] = *entry;
-    dataset->count += 1;
-    return 0;
-}
-
-static int pipeline_append_memory_fact(FormulaTrainingPipeline *pipeline,
-                                       const FormulaMemoryFact *fact) {
-    if (!pipeline || !fact) {
-        return -1;
-    }
-    FormulaMemorySnapshot *snapshot = &pipeline->memory_snapshot;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        if (strncmp(snapshot->facts[i].fact_id, fact->fact_id,
-                    sizeof(snapshot->facts[i].fact_id)) == 0) {
-            return 0;
-        }
-    }
-    FormulaMemoryFact *tmp = realloc(snapshot->facts,
-                                     (snapshot->count + 1) * sizeof(FormulaMemoryFact));
-    if (!tmp) {
-        return -1;
-    }
-    snapshot->facts = tmp;
-    snapshot->facts[snapshot->count] = *fact;
-    snapshot->count += 1;
-    return 0;
-}
-
-static void kolibri_ai_seed_training(KolibriAI *ai) {
-    if (!ai || !ai->pipeline) {
-        return;
-    }
-    time_t now = time(NULL);
-    for (size_t i = 0; i < sizeof(k_default_formulas) / sizeof(k_default_formulas[0]); ++i) {
-        const default_formula_t *defaults = &k_default_formulas[i];
-        FormulaDatasetEntry entry = {0};
-        snprintf(entry.task, sizeof(entry.task), "bootstrap:%s", defaults->id);
-        snprintf(entry.response, sizeof(entry.response), "%s", defaults->content);
-        entry.effectiveness = defaults->effectiveness;
-        entry.rating = 1;
-        entry.timestamp = now;
-        pipeline_append_dataset_entry(ai->pipeline, &entry);
-
-        FormulaMemoryFact fact = {0};
-        snprintf(fact.fact_id, sizeof(fact.fact_id), "fact:%s", defaults->id);
-        snprintf(fact.description, sizeof(fact.description), "seed:%s", defaults->content);
-        fact.importance = 0.5 + 0.1 * (double)i;
-        fact.reward = defaults->effectiveness;
-        fact.timestamp = now;
-        pipeline_append_memory_fact(ai->pipeline, &fact);
-
-        FormulaExperience *exp = kolibri_ai_get_experience_record(ai, defaults->id, 1);
-        if (exp) {
-            exp->reward = defaults->effectiveness;
-            exp->imitation_score = defaults->effectiveness * 0.8;
-            exp->accuracy = defaults->effectiveness * 0.9;
-            exp->loss = 1.0 - defaults->effectiveness;
-            snprintf(exp->source, sizeof(exp->source), "seed");
-            snprintf(exp->task_id, sizeof(exp->task_id), "%s", entry.task);
-        }
-    }
-}
-
-static void kolibri_ai_merge_dataset(KolibriAI *ai,
-                                     const FormulaDatasetEntry *entries,
-                                     size_t count) {
-    if (!ai || !ai->pipeline || !entries) {
-        return;
-    }
-    for (size_t i = 0; i < count; ++i) {
-        pipeline_append_dataset_entry(ai->pipeline, &entries[i]);
-    }
-}
-
-static void kolibri_ai_merge_memory(KolibriAI *ai,
-                                    const FormulaMemoryFact *facts,
-                                    size_t count) {
-    if (!ai || !ai->pipeline || !facts) {
-        return;
-    }
-    for (size_t i = 0; i < count; ++i) {
-        pipeline_append_memory_fact(ai->pipeline, &facts[i]);
-    }
-}
-
-typedef struct {
-    char *data;
-    size_t size;
-} curl_buffer_t;
-
-static size_t kolibri_ai_curl_write(void *ptr, size_t size, size_t nmemb, void *userdata) {
-    size_t total = size * nmemb;
-    curl_buffer_t *buffer = (curl_buffer_t *)userdata;
-    if (total == 0) {
-        return 0;
-    }
-    char *tmp = realloc(buffer->data, buffer->size + total + 1);
-    if (!tmp) {
-        return 0;
-    }
-    buffer->data = tmp;
-    memcpy(buffer->data + buffer->size, ptr, total);
-    buffer->size += total;
-    buffer->data[buffer->size] = '\0';
-    return total;
 
 }
 
@@ -361,12 +90,6 @@ static void kolibri_ai_seed_library(KolibriAI *ai) {
         ai->average_reward = total / (double)ai->library->count;
     }
 
-    ai->planning_score = ai->average_reward;
-    ai->recent_poe = 0.0;
-    ai->recent_mdl = 1.0;
-
-
-    kolibri_ai_seed_training(ai);
 
 }
 
@@ -405,6 +128,245 @@ static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
     }
 }
 
+static double mlp_model_train_batch(FormulaTrainingPipeline *pipeline,
+                                    size_t cursor,
+                                    size_t batch_size,
+                                    double learning_rate) {
+    if (!pipeline || batch_size == 0) {
+        return -1.0;
+    }
+
+    FormulaMLPModel *model = &pipeline->mlp_model;
+    const FormulaDataset *dataset = &pipeline->dataset;
+    if (!model->input_weights || dataset->count == 0) {
+        return -1.0;
+    }
+
+    size_t dataset_count = dataset->count;
+    size_t input_dim = model->input_dim;
+    size_t hidden_dim = model->hidden_dim;
+    size_t output_dim = model->output_dim;
+    size_t effective_batch = batch_size > dataset_count ? dataset_count : batch_size;
+    size_t start = dataset_count ? cursor % dataset_count : 0;
+
+    double *features = calloc(input_dim, sizeof(double));
+    double *hidden = calloc(hidden_dim, sizeof(double));
+    double *hidden_grad = calloc(hidden_dim, sizeof(double));
+    double *outputs = calloc(output_dim, sizeof(double));
+    double *output_grad = calloc(output_dim, sizeof(double));
+    if (!features || !hidden || !hidden_grad || !outputs || !output_grad) {
+        free(features);
+        free(hidden);
+        free(hidden_grad);
+        free(outputs);
+        free(output_grad);
+        return -1.0;
+    }
+
+    double total_loss = 0.0;
+    for (size_t b = 0; b < effective_batch; ++b) {
+        size_t index = (start + b) % dataset_count;
+        const FormulaDatasetEntry *entry = &dataset->entries[index];
+        dataset_entry_features(entry, features, input_dim);
+
+        for (size_t h = 0; h < hidden_dim; ++h) {
+            double sum = model->hidden_bias[h];
+            size_t offset = h * input_dim;
+            for (size_t i = 0; i < input_dim; ++i) {
+                sum += model->input_weights[offset + i] * features[i];
+            }
+            hidden[h] = tanh(sum);
+        }
+
+        for (size_t o = 0; o < output_dim; ++o) {
+            double sum = model->output_bias[o];
+            size_t offset = o * hidden_dim;
+            for (size_t h = 0; h < hidden_dim; ++h) {
+                sum += model->output_weights[offset + h] * hidden[h];
+            }
+            outputs[o] = sum;
+        }
+
+        for (size_t o = 0; o < output_dim; ++o) {
+            double target = (o == 0 && entry) ? entry->effectiveness : 0.0;
+            double error = outputs[o] - target;
+            total_loss += 0.5 * error * error;
+            output_grad[o] = error;
+        }
+
+        for (size_t h = 0; h < hidden_dim; ++h) {
+            double back = 0.0;
+            for (size_t o = 0; o < output_dim; ++o) {
+                back += output_grad[o] * model->output_weights[o * hidden_dim + h];
+            }
+            hidden_grad[h] = back * (1.0 - hidden[h] * hidden[h]);
+        }
+
+        for (size_t o = 0; o < output_dim; ++o) {
+            size_t offset = o * hidden_dim;
+            for (size_t h = 0; h < hidden_dim; ++h) {
+                model->output_weights[offset + h] -= learning_rate * (output_grad[o] * hidden[h]);
+            }
+            model->output_bias[o] -= learning_rate * output_grad[o];
+        }
+
+        for (size_t h = 0; h < hidden_dim; ++h) {
+            size_t offset = h * input_dim;
+            for (size_t i = 0; i < input_dim; ++i) {
+                model->input_weights[offset + i] -= learning_rate * (hidden_grad[h] * features[i]);
+            }
+            model->hidden_bias[h] -= learning_rate * hidden_grad[h];
+        }
+    }
+
+    free(features);
+    free(hidden);
+    free(hidden_grad);
+    free(outputs);
+    free(output_grad);
+
+    return effective_batch > 0 ? total_loss / (double)effective_batch : -1.0;
+}
+
+static double transformer_model_train_batch(FormulaTrainingPipeline *pipeline,
+                                            size_t cursor,
+                                            size_t batch_size,
+                                            double learning_rate) {
+    if (!pipeline || batch_size == 0) {
+        return -1.0;
+    }
+
+    FormulaTransformerModel *model = &pipeline->transformer_model;
+    const FormulaDataset *dataset = &pipeline->dataset;
+    if (!model->w_q || dataset->count == 0) {
+        return -1.0;
+    }
+
+    size_t dataset_count = dataset->count;
+    size_t input_dim = model->input_dim;
+    size_t model_dim = model->model_dim;
+    size_t effective_batch = batch_size > dataset_count ? dataset_count : batch_size;
+    size_t start = dataset_count ? cursor % dataset_count : 0;
+
+    double *features = calloc(input_dim, sizeof(double));
+    double *q = calloc(model_dim, sizeof(double));
+    double *k = calloc(model_dim, sizeof(double));
+    double *v = calloc(model_dim, sizeof(double));
+    double *context = calloc(model_dim, sizeof(double));
+    double *dcontext = calloc(model_dim, sizeof(double));
+    double *dq = calloc(model_dim, sizeof(double));
+    double *dk = calloc(model_dim, sizeof(double));
+    double *dv = calloc(model_dim, sizeof(double));
+    double *grad_w_o = calloc(model_dim, sizeof(double));
+    if (!features || !q || !k || !v || !context || !dcontext || !dq || !dk || !dv || !grad_w_o) {
+        free(features);
+        free(q);
+        free(k);
+        free(v);
+        free(context);
+        free(dcontext);
+        free(dq);
+        free(dk);
+        free(dv);
+        free(grad_w_o);
+        return -1.0;
+    }
+
+    double total_loss = 0.0;
+    double scale = model_dim > 0 ? 1.0 / sqrt((double)model_dim) : 1.0;
+
+    for (size_t b = 0; b < effective_batch; ++b) {
+        size_t index = (start + b) % dataset_count;
+        const FormulaDatasetEntry *entry = &dataset->entries[index];
+        dataset_entry_features(entry, features, input_dim);
+
+        for (size_t m = 0; m < model_dim; ++m) {
+            size_t offset = m * input_dim;
+            double q_sum = 0.0;
+            double k_sum = 0.0;
+            double v_sum = 0.0;
+            for (size_t i = 0; i < input_dim; ++i) {
+                double feature = features[i];
+                q_sum += model->w_q[offset + i] * feature;
+                k_sum += model->w_k[offset + i] * feature;
+                v_sum += model->w_v[offset + i] * feature;
+            }
+            q[m] = q_sum;
+            k[m] = k_sum;
+            v[m] = v_sum;
+        }
+
+        double dot = 0.0;
+        for (size_t m = 0; m < model_dim; ++m) {
+            dot += q[m] * k[m];
+        }
+        double score = dot * scale;
+        score = clamp_double(score, -50.0, 50.0);
+        double attn = 1.0 / (1.0 + exp(-score));
+
+        for (size_t m = 0; m < model_dim; ++m) {
+            context[m] = attn * v[m];
+        }
+
+        double output = model->bias;
+        for (size_t m = 0; m < model_dim; ++m) {
+            output += model->w_o[m] * context[m];
+        }
+
+        double target = entry ? entry->effectiveness : 0.0;
+        double error = output - target;
+        total_loss += 0.5 * error * error;
+
+        for (size_t m = 0; m < model_dim; ++m) {
+            grad_w_o[m] = error * context[m];
+            dcontext[m] = error * model->w_o[m];
+        }
+
+        double dattention = 0.0;
+        for (size_t m = 0; m < model_dim; ++m) {
+            dv[m] = dcontext[m] * attn;
+            dattention += dcontext[m] * v[m];
+        }
+
+        double dscore = dattention * attn * (1.0 - attn);
+        for (size_t m = 0; m < model_dim; ++m) {
+            dq[m] = dscore * k[m] * scale;
+            dk[m] = dscore * q[m] * scale;
+        }
+
+        for (size_t m = 0; m < model_dim; ++m) {
+            model->w_o[m] -= learning_rate * grad_w_o[m];
+        }
+        model->bias -= learning_rate * error;
+
+        for (size_t m = 0; m < model_dim; ++m) {
+            size_t offset = m * input_dim;
+            double grad_v = dv[m];
+            double grad_q = dq[m];
+            double grad_k = dk[m];
+            for (size_t i = 0; i < input_dim; ++i) {
+                double feature = features[i];
+                model->w_v[offset + i] -= learning_rate * (grad_v * feature);
+                model->w_q[offset + i] -= learning_rate * (grad_q * feature);
+                model->w_k[offset + i] -= learning_rate * (grad_k * feature);
+            }
+        }
+    }
+
+    free(features);
+    free(q);
+    free(k);
+    free(v);
+    free(context);
+    free(dcontext);
+    free(dq);
+    free(dk);
+    free(dv);
+    free(grad_w_o);
+
+    return effective_batch > 0 ? total_loss / (double)effective_batch : -1.0;
+}
+
 KolibriAI *kolibri_ai_create(void) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     KolibriAI *ai = calloc(1, sizeof(KolibriAI));
@@ -417,8 +379,16 @@ KolibriAI *kolibri_ai_create(void) {
         return NULL;
     }
 
+    ai->pipeline = formula_training_pipeline_create(12);
+    if (!ai->pipeline) {
+        pthread_mutex_destroy(&ai->mutex);
+        free(ai);
+        return NULL;
+    }
+
     ai->library = formula_collection_create(8);
     if (!ai->library) {
+        formula_training_pipeline_destroy(ai->pipeline);
         pthread_mutex_destroy(&ai->mutex);
         free(ai);
         return NULL;
@@ -439,11 +409,6 @@ KolibriAI *kolibri_ai_create(void) {
 
 
 
-    ai->experience_records = NULL;
-    ai->experience_count = 0;
-    ai->experience_capacity = 0;
-
-
     kolibri_ai_seed_library(ai);
     return ai;
 }
@@ -461,11 +426,7 @@ void kolibri_ai_destroy(KolibriAI *ai) {
     if (ai->pipeline) {
         formula_training_pipeline_destroy(ai->pipeline);
     }
-    free(ai->experience_records);
-    ai->experience_records = NULL;
-    ai->experience_count = 0;
-    ai->experience_capacity = 0;
-    curl_global_cleanup();
+
     free(ai);
 }
 
@@ -617,45 +578,7 @@ void kolibri_ai_process_iteration(KolibriAI *ai) {
     ai->exploitation_rate = fmin(0.9, fmax(0.5, ai->exploitation_rate + exploitation_delta));
     ai->exploration_rate = fmin(0.5, fmax(0.1, ai->exploration_rate + exploration_delta));
 
-    size_t tasks_to_run = ai->selfplay_config.tasks_per_iteration;
-    if (tasks_to_run > 0) {
-        uint32_t difficulty_cap = ai->selfplay_config.max_difficulty;
-        if (difficulty_cap == 0) {
-            difficulty_cap = 1;
-        }
-        uint32_t target_difficulty = ai->selfplay_current_difficulty;
-        if (target_difficulty == 0) {
-            target_difficulty = 1;
-        }
-        if (target_difficulty > difficulty_cap) {
-            target_difficulty = difficulty_cap;
-        }
 
-        for (size_t i = 0; i < tasks_to_run; ++i) {
-            KolibriSelfplayTask task;
-            if (kolibri_selfplay_generate_task(&ai->rng_state, target_difficulty, &task) != 0) {
-                continue;
-            }
-
-            double predicted = kolibri_ai_predict_on_task(ai, &task, NULL);
-            double error = fabs(predicted - task.expected_result);
-            int success = (error < 0.25);
-            double reward = success ? 1.0 - fmin(error, 1.0) : -fmin(error, 1.0);
-
-            KolibriAISelfplayInteraction interaction;
-            interaction.task = task;
-            interaction.predicted_result = predicted;
-            interaction.error = error;
-            interaction.reward = reward;
-            interaction.success = success;
-
-            kolibri_ai_record_interaction(ai, &interaction);
-        }
-
-        if (ai->selfplay_total_interactions > 0) {
-            double blend = ai->selfplay_reward_avg;
-            ai->average_reward = 0.8 * ai->average_reward + 0.2 * blend;
-        }
     }
 
     if (ai->iterations % 60 == 0) {
