@@ -1,4 +1,5 @@
 #include "blockchain.h"
+#include "formula.h"
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/evp.h>
@@ -59,6 +60,24 @@ static void calculate_hash(const Block* block, char* output) {
     EVP_MD_CTX_free(ctx);
 }
 
+static Formula* blockchain_clone_formula(const Formula* src) {
+    if (!src) {
+        return NULL;
+    }
+
+    Formula* clone = (Formula*)calloc(1, sizeof(Formula));
+    if (!clone) {
+        return NULL;
+    }
+
+    if (formula_copy(clone, src) != 0) {
+        free(clone);
+        return NULL;
+    }
+
+    return clone;
+}
+
 Blockchain* blockchain_create(void) {
     Blockchain* chain = (Blockchain*)malloc(sizeof(Blockchain));
     if (!chain) return NULL;
@@ -93,14 +112,31 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     Block* block = (Block*)malloc(sizeof(Block));
     if (!block) return false;
     
-    block->formulas = (Formula**)malloc(sizeof(Formula*) * count);
+    block->formulas = (Formula**)calloc(count, sizeof(Formula*));
     if (!block->formulas) {
         free(block);
         return false;
     }
-    
+
     // Копирование формул
-    memcpy(block->formulas, formulas, sizeof(Formula*) * count);
+    for (size_t i = 0; i < count; i++) {
+        if (!formulas[i]) {
+            block->formulas[i] = NULL;
+            continue;
+        }
+
+        block->formulas[i] = blockchain_clone_formula(formulas[i]);
+        if (!block->formulas[i]) {
+            for (size_t j = 0; j < i; j++) {
+                if (block->formulas[j]) {
+                    formula_destroy(block->formulas[j]);
+                }
+            }
+            free(block->formulas);
+            free(block);
+            return false;
+        }
+    }
     block->formula_count = count;
     
     // Установка времени создания
@@ -170,6 +206,11 @@ void blockchain_destroy(Blockchain* chain) {
     for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
         if (block) {
+            for (size_t j = 0; j < block->formula_count; j++) {
+                if (block->formulas && block->formulas[j]) {
+                    formula_destroy(block->formulas[j]);
+                }
+            }
             free(block->formulas);
             free(block);
         }
