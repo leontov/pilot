@@ -1,209 +1,67 @@
+#include "fkv/fkv.h"
+#include "http/http_server.h"
+#include "util/config.h"
+#include "util/log.h"
+
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <signal.h>
-#include <time.h>
-#include <math.h>
-#include <json-c/json.h>
 
-#include "decimal_cell.h"
-#include "rules_engine.h"
-#include "formula_advanced.h"
-#include "learning.h"
-#include "network.h"
-#include "blockchain.h"
+static volatile sig_atomic_t running = 1;
 
-// Глобальные переменные для управления состоянием
-static volatile int running = 1;
-static LearningSystem* learning_system = NULL;
-static int node_port = 9000;
-static char node_specialization[32] = "memory";
-
-// Обработчик сигналов для корректного завершения
-void handle_signal(int sig) {
-    printf("\nReceived signal %d, shutting down...\n", sig);
+static void handle_signal(int sig) {
+    (void)sig;
     running = 0;
 }
 
-// Инициализация системы
-void init_system(void) {
-    // Создание системы обучения
-    learning_system = learning_system_create(10, 0.01);
-    if (!learning_system) {
-        fprintf(stderr, "Failed to create learning system\n");
-        exit(1);
-    }
-    
-    // Инициализация начальных ячеек
-    for (int i = 0; i < 10; i++) {
-        DecimalCell* cell = decimal_cell_create(0.0, -100.0, 100.0);
-        if (!cell || !learning_system_add_cell(learning_system, cell)) {
-            fprintf(stderr, "Failed to create/add cell %d\n", i);
-            exit(1);
-        }
-    }
-    
-    // Добавление базовых правил
-    rules_engine_add_rule(learning_system->rules,
-                         "value > threshold",
-                         "activate_neighbors",
-                         0.8);
-                         
-    printf("[INFO] System initialized with %zu cells\n", learning_system->cell_count);
+static int run_bench(void) {
+    log_info("Benchmarks are not implemented yet");
+    return 0;
 }
 
-static void process_incoming_network_events(void) {
-    for (;;) {
-        char* message = network_receive_data();
-        if (!message) {
-            break;
-        }
-
-        struct json_object* root = json_tokener_parse(message);
-        if (!root) {
-            fprintf(stderr, "[NETWORK] Failed to parse incoming message: %s\n", message);
-            free(message);
-            continue;
-        }
-
-        const char* type = NULL;
-        struct json_object* type_obj = NULL;
-        if (json_object_object_get_ex(root, "type", &type_obj)) {
-            type = json_object_get_string(type_obj);
-        }
-
-        if (type && strcmp(type, "federated_update") == 0) {
-            struct json_object* payload = NULL;
-            if (json_object_object_get_ex(root, "payload", &payload)) {
-                if (json_object_is_type(payload, json_type_object)) {
-                    fprintf(stdout, "[NETWORK] Received federated update with %zu keys\n",
-                            (size_t)json_object_object_length(payload));
-                } else if (json_object_is_type(payload, json_type_array)) {
-                    fprintf(stdout, "[NETWORK] Received federated update with %zu entries\n",
-                            (size_t)json_object_array_length(payload));
-                }
-            }
-        } else {
-            fprintf(stdout, "[NETWORK] Received message of type %s\n", type ? type : "unknown");
-        }
-
-        json_object_put(root);
-        free(message);
+int main(int argc, char **argv) {
+    log_set_level(LOG_LEVEL_INFO);
+    FILE *log_fp = fopen("logs/kolibri.log", "a");
+    if (log_fp) {
+        log_set_file(log_fp);
     }
-}
 
-// Основной цикл обработки
-void process_cycle(void) {
-    static int complexity_level = 1;
+    kolibri_config_t cfg;
+    if (config_load("cfg/kolibri.jsonc", &cfg) != 0) {
+        log_warn("could not read cfg/kolibri.jsonc, using defaults");
+    }
 
-    process_incoming_network_events();
+    if (argc > 1 && strcmp(argv[1], "--bench") == 0) {
+        return run_bench();
+    }
 
-    // Генерация новой формулы
-    Formula* formula = formula_generate_from_cells(learning_system->cells,
-                                                 learning_system->cell_count);
-    
-    if (formula) {
-        printf("[AI] Generated formula: %s\n",
-               formula->expression ? formula->expression : "f(x) = <complex>");
-        
-        printf("[INFO] Complexity level: %d\n", complexity_level);
-        
-        // Оптимизация формулы
-        formula_optimize(formula, learning_system->cells, learning_system->cell_count);
-        
-        // Расчет эффективности
-        double effectiveness = formula_calculate_effectiveness(formula,
-                                                            learning_system->cells,
-                                                            learning_system->cell_count);
-        
-        printf("[INFO] Formula effectiveness: %.4f\n", effectiveness);
-        
-        // Принятие решения о сохранении формулы
-        if (effectiveness > 0.8) {
-            Formula** new_formulas = realloc(learning_system->formulas,
-                                           (learning_system->formula_count + 1) * sizeof(Formula*));
-            
-            if (new_formulas) {
-                learning_system->formulas = new_formulas;
-                learning_system->formulas[learning_system->formula_count++] = formula;
-                
-                printf("[SUCCESS] Added high-effectiveness formula to collection "
-                       "(total: %zu)\n", learning_system->formula_count);
-                
-                // Создание нового блока в блокчейне каждые 10 формул
-                if (learning_system->formula_count % 10 == 0) {
-                    printf("[AI] Creating new blockchain block with last 10 formulas\n");
-                    // TODO: Добавить интеграцию с блокчейном
-                    printf("[SUCCESS] Blockchain length: %zu blocks\n",
-                           learning_system->formula_count / 10);
-                }
-            }
-        } else {
-            printf("[WARNING] Formula rejected (low effectiveness)\n");
-            formula_destroy(formula);
-        }
+    if (fkv_init() != 0) {
+        log_error("failed to initialize F-KV");
+        return 1;
     }
-    
-    // Обработка правил
-    rules_engine_process(learning_system->rules,
-                        learning_system->cells,
-                        learning_system->cell_count);
-                        
-    // Федеративное обучение с другими узлами
-    if (learning_system->formula_count > 0 && learning_system->formula_count % 20 == 0) {
-        learning_system_federated_update(learning_system, "127.0.0.1", node_port + 1);
-    }
-    
-    usleep(100000); // Небольшая задержка для стабильности
-}
 
-int main(int argc, char* argv[]) {
-    // Обработка аргументов командной строки
-    if (argc > 1) {
-        node_port = atoi(argv[1]);
-    }
-    if (argc > 2) {
-        strncpy(node_specialization, argv[2], sizeof(node_specialization) - 1);
-    }
-    
-    // Инициализация генератора случайных чисел
-    srand(time(NULL) + node_port);
-    
-    // Установка обработчиков сигналов
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
-    
-    printf("Selected specialization: %s\n", node_specialization);
-    printf("[INFO] Node digit: %d\n", node_port % 10);
-    
-    // Инициализация системы
-    init_system();
-    
-    if (!network_init(node_port)) {
-        fprintf(stderr, "Failed to initialize network on port %d\n", node_port);
-        exit(1);
+
+    if (http_server_start(&cfg) != 0) {
+        log_error("failed to start HTTP server");
+        fkv_shutdown();
+        if (log_fp) {
+            fclose(log_fp);
+        }
+        return 1;
     }
 
-    printf("[SUCCESS] Server started on port %d\n", node_port);
-    
-    // Основной цикл
     while (running) {
-        process_cycle();
-    }
-    
-    // Очистка ресурсов
-    if (learning_system) {
-        // Сохранение накопленных знаний перед выходом
-        char knowledge_file[256];
-        snprintf(knowledge_file, sizeof(knowledge_file),
-                "knowledge_node_%d.dat", node_port);
-        learning_system_export_knowledge(learning_system, knowledge_file);
-
-        learning_system_destroy(learning_system);
+        pause();
     }
 
-    network_cleanup();
-
+    http_server_stop();
+    fkv_shutdown();
+    if (log_fp) {
+        fclose(log_fp);
+    }
     return 0;
 }
