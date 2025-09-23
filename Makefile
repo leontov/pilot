@@ -1,55 +1,64 @@
-
-# --- компилятор и флаги ---
-CC      ?= gcc
-CFLAGS  ?= -Wall -Wextra -O2
-# включаем санитайзер только в Debug (опционально)
-ifeq ($(DEBUG),1)
-CFLAGS  += -fsanitize=address -fno-omit-frame-pointer
-SAN     := -fsanitize=address
-endif
-
-# Источники/заголовки
-SRC := src/kolibri_globals.c \
-       src/kolibri_node_v1.c \
-       src/kolibri_proto.c \
-       src/kolibri_rules.c \
-       src/kolibri_knowledge.c \
-       src/kolibri_ping.c \
-       src/kolibri_decimal_cell.c \
-       src/kolibri_rule_stats.c \
-       src/http_status_server.c \
-       src/formula.c \
-       src/kovian_blockchain.c \
-       src/kolibri_ai.c \
-       src/kolibri_ai_api.c
-
-INCLUDES := -Iinclude -Isrc
-
-# Используем pkg-config вместо хардкодных путей Homebrew
-PKG_CFLAGS := $(shell pkg-config --cflags json-c libcurl libmicrohttpd 2>/dev/null)
-PKG_LIBS   := $(shell pkg-config --libs   json-c libcurl libmicrohttpd 2>/dev/null)
-
-# Если pkg-config ничего не дал (редкий случай), оставим пустые
-CFLAGS += $(INCLUDES) $(PKG_CFLAGS)
-
-# ВАЖНО: -lm обязательно, и порядок такой: [объектники] [LIBS] [SAN]
-LIBS := $(PKG_LIBS) -lcrypto -lpthread -luuid -lm
-
+CC ?= gcc
+CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -pthread
+LDFLAGS := -lpthread
+BUILD_DIR := build/obj
 BIN_DIR := bin
-TARGET  := $(BIN_DIR)/kolibri_node_v1
+TARGET := $(BIN_DIR)/kolibri_node
 
-.PHONY: all clean run
+SRC := \
+  src/main.c \
+  src/util/log.c \
+  src/util/config.c \
+  src/vm/vm.c \
+  src/fkv/fkv.c \
+  src/http/http_server.c \
+  src/http/http_routes.c
 
-all: $(TARGET)
+TEST_VM_SRC := tests/unit/test_vm.c src/vm/vm.c src/util/log.c src/util/config.c src/fkv/fkv.c
+TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/config.c
 
-$(TARGET): $(SRC) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $(SRC) -o $@ $(LIBS) $(SAN)
+OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
+
+all: build
+
+$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build: $(TARGET)
+
+$(TARGET): $(OBJ) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(OBJ) -o $@ $(LDFLAGS)
+
+$(BUILD_DIR):
+	@mkdir -p $@
 
 $(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+	@mkdir -p $@
+
+run: build
+	$(TARGET)
 
 clean:
-	rm -f $(TARGET) *.o
+	rm -rf $(BUILD_DIR) $(BIN_DIR) logs/* data/* web/node_modules web/dist
 
-run: $(TARGET)
-	$(TARGET) --id nodeA --port 9000 --data chainA.db --root-key root.key
+.PHONY: test test-vm test-fkv bench clean run build
+
+test: build test-vm test-fkv
+
+$(BUILD_DIR)/tests/unit/test_vm: $(TEST_VM_SRC)
+	@mkdir -p $(BUILD_DIR)/tests/unit
+	$(CC) $(CFLAGS) $(TEST_VM_SRC) -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/tests/unit/test_fkv: $(TEST_FKV_SRC)
+	@mkdir -p $(BUILD_DIR)/tests/unit
+	$(CC) $(CFLAGS) $(TEST_FKV_SRC) -o $@ $(LDFLAGS)
+
+test-vm: $(BUILD_DIR)/tests/unit/test_vm
+	$<
+
+test-fkv: $(BUILD_DIR)/tests/unit/test_fkv
+	$<
+
+bench: build
+	$(TARGET) --bench

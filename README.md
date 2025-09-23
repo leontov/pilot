@@ -1,221 +1,59 @@
-Kolibri — распределённый ИИ-узел (MVP)
+# Kolibri Ω
 
-Автор изобретения: Кочуров Владислав Евгеньевич
-Репозиторий: подготовлено для разработки в VS Code
-Язык ядра: C (C11)
+Kolibri Ω is a numerical intelligence node built entirely around decimal programs and a compact execution runtime. This repository contains the first implementation stage (A) that provides the foundational components required to boot the node, execute decimal bytecode, and expose a minimal web/HTTP interface.
 
-⸻
+## Project layout
 
-1. Назначение проекта
-
-Kolibri — это минимально жизнеспособный узел (MVP) децентрализованной ИИ-сети, реализующий принципы изобретения автора:
-	•	«ИИ на десяти цифрах»: внутренняя символика — десятичные токены [0..9].
-	•	Рекурсивная вложенность смыслов: правила (pattern → action) с уровнями (tier).
-	•	Алгоритм хаос → формула → отбор: стохастическая мутация правил с локальной функцией полезности.
-	•	Коллективное обучение: узлы периодически обмениваются лучшими правилами с соседями, ускоряя распространение успешных решений.
-	•	Энергоэффективность и автономность: один бинарник, офлайн-память, дельта-синхронизация.
-	•	Собственный бинарный протокол + микро‑блокчейн (HMAC‑SHA256) параллельно существующим сетям.
-	•	Децентрализация и самосохранение (freeze/creator‑команды).
-
-⸻
-
-2. Структура проекта (рекомендуемая)
-
-kolibri/
-├── src/
-│   └── kolibri_node_v1.c        # код узла (создано)
-│   └── http_status_server.c     # HTTP API для мониторинга состояния узла
-│   └── kolibri_decimal_cell.h/c # управление цифрой и соседями
-│   └── kolibri_rule_stats.h/c   # статистика и фитнес правил
-├── docs/
-│   ├── README.md                 # этот файл
-│   └── PROTOCOL.md               # спецификация протокола (Шаг 2)
-├── scripts/
-│   └── run_cluster.sh            # запуск локального кластера (Шаг 3)
-│   └── analyze_kolibri_logs.py   # визуализация логов и эволюции правил
-├── .vscode/
-│   ├── tasks.json                # сборка из VS Code (Шаг 1.2)
-│   └── launch.json               # отладка (опционально)
-├── Makefile                      # сборка (Шаг 1.1)
-├── .gitignore                    # игнорируемые файлы
-└── bin/
-    └── kolibri_node_v1           # результирующий бинарник
-
-
-⸻
-
-3. Предварительные требования
-	•	OS: Linux или macOS (x86_64/ARM64)
-	•	Компилятор: GCC/Clang с поддержкой C11
-	•	Библиотеки:
-	•	OpenSSL (libcrypto) — для HMAC/SHA256
-	•	POSIX sockets, pthreads
-	•	Инструменты: Git, OpenSSL CLI
-	•	VS Code расширения:
-	•	C/C++ (Microsoft)
-	•	Markdown All in One
-	•	GitHub Pull Requests and Issues (по желанию)
-
-⸻
-
-4. Сборка
-
-Вариант A — через Makefile (реком.)
-
-Создайте Makefile (Шаг 1.1 добавит готовый файл) и выполните:
-
-make
-
-Результат: bin/kolibri_node_v1
-
-Вариант B — вручную
-
-mkdir -p bin
-gcc -O2 -std=c11 src/kolibri_node_v1.c -o bin/kolibri_node_v1 -lcrypto -lpthread
-
-
-## Сборка и зависимости
-
-### Для Ubuntu/Debian
-```sh
-sudo apt-get update
-sudo apt-get install libssl-dev
+```
+/
+  README.md
+  LICENSE
+  Makefile
+  kolibri.sh
+  cfg/
+  bin/
+  data/
+  logs/
+  include/
+  src/
+  tests/
+  web/
+  .github/
 ```
 
-### Для macOS (Homebrew)
-```sh
-brew install openssl
+Key subsystems delivered in this milestone:
+
+* **Δ-VM v2** – A decimal stack virtual machine with the initial opcode set (PUSHd–RET) and deterministic execution limits.
+* **Fractal KV (F-KV)** – An in-memory decimal trie with prefix lookup. Persistence hooks and compression points are stubbed for later milestones.
+* **HTTP + CLI** – Minimal HTTP server exposing `/status`, `/run`, and `/dialog`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
+* **Web Studio** – Lightweight Vite + TypeScript SPA that connects to the HTTP API and renders console-style panels for dialog, VM trace, and memory previews.
+
+## Building and running
+
+Prerequisites: GCC (C11), Make, Node.js 18+, and npm.
+
+```
+./kolibri.sh up
 ```
 
-### Если компилятор не находит OpenSSL автоматически, добавьте пути вручную:
-```sh
-gcc -O2 -std=c11 kolibri_node_v1.c -o kolibri_node_v1 -I/usr/local/opt/openssl/include -L/usr/local/opt/openssl/lib -lcrypto -lpthread
+The command builds the native node, installs web dependencies, produces the static bundle, and launches the backend on `http://localhost:9000`. Logs are written to `logs/kolibri.log`.
+
+Other CLI commands:
+
+```
+./kolibri.sh stop   # stop running node
+./kolibri.sh bench  # run built-in benchmarks (placeholder)
+./kolibri.sh clean  # remove build artifacts, logs, and data
 ```
 
+## Testing
 
-⸻
+```
+make test
+```
 
-5. Настройка VS Code (tasks.json)
+Unit tests cover the Δ-VM arithmetic instructions and the F-KV prefix lookup.
 
-Создайте .vscode/tasks.json (см. Шаг 1.2):
+## Roadmap
 
-{
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Build Kolibri",
-      "type": "shell",
-      "command": "make",
-      "group": "build",
-      "problemMatcher": ["$gcc"],
-      "detail": "Сборка kolibri_node_v1"
-    }
-  ]
-}
-
-Запуск сборки: Ctrl+Shift+B.
-
-⸻
-
-6. Подготовка секрета создателя (root.key)
-
-# 32 байта (64 hex-символа)
-openssl rand -hex 32 > root.key
-
-Храните файл в секрете. Все управляющие кадры и блоки подписываются HMAC на основе root.key.
-
-⸻
-
-7. Запуск
-
-Узел A
-
-./bin/kolibri_node_v1 \
-  --id nodeA \
-  --port 9000 \
-  --data chainA.db \
-  --root-key root.key
-
-Узел B (подключает A как соседа)
-
-./bin/kolibri_node_v1 \
-  --id nodeB \
-  --port 9001 \
-  --data chainB.db \
-  --root-key root.key \
-  --peer 127.0.0.1:9000
-
-Узлы периодически обмениваются кадрами HELLO, эволюционируют правила, публикуют события в микро‑блокчейн (*.db) и могут обмениваться лучшими правилами для коллективного обучения.
-
-Для мониторинга состояния узла доступен HTTP API:
-
-curl http://localhost:9000/status
-curl http://localhost:9000/rules
-curl http://localhost:9000/neighbors
-
-⸻
-
-8. Проверка обмена
-
-В логах ожидать строки вида:
-
-Kolibri node started: id=nodeA port=9000 peers=0 data=chainA.db
-<- HELLO [HELLO:nodeB:...]
-[CMD] ...
-
-Базы chainA.db/chainB.db будут пополняться блоками с HMAC‑подписью.
-
-⸻
-
-9. Безопасность (MVP)
-	•	Кадры и блоки подписаны HMAC‑SHA256 (root.key).
-	•	Команды CMD_CREATOR_* принимаются только при корректной подписи и метке issuer=creator.
-	•	На v2 запланирован переход на асимметричную криптографию (Ed25519/ECDSA).
-	•	При утере root.key восстановить доверенную авторизацию невозможно.
-
-⸻
-
-10. Масштабирование (локальный кластер)
-
-Скрипт scripts/run_cluster.sh (Шаг 3) позволит поднять N узлов на одной машине, например:
-
-./scripts/run_cluster.sh 10 9000
-
-где 10 — количество узлов, 9000 — стартовый порт.
-
-⸻
-
-11. Планы (дорожная карта)
-	•	Шаг 1.1: Makefile (сборка, цели run/clean).
-	•	Шаг 1.2: .vscode/tasks.json (VS Code build task).
-	•	Шаг 2: docs/PROTOCOL.md — полная спецификация бинарного протокола кадров и формата блоков.
-	•	Шаг 3: scripts/run_cluster.sh — автоматический запуск кластера (N узлов), лог‑директории.
-	•	Шаг 4: Тестовый стенд и метрики (успешность правил, latency, доля шумовых кадров).
-	•	Шаг 5: v2 криптография (Ed25519), p2p‑discovery, gossip редукции правил.
-
-⸻
-
-12. Автор и права
-
-© Кочуров Владислав Евгеньевич, 2025.
-Все права защищены. Публикация и лицензирование — по решению автора.
-
-⸻
-
-12. Дополнительно: коллективное обучение и HTTP API
-
-• Коллективное обучение: узлы периодически выбирают правило с максимальным fitness и отправляют его одному из соседей. Получатель добавляет правило, если оно уникально. Это ускоряет распространение успешных решений по кластеру.
-
-• HTTP API: каждый узел предоставляет минимальный HTTP-интерфейс для мониторинга состояния:
-  - /status — информация о состоянии узла
-  - /rules — список локальных правил
-  - /neighbors — информация о соседях
-
-API удобно использовать для визуализации, сбора статистики и интеграции с внешними системами.
-
-14. Автор и права
-
-© Кочуров Владислав Евгеньевич, 2025.
-Все права защищены. Публикация и лицензирование — по решению автора.
-
-⸻
+Stage A focuses on the core loop and interfaces. Later milestones will extend the F-KV with persistence/compression, add program synthesis strategies, incorporate the knowledge blockchain, and expand the HTTP/UI surfaces.

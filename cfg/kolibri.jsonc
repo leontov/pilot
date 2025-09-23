@@ -1,0 +1,15 @@
+{
+  // HTTP configuration
+  "http": {
+    "host": "0.0.0.0",
+    "port": 9000
+  },
+  // VM execution defaults
+  "vm": {
+    "max_steps": 2048,
+    "max_stack": 128,
+    "trace_depth": 64
+  },
+  // PRNG seed for RANDOM10 opcode
+  "seed": 1337
+}
