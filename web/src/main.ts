@@ -1,9 +1,12 @@
+import "./styles.css";
+
 const tabs = [
   { id: "dialog", label: "Диалог" },
   { id: "memory", label: "Память" },
   { id: "programs", label: "Программы" },
   { id: "synth", label: "Синтез" },
   { id: "chain", label: "Блокчейн" },
+  { id: "status", label: "Статус" },
   { id: "cluster", label: "Кластер" }
 ];
 
@@ -12,6 +15,41 @@ function createElement(tag: string, className?: string, text?: string): HTMLElem
   if (className) el.className = className;
   if (text) el.textContent = text;
   return el;
+}
+
+type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "kolibri-ui-theme";
+
+function determineInitialTheme(): Theme {
+  if (typeof window === "undefined") {
+    return "dark";
+  }
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+  const prefersLight = window.matchMedia
+    ? window.matchMedia("(prefers-color-scheme: light)").matches
+    : false;
+  return prefersLight ? "light" : "dark";
+}
+
+function applyTheme(theme: Theme) {
+  document.body.dataset.theme = theme;
+  document.body.style.colorScheme = theme;
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }
+}
+
+function updateThemeToggle(button: HTMLButtonElement, theme: Theme) {
+  const nextTheme = theme === "dark" ? "light" : "dark";
+  const label = nextTheme === "dark" ? "Тёмная тема" : "Светлая тема";
+  button.textContent = label;
+  button.setAttribute("aria-label", `Переключить тему на ${nextTheme === "dark" ? "тёмную" : "светлую"}`);
+  button.setAttribute("title", label);
+  button.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
 }
 
 function digitsFromExpression(expr: string): number[] {
@@ -93,6 +131,8 @@ function buildTraceTable(trace: TraceEntry[]): HTMLElement {
 }
 
 function renderDialog(container: HTMLElement) {
+  const historyEntries: { input: string; answer: unknown; timestamp: string }[] = [];
+
   const form = createElement("form", "panel form") as HTMLFormElement;
   const input = document.createElement("input");
   input.type = "text";
@@ -103,11 +143,62 @@ function renderDialog(container: HTMLElement) {
   const output = createElement("pre", "output");
   const traceContainer = createElement("div", "trace-container");
 
+  const historyContainer = createElement("div", "history-container");
+  const historyTitle = createElement("h3", "history-title", "История");
+  const historyList = createElement("ul", "history-list");
+  const historyEmpty = createElement("p", "history-empty", "Диалогов пока нет.");
+
+  const renderHistory = () => {
+    historyList.innerHTML = "";
+    if (historyEntries.length === 0) {
+      if (!historyContainer.contains(historyEmpty)) {
+        historyContainer.appendChild(historyEmpty);
+      }
+      if (historyContainer.contains(historyList)) {
+        historyContainer.removeChild(historyList);
+      }
+      return;
+    }
+
+    if (historyContainer.contains(historyEmpty)) {
+      historyContainer.removeChild(historyEmpty);
+    }
+    if (!historyContainer.contains(historyList)) {
+      historyContainer.appendChild(historyList);
+    }
+
+    historyEntries.forEach((entry) => {
+      const item = createElement("li", "history-item");
+      const meta = createElement("div", "history-meta");
+      const inputLabel = createElement("span", "history-input", entry.input);
+      const timeLabel = createElement("time", "history-time", entry.timestamp);
+      meta.appendChild(inputLabel);
+      meta.appendChild(timeLabel);
+
+      const answer = createElement("pre", "history-answer");
+      const answerText =
+        typeof entry.answer === "string"
+          ? entry.answer
+          : JSON.stringify(entry.answer, null, 2);
+      answer.textContent = answerText;
+
+      item.appendChild(meta);
+      item.appendChild(answer);
+      historyList.appendChild(item);
+    });
+  };
+
+  historyContainer.appendChild(historyTitle);
+  historyContainer.appendChild(historyEmpty);
+
+  const resultWrapper = createElement("div", "dialog-result");
+  resultWrapper.appendChild(output);
+  resultWrapper.appendChild(historyContainer);
+
   form.appendChild(input);
   form.appendChild(submit);
   container.appendChild(form);
-  container.appendChild(output);
-  container.appendChild(traceContainer);
+
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -122,14 +213,13 @@ function renderDialog(container: HTMLElement) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data = await res.json();
       const trace = Array.isArray(data.trace) ? data.trace : null;
       output.textContent = JSON.stringify(data, null, 2);
-      if (trace && trace.length > 0) {
-        const title = createElement("h3", "trace-title", "Трассировка");
-        traceContainer.appendChild(title);
-        traceContainer.appendChild(buildTraceTable(trace));
-      }
+
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
     }
@@ -137,10 +227,15 @@ function renderDialog(container: HTMLElement) {
 }
 
 function renderStatus(container: HTMLElement) {
-  const button = createElement("button", "refresh", "Обновить статус");
+  const panel = createElement("div", "panel");
+  const button = createElement("button", "button-primary", "Обновить статус") as HTMLButtonElement;
+  button.type = "button";
   const pre = createElement("pre", "output");
-  container.appendChild(button);
+  panel.appendChild(button);
+  container.appendChild(panel);
   container.appendChild(pre);
+  container.classList.add("split-view");
+
   button.addEventListener("click", async () => {
     pre.textContent = "Загрузка...";
     try {
@@ -209,6 +304,7 @@ const renderers: Record<string, (container: HTMLElement) => void> = {
   programs: renderPrograms,
   synth: renderSynth,
   chain: renderChain,
+  status: renderStatus,
   cluster: renderCluster
 };
 
@@ -217,8 +313,29 @@ function mountApp() {
   if (!app) return;
 
   const wrapper = createElement("div", "app-wrapper");
+  const header = createElement("header", "app-header");
   const nav = createElement("nav", "tabs");
+  nav.setAttribute("aria-label", "Основные разделы Kolibri Studio");
+  const controls = createElement("div", "header-controls");
+  const themeToggle = createElement("button", "theme-toggle") as HTMLButtonElement;
+  themeToggle.type = "button";
+
+  let theme = determineInitialTheme();
+  applyTheme(theme);
+  updateThemeToggle(themeToggle, theme);
+
+  themeToggle.addEventListener("click", () => {
+    theme = theme === "dark" ? "light" : "dark";
+    applyTheme(theme);
+    updateThemeToggle(themeToggle, theme);
+  });
+
+  controls.appendChild(themeToggle);
+  header.appendChild(nav);
+  header.appendChild(controls);
+
   const content = createElement("section", "content");
+  content.setAttribute("role", "region");
 
   tabs.forEach((tab, idx) => {
     const btn = createElement("button", idx === 0 ? "tab active" : "tab", tab.label);
@@ -226,43 +343,18 @@ function mountApp() {
       nav.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
       btn.classList.add("active");
       content.innerHTML = "";
+      content.className = "content";
       const renderer = renderers[tab.id];
       renderer(content);
     });
     nav.appendChild(btn);
   });
 
-  wrapper.appendChild(nav);
+  wrapper.appendChild(header);
   wrapper.appendChild(content);
   app.appendChild(wrapper);
 
   renderers["dialog"](content);
 }
 
-function injectStyles() {
-  const style = document.createElement("style");
-  style.textContent = `
-    body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #f5f5f5; }
-    .app-wrapper { display: flex; flex-direction: column; height: 100vh; }
-    .tabs { display: flex; gap: 8px; padding: 12px; background: #1b1b1b; }
-    .tab { background: #2c2c2c; border: none; color: #f5f5f5; padding: 8px 14px; cursor: pointer; border-radius: 4px; }
-    .tab.active { background: #3f64ff; }
-    .content { flex: 1; padding: 16px; overflow-y: auto; }
-    .panel { display: flex; gap: 12px; margin-bottom: 16px; }
-    input { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #222; color: #f5f5f5; }
-    button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
-    pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; margin-bottom: 12px; }
-    .placeholder { opacity: 0.7; }
-    .trace-container { margin-top: 8px; }
-    .trace-title { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
-    .trace-table { width: 100%; border-collapse: collapse; background: #141414; border-radius: 4px; overflow: hidden; }
-    .trace-table th { background: #2c2c2c; text-transform: uppercase; font-size: 12px; letter-spacing: 0.08em; color: #dcdcdc; }
-    .trace-table th, .trace-table td { padding: 8px; border-bottom: 1px solid #2a2a2a; text-align: left; font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .trace-table tr:nth-child(even) td { background: #101010; }
-    .trace-table tr:last-child td { border-bottom: none; }
-  `;
-  document.head.appendChild(style);
-}
-
-injectStyles();
 mountApp();

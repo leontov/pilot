@@ -22,14 +22,39 @@
 
 #define RECV_BUFFER 8192
 
+typedef struct client_task_s {
+    int client_fd;
+    struct client_task_s *next;
+} client_task_t;
+
 typedef struct {
     int sockfd;
-    pthread_t thread;
+    pthread_t accept_thread;
+    pthread_t *worker_threads;
+    size_t worker_count;
     int running;
+    int stop_accept;
+    int stop_workers;
     kolibri_config_t cfg;
+    pthread_mutex_t queue_mutex;
+    pthread_cond_t queue_cond;
+    client_task_t *queue_head;
+    client_task_t *queue_tail;
 } server_state_t;
 
-static server_state_t server = { .sockfd = -1, .thread = 0, .running = 0 };
+static server_state_t server = {
+    .sockfd = -1,
+    .accept_thread = 0,
+    .worker_threads = NULL,
+    .worker_count = 0,
+    .running = 0,
+    .stop_accept = 0,
+    .stop_workers = 0,
+    .queue_mutex = PTHREAD_MUTEX_INITIALIZER,
+    .queue_cond = PTHREAD_COND_INITIALIZER,
+    .queue_head = NULL,
+    .queue_tail = NULL,
+};
 
 static int create_listen_socket(const char *host, uint16_t port) {
     struct addrinfo hints;
@@ -175,10 +200,84 @@ static void handle_client(int client) {
     http_response_free(&resp);
 }
 
-static void *server_loop(void *arg) {
+static size_t determine_worker_count(void) {
+    long nproc = sysconf(_SC_NPROCESSORS_ONLN);
+    if (nproc < 1) {
+        return 4;
+    }
+    if (nproc > 32) {
+        return 32;
+    }
+    return (size_t)nproc;
+}
+
+static void enqueue_client(int client_fd) {
+    client_task_t *task = malloc(sizeof(client_task_t));
+    if (!task) {
+        log_error("Failed to allocate client task");
+        close(client_fd);
+        return;
+    }
+    task->client_fd = client_fd;
+    task->next = NULL;
+
+    pthread_mutex_lock(&server.queue_mutex);
+    if (server.queue_tail) {
+        server.queue_tail->next = task;
+    } else {
+        server.queue_head = task;
+    }
+    server.queue_tail = task;
+    pthread_cond_signal(&server.queue_cond);
+    pthread_mutex_unlock(&server.queue_mutex);
+}
+
+static client_task_t *dequeue_client(void) {
+    client_task_t *task = server.queue_head;
+    if (task) {
+        server.queue_head = task->next;
+        if (!server.queue_head) {
+            server.queue_tail = NULL;
+        }
+    }
+    return task;
+}
+
+static void *worker_loop(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&server.queue_mutex);
+        while (!server.queue_head && !server.stop_workers) {
+            pthread_cond_wait(&server.queue_cond, &server.queue_mutex);
+        }
+        if (server.stop_workers && !server.queue_head) {
+            pthread_mutex_unlock(&server.queue_mutex);
+            break;
+        }
+        client_task_t *task = dequeue_client();
+        pthread_mutex_unlock(&server.queue_mutex);
+        if (!task) {
+            continue;
+        }
+        int client = task->client_fd;
+        free(task);
+        handle_client(client);
+        close(client);
+    }
+    return NULL;
+}
+
+static void *accept_loop(void *arg) {
     (void)arg;
     log_info("HTTP server listening on %s:%u", server.cfg.http.host, server.cfg.http.port);
-    while (server.running) {
+    while (1) {
+        pthread_mutex_lock(&server.queue_mutex);
+        int should_stop = server.stop_accept;
+        pthread_mutex_unlock(&server.queue_mutex);
+        if (should_stop) {
+            break;
+        }
+
         struct sockaddr_in addr;
         socklen_t addrlen = sizeof(addr);
         int client = accept(server.sockfd, (struct sockaddr *)&addr, &addrlen);
@@ -186,10 +285,20 @@ static void *server_loop(void *arg) {
             if (errno == EINTR) {
                 continue;
             }
+            if (errno == EBADF || errno == EINVAL) {
+                break;
+            }
+            log_error("accept failed: %s", strerror(errno));
+            continue;
+        }
+        pthread_mutex_lock(&server.queue_mutex);
+        if (server.stop_workers) {
+            pthread_mutex_unlock(&server.queue_mutex);
+            close(client);
             break;
         }
-        handle_client(client);
-        close(client);
+        pthread_mutex_unlock(&server.queue_mutex);
+        enqueue_client(client);
     }
     return NULL;
 }
@@ -205,14 +314,58 @@ int http_server_start(const kolibri_config_t *cfg) {
     if (server.sockfd < 0) {
         return -1;
     }
+    server.queue_head = NULL;
+    server.queue_tail = NULL;
+    server.stop_accept = 0;
+    server.stop_workers = 0;
     server.running = 1;
     server.cfg = *cfg;
-    uint64_t start_ms = (uint64_t)time(NULL) * 1000ull;
-    http_routes_set_start_time(start_ms);
-    if (pthread_create(&server.thread, NULL, server_loop, NULL) != 0) {
+    size_t worker_count = determine_worker_count();
+    pthread_t *workers = calloc(worker_count, sizeof(pthread_t));
+    if (!workers) {
         close(server.sockfd);
         server.sockfd = -1;
         server.running = 0;
+        return -1;
+    }
+    for (size_t i = 0; i < worker_count; ++i) {
+        if (pthread_create(&workers[i], NULL, worker_loop, NULL) != 0) {
+            pthread_mutex_lock(&server.queue_mutex);
+            server.stop_workers = 1;
+            pthread_cond_broadcast(&server.queue_cond);
+            pthread_mutex_unlock(&server.queue_mutex);
+            for (size_t j = 0; j < i; ++j) {
+                pthread_join(workers[j], NULL);
+            }
+            free(workers);
+            close(server.sockfd);
+            server.sockfd = -1;
+            server.running = 0;
+            server.stop_workers = 0;
+            return -1;
+        }
+    }
+    server.worker_threads = workers;
+    server.worker_count = worker_count;
+    uint64_t start_ms = (uint64_t)time(NULL) * 1000ull;
+    http_routes_set_start_time(start_ms);
+    if (pthread_create(&server.accept_thread, NULL, accept_loop, NULL) != 0) {
+        pthread_mutex_lock(&server.queue_mutex);
+        server.stop_accept = 1;
+        server.stop_workers = 1;
+        pthread_cond_broadcast(&server.queue_cond);
+        pthread_mutex_unlock(&server.queue_mutex);
+        for (size_t i = 0; i < server.worker_count; ++i) {
+            pthread_join(server.worker_threads[i], NULL);
+        }
+        free(server.worker_threads);
+        server.worker_threads = NULL;
+        server.worker_count = 0;
+        close(server.sockfd);
+        server.sockfd = -1;
+        server.running = 0;
+        server.stop_accept = 0;
+        server.stop_workers = 0;
         return -1;
     }
     return 0;
@@ -222,9 +375,35 @@ void http_server_stop(void) {
     if (!server.running) {
         return;
     }
+    pthread_mutex_lock(&server.queue_mutex);
     server.running = 0;
+    server.stop_accept = 1;
+    server.stop_workers = 1;
+    pthread_cond_broadcast(&server.queue_cond);
+    pthread_mutex_unlock(&server.queue_mutex);
     shutdown(server.sockfd, SHUT_RDWR);
     close(server.sockfd);
     server.sockfd = -1;
-    pthread_join(server.thread, NULL);
+    pthread_join(server.accept_thread, NULL);
+    for (size_t i = 0; i < server.worker_count; ++i) {
+        pthread_join(server.worker_threads[i], NULL);
+    }
+    free(server.worker_threads);
+    server.worker_threads = NULL;
+    server.worker_count = 0;
+
+    pthread_mutex_lock(&server.queue_mutex);
+    client_task_t *task = server.queue_head;
+    server.queue_head = NULL;
+    server.queue_tail = NULL;
+    pthread_mutex_unlock(&server.queue_mutex);
+    while (task) {
+        client_task_t *next = task->next;
+        close(task->client_fd);
+        free(task);
+        task = next;
+    }
+
+    server.stop_accept = 0;
+    server.stop_workers = 0;
 }
