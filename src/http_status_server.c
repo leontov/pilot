@@ -24,9 +24,10 @@ void run_http_status_server(int port, rules_t* rules, decimal_cell_t* cell) {
         // Простой парсер GET /status
         if (strstr(req, "GET /status")) {
             char resp[4096];
+            size_t neighbors = decimal_cell_child_count(cell, false);
             snprintf(resp, sizeof(resp),
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nDigit: %d\nNeighbors: %d\nRules: %d\n",
-                cell->node_digit, cell->n_neighbors, rules->count);
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nDigit: %d\nNeighbors: %zu\nRules: %d\n",
+                cell->node_digit, neighbors, rules->count);
             write(client, resp, strlen(resp));
         } else if (strstr(req, "GET /rules")) {
             char resp[4096];
@@ -39,9 +40,13 @@ void run_http_status_server(int port, rules_t* rules, decimal_cell_t* cell) {
         } else if (strstr(req, "GET /neighbors")) {
             char resp[4096];
             int off = snprintf(resp, sizeof(resp), "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n");
-            for (size_t i = 0; i < cell->n_neighbors && off < sizeof(resp)-128; i++) {
-                off += snprintf(resp+off, sizeof(resp)-off, "Neighbor %zu: digit=%d active=%d last_sync=%llu\n",
-                    i, cell->neighbor_digits[i], cell->is_active[i], (unsigned long long)cell->last_sync[i]);
+            uint8_t digits[DECIMAL_BRANCHING];
+            size_t count = decimal_cell_collect_children(cell, digits, DECIMAL_BRANCHING, false);
+            for (size_t i = 0; i < count && off < sizeof(resp)-128; i++) {
+                uint8_t digit = digits[i];
+                off += snprintf(resp+off, sizeof(resp)-off, "Neighbor %zu: digit=%u active=%d last_sync=%llu\n",
+                    i, digit, decimal_cell_child_is_active(cell, digit),
+                    (unsigned long long)decimal_cell_child_last_sync(cell, digit));
             }
             write(client, resp, strlen(resp));
         } else {

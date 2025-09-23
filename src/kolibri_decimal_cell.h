@@ -3,16 +3,18 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
-#define MAX_NEIGHBORS 9  // максимум 9 соседей (цифры 0-9, кроме собственной)
+#define DECIMAL_BRANCHING 10
 #define SYNC_INTERVAL 1000  // интервал синхронизации в мс
 
-typedef struct {
-    uint8_t node_digit;          // собственная цифра узла (0-9)
-    uint8_t neighbor_digits[9];  // цифры соседей
-    uint8_t n_neighbors;         // текущее количество соседей
-    uint64_t last_sync[9];      // время последней синхронизации с каждым соседом
-    bool is_active[9];          // активность соседей
+typedef struct decimal_cell {
+    uint8_t node_digit;                       // собственная цифра узла (0-9)
+    uint8_t depth;                            // текущая глубина ветви
+    bool initialized;                         // флаг инициализации для безопасной очистки
+    struct decimal_cell* children[DECIMAL_BRANCHING];  // дочерние узлы по цифрам 0-9
+    uint64_t last_sync[DECIMAL_BRANCHING];    // время последней синхронизации с дочерними ветвями
+    bool is_active[DECIMAL_BRANCHING];        // активность дочерних ветвей
 } decimal_cell_t;
 
 // Инициализация узла с его цифрой
@@ -21,25 +23,36 @@ void init_decimal_cell(decimal_cell_t* cell, uint8_t digit);
 // Очистка ресурсов узла
 void cleanup_decimal_cell(decimal_cell_t* cell);
 
-// Добавление соседа
-int add_neighbor(decimal_cell_t* cell, uint8_t digit);
+// Траверс по пути цифр. При create = true недостающие узлы создаются.
+decimal_cell_t* decimal_cell_traverse(decimal_cell_t* root, const uint8_t* path, size_t length, bool create);
 
-// Удаление соседа
-void remove_neighbor(decimal_cell_t* cell, uint8_t digit);
+// Активация/деактивация ветви по пути цифр
+bool decimal_cell_set_active(decimal_cell_t* root, const uint8_t* path, size_t length, bool active);
 
-// Проверка необходимости синхронизации с соседом
-bool needs_sync(decimal_cell_t* cell, uint8_t neighbor_idx);
+// Маркировка синхронизации ветви
+bool decimal_cell_mark_sync(decimal_cell_t* root, const uint8_t* path, size_t length, uint64_t now);
 
-// Маркировка успешной синхронизации
-void mark_sync(decimal_cell_t* cell, uint8_t neighbor_idx);
+// Проверка необходимости синхронизации для ветви
+bool decimal_cell_needs_sync(const decimal_cell_t* root, const uint8_t* path, size_t length, uint64_t now);
 
-// Проверка активности соседа
-bool is_neighbor_active(decimal_cell_t* cell, uint8_t neighbor_idx);
+// Удаление ветви и всей ее подструктуры
+bool decimal_cell_remove_branch(decimal_cell_t* root, const uint8_t* path, size_t length);
 
-// Получение индекса соседа по его цифре
-int get_neighbor_index(decimal_cell_t* cell, uint8_t digit);
+// Получение списка дочерних цифр (активных или всех)
+size_t decimal_cell_collect_children(const decimal_cell_t* cell, uint8_t* out_digits, size_t max_out, bool active_only);
 
-// Обновление состояния ячейки
+// Проверка активности и получение времени синхронизации дочерней цифры
+bool decimal_cell_child_is_active(const decimal_cell_t* cell, uint8_t digit);
+uint64_t decimal_cell_child_last_sync(const decimal_cell_t* cell, uint8_t digit);
+
+// Подсчет дочерних узлов
+size_t decimal_cell_child_count(const decimal_cell_t* cell, bool active_only);
+
+// Обновление состояния ячейки и всех дочерних ветвей
 void update_cell_state(decimal_cell_t* cell);
+
+#define MAX_NEIGHBORS (DECIMAL_BRANCHING - 1)
+
+#define DECIMAL_PATH_DIGIT(d) ((uint8_t)((d) % DECIMAL_BRANCHING))
 
 #endif
