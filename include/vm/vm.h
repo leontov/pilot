@@ -48,6 +48,8 @@ typedef struct {
     uint32_t steps;
 } vm_result_t;
 
+void vm_set_seed(uint32_t seed);
+
 int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result_t *out);
 
 #ifdef __cplusplus

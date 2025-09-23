@@ -4,6 +4,7 @@
 
 #include "http/http_routes.h"
 #include "util/log.h"
+#include "vm/vm.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -209,6 +210,7 @@ int http_server_start(const kolibri_config_t *cfg) {
     server.cfg = *cfg;
     uint64_t start_ms = (uint64_t)time(NULL) * 1000ull;
     http_routes_set_start_time(start_ms);
+    vm_set_seed(cfg->seed);
     if (pthread_create(&server.thread, NULL, server_loop, NULL) != 0) {
         close(server.sockfd);
         server.sockfd = -1;

@@ -13,6 +13,10 @@
 
 static uint32_t lcg_state = 1337u;
 
+void vm_set_seed(uint32_t seed) {
+    lcg_state = seed;
+}
+
 static uint64_t current_time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
