@@ -1,3 +1,5 @@
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
 const tabs = [
   { id: "dialog", label: "Диалог" },
   { id: "memory", label: "Память" },
@@ -54,7 +56,7 @@ function renderDialog(container: HTMLElement) {
     const payload = { digits: digitsFromExpression(expr) };
     output.textContent = "Загрузка...";
     try {
-      const res = await fetch("/dialog", {
+      const res = await fetch(`${API_BASE}/dialog`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -75,7 +77,7 @@ function renderStatus(container: HTMLElement) {
   button.addEventListener("click", async () => {
     pre.textContent = "Загрузка...";
     try {
-      const res = await fetch("/status");
+      const res = await fetch(`${API_BASE}/status`);
       const json = await res.json();
       pre.textContent = JSON.stringify(json, null, 2);
     } catch (err) {
@@ -104,7 +106,9 @@ function renderMemory(container: HTMLElement) {
     if (!key) return;
     pre.textContent = "Загрузка...";
     try {
-      const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
+      const res = await fetch(
+        `${API_BASE}/fkv/prefix?key=${encodeURIComponent(key)}&k=5`
+      );
       const json = await res.json();
       pre.textContent = JSON.stringify(json, null, 2);
     } catch (err) {
