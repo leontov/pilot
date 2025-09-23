@@ -455,8 +455,6 @@ int http_server_start(const kolibri_config_t *cfg) {
     http_routes_set_start_time(start_ms);
 
     vm_set_seed(cfg->seed);
-    if (pthread_create(&server.thread, NULL, server_loop, NULL) != 0) {
-
     if (pthread_create(&server.accept_thread, NULL, accept_loop, NULL) != 0) {
         pthread_mutex_lock(&server.queue_mutex);
         server.stop_accept = 1;

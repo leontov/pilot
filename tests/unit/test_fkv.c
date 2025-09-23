@@ -58,8 +58,8 @@ static void test_prefix(void) {
 
 static void test_serialization_roundtrip(void) {
     fkv_init();
-    insert_sample("123", "45");
-    insert_sample("555", "99");
+    insert_sample("123", "45", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("555", "99", FKV_ENTRY_TYPE_VALUE);
 
     char snapshot[128];
     create_temp_snapshot(snapshot, sizeof(snapshot), "fkv_snapshot_roundtrip");
@@ -90,7 +90,7 @@ static void test_serialization_roundtrip(void) {
 
 static void test_load_overwrites_existing(void) {
     fkv_init();
-    insert_sample("123", "45");
+    insert_sample("123", "45", FKV_ENTRY_TYPE_VALUE);
 
     char snapshot[128];
     create_temp_snapshot(snapshot, sizeof(snapshot), "fkv_snapshot_overwrite");
@@ -98,7 +98,7 @@ static void test_load_overwrites_existing(void) {
     fkv_shutdown();
 
     fkv_init();
-    insert_sample("999", "11");
+    insert_sample("999", "11", FKV_ENTRY_TYPE_VALUE);
     assert(fkv_load(snapshot) == 0);
 
     uint8_t key999[] = {9, 9, 9};
