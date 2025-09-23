@@ -31,8 +31,9 @@ void learning_system_generate_rules(LearningSystem* system);
 void learning_system_optimize_formulas(LearningSystem* system);
 
 // Федеративное обучение - обмен опытом между узлами
-bool learning_system_federated_update(LearningSystem* system, 
-                                    const char* remote_node_address);
+bool learning_system_federated_update(LearningSystem* system,
+                                    const char* remote_host,
+                                    int remote_port);
 
 // Экспорт накопленных знаний
 bool learning_system_export_knowledge(LearningSystem* system, const char* filename);

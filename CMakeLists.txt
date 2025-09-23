@@ -98,6 +98,11 @@ target_include_directories(test_formula PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/include
         ${JSONC_INCLUDE_DIRS})
+add_executable(test_network tests/test_network.c src/network.c)
+target_link_libraries(test_network PRIVATE pthread)
+target_include_directories(test_network PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/include)
 
 # Добавляем пути к заголовочным файлам для веб-интерфейса
 target_include_directories(web_interface PRIVATE

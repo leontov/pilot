@@ -272,8 +272,30 @@ char* kolibri_ai_serialize_state(const KolibriAI* ai) {
 // Обработка формулы от соседнего узла
 int kolibri_ai_process_remote_formula(KolibriAI* ai, const char* json) {
     if (!ai || !json) return -1;
-    
-    Formula* formula = deserialize_formula(json);
+
+    const char* payload_str = json;
+    struct json_object* root = json_tokener_parse(json);
+    if (root && json_object_is_type(root, json_type_object)) {
+        struct json_object* type_obj = NULL;
+        if (json_object_object_get_ex(root, "type", &type_obj)) {
+            const char* type = json_object_get_string(type_obj);
+            if (type && strcmp(type, "formula") != 0) {
+                json_object_put(root);
+                return -1;
+            }
+        }
+
+        struct json_object* payload = NULL;
+        if (json_object_object_get_ex(root, "payload", &payload)) {
+            if (json_object_is_type(payload, json_type_string)) {
+                payload_str = json_object_get_string(payload);
+            } else {
+                payload_str = json_object_to_json_string(payload);
+            }
+        }
+    }
+
+    Formula* formula = deserialize_formula(payload_str);
     if (!formula) return -1;
     
     int result = -1;
@@ -311,6 +333,14 @@ int kolibri_ai_process_remote_formula(KolibriAI* ai, const char* json) {
     
     formula_clear(formula);
     free(formula);
+    if (root) {
+        json_object_put(root);
+    }
+
+    if (result == 0) {
+        printf("[NETWORK] Remote formula applied successfully\n");
+    }
+
     return result;
 }
 
