@@ -165,7 +165,7 @@ function renderDialog(container: HTMLElement) {
     output.textContent = "Загрузка...";
     traceContainer.innerHTML = "";
     try {
-      const res = await fetch("/dialog", {
+      const res = await fetch("/api/v1/dialog", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -193,17 +193,7 @@ function renderStatus(container: HTMLElement) {
   button.addEventListener("click", async () => {
     pre.textContent = "Загрузка...";
     try {
-      const res = await fetch("/status");
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const json: StatusResponse = await res.json();
-      pre.textContent = [
-        `Аптайм: ${json.uptime_ms} мс`,
-        `VM max steps: ${json.vm_max_steps}`,
-        `VM max stack: ${json.vm_max_stack}`,
-        `Seed: ${json.seed}`
-      ].join("\n");
+
     } catch (err) {
       pre.textContent = `Ошибка: ${String(err)}`;
     }
@@ -230,18 +220,7 @@ function renderMemory(container: HTMLElement) {
     if (!key) return;
     pre.textContent = "Загрузка...";
     try {
-      const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const json: FkvResponse = await res.json();
-      if (!Array.isArray(json.entries) || json.entries.length === 0) {
-        pre.textContent = "Совпадений не найдено.";
-        return;
-      }
-      pre.textContent = json.entries
-        .map((entry) => `${entry.key} → ${entry.value}`)
-        .join("\n");
+
     } catch (err) {
       showError(`Ошибка: ${String(err)}`);
     }
