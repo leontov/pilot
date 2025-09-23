@@ -1,10 +1,13 @@
 #include "http/http_routes.h"
 
+#include "blockchain.h"
 #include "fkv/fkv.h"
+#include "kolibri_ai.h"
 #include "util/log.h"
 #include "vm/vm.h"
 
 #include <ctype.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -20,8 +23,12 @@
 
 static uint64_t server_start_ms = 0;
 
+
 void http_routes_set_start_time(uint64_t ms_since_epoch) {
     server_start_ms = ms_since_epoch;
+}
+
+
 }
 
 static uint64_t now_ms(void) {
@@ -250,14 +257,18 @@ static int compile_expression_program(const uint8_t *digits, size_t len, struct 
     return 0;
 }
 
-static int parse_program_array(const char *body, size_t body_len, uint8_t **out, size_t *out_len) {
+static int parse_named_byte_array(const char *body,
+                                  size_t body_len,
+                                  const char *field,
+                                  uint8_t **out,
+                                  size_t *out_len) {
     (void)body_len;
-    const char *prog_key = strstr(body, "\"program\"");
-    if (!prog_key) {
+    const char *field_key = strstr(body, field);
+    if (!field_key) {
         return -1;
     }
-    const char *start = strchr(prog_key, '[');
-    const char *end = strchr(prog_key, ']');
+    const char *start = strchr(field_key, '[');
+    const char *end = strchr(field_key, ']');
     if (!start || !end || end <= start) {
         return -1;
     }
@@ -296,6 +307,187 @@ static int parse_program_array(const char *body, size_t body_len, uint8_t **out,
     *out = buf;
     *out_len = count;
     return 0;
+}
+
+static int parse_program_array(const char *body, size_t body_len, uint8_t **out, size_t *out_len) {
+    return parse_named_byte_array(body, body_len, "\"program\"", out, out_len);
+}
+
+static int parse_bytecode_array(const char *body, size_t body_len, uint8_t **out, size_t *out_len) {
+    return parse_named_byte_array(body, body_len, "\"bytecode\"", out, out_len);
+}
+
+static int parse_string_field(const char *body, const char *field, char *out, size_t out_size) {
+    if (!body || !field || !out || out_size == 0) {
+        return -1;
+    }
+    const char *field_key = strstr(body, field);
+    if (!field_key) {
+        return -1;
+    }
+    const char *colon = strchr(field_key, ':');
+    if (!colon) {
+        return -1;
+    }
+    const char *start = strchr(colon, '\"');
+    if (!start) {
+        return -1;
+    }
+    start++;
+    const char *end = strchr(start, '\"');
+    if (!end) {
+        return -1;
+    }
+    size_t len = (size_t)(end - start);
+    if (len + 1 > out_size) {
+        return -1;
+    }
+    memcpy(out, start, len);
+    out[len] = '\0';
+    return 0;
+}
+
+static void compute_program_metrics(const uint8_t *bytecode, size_t len, double *poe, double *mdl, double *score) {
+    double local_poe = 0.0;
+    double local_mdl = 0.0;
+    double local_score = 0.0;
+
+    if (bytecode && len > 0) {
+        size_t active = 0;
+        size_t sum = 0;
+        for (size_t i = 0; i < len; ++i) {
+            if (bytecode[i] != 0) {
+                active++;
+            }
+            sum += bytecode[i];
+        }
+        local_poe = (double)active / (double)len;
+        local_mdl = (double)len;
+        double normalized = (double)sum / (255.0 * (double)len);
+        local_score = local_poe * 0.7 + normalized * 0.3 - 0.01 * local_mdl;
+        if (local_score < 0.0) {
+            local_score = 0.0;
+        }
+    }
+
+    if (poe) {
+        *poe = local_poe;
+    }
+    if (mdl) {
+        *mdl = local_mdl;
+    }
+    if (score) {
+        *score = local_score;
+    }
+}
+
+static void format_bytecode_content(char *dest, size_t dest_size, const uint8_t *bytecode, size_t len) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+    dest[0] = '\0';
+    size_t offset = 0;
+    for (size_t i = 0; i < len && offset + 4 < dest_size; ++i) {
+        int written = snprintf(dest + offset, dest_size - offset, "%s%u", (i == 0) ? "" : " ", (unsigned)bytecode[i]);
+        if (written <= 0) {
+            break;
+        }
+        if ((size_t)written >= dest_size - offset) {
+            dest[dest_size - 1] = '\0';
+            break;
+        }
+        offset += (size_t)written;
+    }
+}
+
+static const Formula *blockchain_find_formula(const Blockchain *chain, const char *program_id) {
+    if (!chain || !program_id) {
+        return NULL;
+    }
+    for (size_t i = 0; i < chain->block_count; ++i) {
+        const Block *block = chain->blocks[i];
+        if (!block) {
+            continue;
+        }
+        for (size_t j = 0; j < block->formula_count; ++j) {
+            const Formula *formula = block->formulas[j];
+            if (formula && strcmp(formula->id, program_id) == 0) {
+                return formula;
+            }
+        }
+    }
+    return NULL;
+}
+
+static void respond_program_submit(const kolibri_config_t *cfg, const char *body, size_t body_len, http_response_t *resp) {
+    (void)cfg;
+    if (!global_blockchain) {
+        set_response(resp, 503, "application/json", "{\"error\":\"blockchain unavailable\"}");
+        return;
+    }
+
+    uint8_t *bytecode = NULL;
+    size_t byte_len = 0;
+    if (parse_bytecode_array(body, body_len, &bytecode, &byte_len) != 0 || byte_len == 0) {
+        free(bytecode);
+        set_response(resp, 400, "application/json", "{\"error\":\"invalid bytecode\"}");
+        return;
+    }
+
+    double poe = 0.0;
+    double mdl = 0.0;
+    double score = 0.0;
+    compute_program_metrics(bytecode, byte_len, &poe, &mdl, &score);
+
+    Formula formula = {0};
+    unsigned long current_id = next_program_id;
+    snprintf(formula.id, sizeof(formula.id), "program-%lu", current_id);
+    formula.representation = FORMULA_REPRESENTATION_TEXT;
+    formula.type = FORMULA_COMPOSITE;
+    formula.created_at = time(NULL);
+    formula.effectiveness = poe;
+    format_bytecode_content(formula.content, sizeof(formula.content), bytecode, byte_len);
+
+    Formula *formulas[1];
+    formulas[0] = &formula;
+    bool added = blockchain_add_block(global_blockchain, formulas, 1);
+    free(bytecode);
+    if (!added) {
+        set_response(resp, 500, "application/json", "{\"error\":\"blockchain append failed\"}");
+        return;
+    }
+
+    next_program_id = current_id + 1;
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"PoE\":%.3f,\"MDL\":%.3f,\"score\":%.3f}", poe, mdl, score);
+    set_response(resp, 200, "application/json", buf);
+}
+
+static void respond_chain_submit(const char *body, size_t body_len, http_response_t *resp) {
+    (void)body_len;
+    if (!global_blockchain) {
+        set_response(resp, 503, "application/json", "{\"status\":\"unavailable\"}");
+        return;
+    }
+
+    char program_id[64];
+    if (parse_string_field(body, "\"program_id\"", program_id, sizeof(program_id)) != 0) {
+        set_response(resp, 400, "application/json", "{\"status\":\"invalid_request\"}");
+        return;
+    }
+
+    if (!blockchain_verify(global_blockchain)) {
+        set_response(resp, 500, "application/json", "{\"status\":\"invalid_chain\"}");
+        return;
+    }
+
+    if (!blockchain_find_formula(global_blockchain, program_id)) {
+        set_response(resp, 404, "application/json", "{\"status\":\"not_found\"}");
+        return;
+    }
+
+    set_response(resp, 200, "application/json", "{\"status\":\"accepted\"}");
 }
 
 static void append_trace_json(char **out, size_t *out_len, size_t *out_cap, const vm_trace_t *trace) {
@@ -358,10 +550,11 @@ static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, 
         return;
     }
     int written = snprintf(json, cap,
-                           "{\"status\":%d,\"steps\":%u,\"result\":%llu,\"trace\":[",
+                           "{\"status\":%d,\"steps\":%u,\"result\":%llu,\"halted\":%u,\"trace\":[",
                            result.status,
                            result.steps,
-                           (unsigned long long)result.result);
+                           (unsigned long long)result.result,
+                           (unsigned)result.halted);
     if (written < 0) {
         free(json);
         free(entries);
@@ -414,6 +607,7 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
     free(bb.data);
 }
 
+
 static int append_json(char **buf, size_t *cap, size_t *len, const char *fmt, ...) {
     while (1) {
         va_list ap;
@@ -456,6 +650,74 @@ static char *digits_to_string_dup(const uint8_t *digits, size_t len) {
     }
     buf[len] = '\0';
     return buf;
+
+static void respond_ai_state(http_response_t *resp) {
+    if (!attached_ai) {
+        set_response(resp, 503, "application/json", "{\"error\":\"ai subsystem offline\"}");
+        return;
+    }
+
+    char *json = kolibri_ai_serialize_state(attached_ai);
+    if (!json) {
+        set_response(resp, 500, "application/json", "{\"error\":\"state unavailable\"}");
+        return;
+    }
+
+    resp->data = json;
+    resp->len = strlen(json);
+    resp->status = 200;
+    snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
+}
+
+static size_t parse_limit_param(const char *path, size_t default_limit) {
+    const char *query = strchr(path, '?');
+    if (!query) {
+        return default_limit;
+    }
+    query++;
+    while (*query) {
+        if (strncmp(query, "limit=", 6) == 0) {
+            query += 6;
+            char *end = NULL;
+            unsigned long value = strtoul(query, &end, 10);
+            if (end && end != query && value > 0) {
+                return (size_t)value;
+            }
+        }
+        const char *amp = strchr(query, '&');
+        if (!amp) {
+            break;
+        }
+        query = amp + 1;
+    }
+    return default_limit;
+}
+
+static void respond_ai_formulas(const char *path, http_response_t *resp) {
+    if (!attached_ai) {
+        set_response(resp, 503, "application/json", "{\"error\":\"ai subsystem offline\"}");
+        return;
+    }
+
+    size_t limit = parse_limit_param(path, 5);
+    if (limit == 0) {
+        limit = 5;
+    }
+    if (limit > 16) {
+        limit = 16;
+    }
+
+    char *json = kolibri_ai_serialize_formulas(attached_ai, limit);
+    if (!json) {
+        set_response(resp, 500, "application/json", "{\"error\":\"formulas unavailable\"}");
+        return;
+    }
+
+    resp->data = json;
+    resp->len = strlen(json);
+    resp->status = 200;
+    snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
+
 }
 
 static int respond_fkv_prefix(const char *path, http_response_t *resp) {
@@ -683,8 +945,28 @@ int http_handle_request(const kolibri_config_t *cfg,
         return -1;
     }
 
+    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/program/submit") == 0) {
+        respond_program_submit(cfg, body ? body : "", body_len, resp);
+        return 0;
+    }
+
+    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/chain/submit") == 0) {
+        respond_chain_submit(body ? body : "", body_len, resp);
+        return 0;
+    }
+
     if (strcmp(method, "GET") == 0 && strcmp(path, "/status") == 0) {
         respond_status(cfg, resp);
+        return 0;
+    }
+
+    if (strcmp(method, "GET") == 0 && strcmp(path, "/api/v1/ai/state") == 0) {
+        respond_ai_state(resp);
+        return 0;
+    }
+
+    if (strcmp(method, "GET") == 0 && strncmp(path, "/api/v1/ai/formulas", 20) == 0) {
+        respond_ai_formulas(path, resp);
         return 0;
     }
 

@@ -70,6 +70,18 @@ static int run_program(struct byte_buffer *bb, uint64_t *result, vm_status_t *st
     return rc;
 }
 
+static void test_random_deterministic(void) {
+    struct byte_buffer bb = {0};
+    vm_set_seed(42);
+    assert(bb_push(&bb, 0x0F) == 0);
+    uint64_t result = 0;
+    vm_status_t status;
+    assert(run_program(&bb, &result, &status) == 0);
+    assert(status == VM_OK);
+    assert(result == 1083814273ull);
+    free(bb.data);
+}
+
 static void test_add(void) {
     struct byte_buffer bb = {0};
     assert(emit_push_number(&bb, 2) == 0);
@@ -108,10 +120,28 @@ static void test_div_zero(void) {
     free(bb.data);
 }
 
+static void test_halt(void) {
+    uint8_t code[] = {0x01, 0x05, 0x12, 0x01, 0x09};
+    prog_t prog = {code, sizeof(code)};
+    vm_limits_t lim = {512, 128};
+    vm_trace_entry_t entries[8];
+    vm_trace_t trace = {entries, 8, 0, 0};
+    vm_result_t out;
+    assert(vm_run(&prog, &lim, &trace, &out) == 0);
+    assert(out.status == VM_OK);
+    assert(out.halted == 1);
+    assert(out.steps == 2);
+    assert(out.result == 5);
+    assert(trace.count == 2);
+    assert(trace.entries[1].opcode == 0x12);
+}
+
 int main(void) {
+    test_random_deterministic();
     test_add();
     test_mul();
     test_div_zero();
+    test_halt();
     printf("vm tests passed\n");
     return 0;
 }
