@@ -1,3 +1,29 @@
+interface TraceEntry {
+  step: number;
+  ip: number;
+  op: number;
+  stack: number;
+  gas: number;
+}
+
+interface RunResponse {
+  status: number;
+  steps: number;
+  result: number;
+  trace: TraceEntry[];
+}
+
+interface DialogResponse extends RunResponse {}
+
+interface FkvEntry {
+  key: string;
+  value: string;
+}
+
+interface FkvResponse {
+  entries: FkvEntry[];
+}
+
 const tabs = [
   { id: "dialog", label: "Диалог" },
   { id: "memory", label: "Память" },
@@ -12,6 +38,77 @@ function createElement(tag: string, className?: string, text?: string): HTMLElem
   if (className) el.className = className;
   if (text) el.textContent = text;
   return el;
+}
+
+function isTraceEntry(value: unknown): value is TraceEntry {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.step === "number" &&
+    typeof candidate.ip === "number" &&
+    typeof candidate.op === "number" &&
+    typeof candidate.stack === "number" &&
+    typeof candidate.gas === "number"
+  );
+}
+
+function isRunResponse(value: unknown): value is RunResponse {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.status === "number" &&
+    typeof candidate.steps === "number" &&
+    typeof candidate.result === "number" &&
+    Array.isArray(candidate.trace) &&
+    candidate.trace.every(isTraceEntry)
+  );
+}
+
+function isFkvEntry(value: unknown): value is FkvEntry {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.key === "string" && typeof candidate.value === "string";
+}
+
+function isFkvResponse(value: unknown): value is FkvResponse {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return Array.isArray(candidate.entries) && candidate.entries.every(isFkvEntry);
+}
+
+function formatRunResponse(data: RunResponse): string {
+  const lines = [
+    `Статус: ${data.status}`,
+    `Шаги: ${data.steps}`,
+    `Результат: ${data.result}`
+  ];
+  if (data.trace.length === 0) {
+    lines.push("Трассировка: отсутствует");
+  } else {
+    lines.push(
+      "Трассировка:",
+      ...data.trace.map(
+        (entry) =>
+          `  #${entry.step} ip=${entry.ip} op=${entry.op} stack=${entry.stack} gas=${entry.gas}`
+      )
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatFkvResponse(data: FkvResponse): string {
+  if (data.entries.length === 0) {
+    return "Совпадений не найдено.";
+  }
+  return data.entries.map((entry) => `${entry.key} → ${entry.value}`).join("\n");
 }
 
 function digitsFromExpression(expr: string): number[] {
@@ -59,8 +156,24 @@ function renderDialog(container: HTMLElement) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      output.textContent = JSON.stringify(data, null, 2);
+      if (!res.ok) {
+        const errorBody: unknown = await res.json().catch(() => null);
+        const message =
+          errorBody &&
+          typeof errorBody === "object" &&
+          errorBody !== null &&
+          "error" in errorBody &&
+          typeof (errorBody as { error?: unknown }).error === "string"
+            ? (errorBody as { error: string }).error
+            : `HTTP ${res.status}`;
+        throw new Error(message);
+      }
+      const json: unknown = await res.json();
+      if (!isRunResponse(json)) {
+        throw new Error("Некорректный ответ сервера");
+      }
+      const data: DialogResponse = json;
+      output.textContent = formatRunResponse(data);
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
     }
@@ -105,8 +218,24 @@ function renderMemory(container: HTMLElement) {
     pre.textContent = "Загрузка...";
     try {
       const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
-      const json = await res.json();
-      pre.textContent = JSON.stringify(json, null, 2);
+      if (!res.ok) {
+        const errorBody: unknown = await res.json().catch(() => null);
+        const message =
+          errorBody &&
+          typeof errorBody === "object" &&
+          errorBody !== null &&
+          "error" in errorBody &&
+          typeof (errorBody as { error?: unknown }).error === "string"
+            ? (errorBody as { error: string }).error
+            : `HTTP ${res.status}`;
+        throw new Error(message);
+      }
+      const json: unknown = await res.json();
+      if (!isFkvResponse(json)) {
+        throw new Error("Некорректный ответ сервера");
+      }
+      const data: FkvResponse = json;
+      pre.textContent = formatFkvResponse(data);
     } catch (err) {
       pre.textContent = `Ошибка: ${String(err)}`;
     }
