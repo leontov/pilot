@@ -1,6 +1,8 @@
 #include "util/config.h"
 
 #include <errno.h>
+#include <json-c/json.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,58 +21,31 @@ static void set_defaults(kolibri_config_t *cfg) {
 static void strip_comments(char *buf) {
     char *src = buf;
     char *dst = buf;
+    int in_string = 0;
     while (*src) {
-        if (src[0] == '/' && src[1] == '/') {
+        if (!in_string && src[0] == '/' && src[1] == '/') {
+            src += 2;
             while (*src && *src != '\n') {
                 src++;
             }
-        } else {
-            *dst++ = *src++;
+            continue;
         }
+        if (!in_string && src[0] == '/' && src[1] == '*') {
+            src += 2;
+            while (src[0] && !(src[0] == '*' && src[1] == '/')) {
+                src++;
+            }
+            if (src[0] == '*' && src[1] == '/') {
+                src += 2;
+            }
+            continue;
+        }
+        if (*src == '"' && (src == buf || src[-1] != '\\')) {
+            in_string = !in_string;
+        }
+        *dst++ = *src++;
     }
     *dst = '\0';
-}
-
-static void parse_string(const char *buf, const char *key, char *out, size_t out_len) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *pos = strstr(buf, pattern);
-    if (!pos) {
-        return;
-    }
-    pos = strchr(pos + strlen(pattern), '"');
-    if (!pos) {
-        return;
-    }
-    pos++;
-    const char *end = strchr(pos, '"');
-    if (!end) {
-        return;
-    }
-    size_t len = (size_t)(end - pos);
-    if (len >= out_len) {
-        len = out_len - 1;
-    }
-    memcpy(out, pos, len);
-    out[len] = '\0';
-}
-
-static void parse_uint(const char *buf, const char *key, uint32_t *out) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *pos = strstr(buf, pattern);
-    if (!pos) {
-        return;
-    }
-    pos = strchr(pos + strlen(pattern), ':');
-    if (!pos) {
-        return;
-    }
-    pos++;
-    while (*pos == ' ' || *pos == '\t') {
-        pos++;
-    }
-    *out = (uint32_t)strtoul(pos, NULL, 10);
 }
 
 int config_load(const char *path, kolibri_config_t *cfg) {
@@ -108,6 +83,33 @@ int config_load(const char *path, kolibri_config_t *cfg) {
 
     strip_comments(buf);
 
+
+    int rc = -1;
+    struct json_object *root = json_tokener_parse(buf);
+    if (!root || !json_object_is_type(root, json_type_object)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+
+    struct json_object *http_obj = NULL;
+    struct json_object *vm_obj = NULL;
+    struct json_object *value = NULL;
+
+    if (!json_object_object_get_ex(root, "http", &http_obj) ||
+        !json_object_is_type(http_obj, json_type_object)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+
+    if (!json_object_object_get_ex(http_obj, "host", &value) ||
+        !json_object_is_type(value, json_type_string)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    const char *host = json_object_get_string(value);
+    strncpy(cfg->http.host, host, sizeof(cfg->http.host) - 1);
+    cfg->http.host[sizeof(cfg->http.host) - 1] = '\0';
+
     parse_string(buf, "host", cfg->http.host, sizeof(cfg->http.host));
     parse_uint(buf, "port", (uint32_t *)&cfg->http.port);
     parse_uint(buf, "max_body_size", &cfg->http.max_body_size);
@@ -116,6 +118,79 @@ int config_load(const char *path, kolibri_config_t *cfg) {
     parse_uint(buf, "trace_depth", &cfg->vm.trace_depth);
     parse_uint(buf, "seed", &cfg->seed);
 
+
+    if (!json_object_object_get_ex(http_obj, "port", &value) ||
+        !json_object_is_type(value, json_type_int)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    int64_t port = json_object_get_int64(value);
+    if (port < 0 || port > UINT16_MAX) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    cfg->http.port = (uint16_t)port;
+
+    if (!json_object_object_get_ex(root, "vm", &vm_obj) ||
+        !json_object_is_type(vm_obj, json_type_object)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+
+    if (!json_object_object_get_ex(vm_obj, "max_steps", &value) ||
+        !json_object_is_type(value, json_type_int)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    int64_t max_steps = json_object_get_int64(value);
+    if (max_steps < 0 || max_steps > UINT32_MAX) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    cfg->vm.max_steps = (uint32_t)max_steps;
+
+    if (!json_object_object_get_ex(vm_obj, "max_stack", &value) ||
+        !json_object_is_type(value, json_type_int)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    int64_t max_stack = json_object_get_int64(value);
+    if (max_stack < 0 || max_stack > UINT32_MAX) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    cfg->vm.max_stack = (uint32_t)max_stack;
+
+    if (!json_object_object_get_ex(vm_obj, "trace_depth", &value) ||
+        !json_object_is_type(value, json_type_int)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    int64_t trace_depth = json_object_get_int64(value);
+    if (trace_depth < 0 || trace_depth > UINT32_MAX) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    cfg->vm.trace_depth = (uint32_t)trace_depth;
+
+    if (!json_object_object_get_ex(root, "seed", &value) ||
+        !json_object_is_type(value, json_type_int)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    int64_t seed = json_object_get_int64(value);
+    if (seed < 0 || seed > UINT32_MAX) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    cfg->seed = (uint32_t)seed;
+
+    rc = 0;
+
+cleanup:
+    if (root) {
+        json_object_put(root);
+    }
     free(buf);
-    return 0;
+    return rc;
 }
