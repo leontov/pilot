@@ -3,6 +3,8 @@
 #include "kolibri_ai.h"
 
 #include "formula.h"
+#include "util/config.h"
+#include "util/log.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -23,6 +25,14 @@ struct KolibriAI {
     double exploration_rate;
     double exploitation_rate;
     uint64_t iterations;
+
+    KolibriAISelfplayConfig selfplay_config;
+    uint32_t selfplay_current_difficulty;
+    size_t selfplay_recent_success;
+    size_t selfplay_recent_total;
+    double selfplay_reward_avg;
+    uint64_t selfplay_total_interactions;
+    unsigned int rng_state;
 };
 
 typedef struct {
@@ -36,6 +46,114 @@ static const default_formula_t k_default_formulas[] = {
     {"kolibri.memory.recall", "remember(city) -> answer(city)", 0.58},
     {"kolibri.pattern.sequence", "g(n) = 2*n + 1", 0.64},
 };
+
+static double kolibri_ai_reduce_task(const KolibriSelfplayTask *task) {
+    if (!task || task->operand_count == 0) {
+        return 0.0;
+    }
+
+    double value = task->operands[0];
+    for (size_t i = 0; i < task->operator_count && i + 1 < task->operand_count; ++i) {
+        char op = task->operators[i];
+        double rhs = task->operands[i + 1];
+        switch (op) {
+        case '+':
+            value += rhs;
+            break;
+        case '-':
+            value -= rhs;
+            break;
+        case '*':
+            value *= rhs;
+            break;
+        default:
+            value += rhs;
+            break;
+        }
+    }
+    return value;
+}
+
+static double kolibri_ai_apply_formula_to_task(const Formula *formula,
+                                               const KolibriSelfplayTask *task,
+                                               int *handled) {
+    if (handled) {
+        *handled = 0;
+    }
+    if (!formula || !task || formula->representation != FORMULA_REPRESENTATION_TEXT) {
+        return 0.0;
+    }
+
+    if (strstr(formula->content, "x + y") != NULL) {
+        for (size_t i = 0; i < task->operator_count; ++i) {
+            if (task->operators[i] != '+') {
+                return 0.0;
+            }
+        }
+        if (handled) {
+            *handled = 1;
+        }
+        return kolibri_ai_reduce_task(task);
+    }
+
+    if (strstr(formula->content, "x - y") != NULL) {
+        for (size_t i = 0; i < task->operator_count; ++i) {
+            if (task->operators[i] != '-') {
+                return 0.0;
+            }
+        }
+        if (handled) {
+            *handled = 1;
+        }
+        return kolibri_ai_reduce_task(task);
+    }
+
+    if (strstr(formula->content, "x * y") != NULL) {
+        for (size_t i = 0; i < task->operator_count; ++i) {
+            if (task->operators[i] != '*') {
+                return 0.0;
+            }
+        }
+        if (handled) {
+            *handled = 1;
+        }
+        return kolibri_ai_reduce_task(task);
+    }
+
+    return 0.0;
+}
+
+static double kolibri_ai_predict_on_task(KolibriAI *ai,
+                                         const KolibriSelfplayTask *task,
+                                         int *handled) {
+    if (handled) {
+        *handled = 0;
+    }
+    const Formula *candidates[3] = {0};
+    size_t count = (ai && ai->library) ? formula_collection_get_top(ai->library, candidates, 3) : 0;
+    for (size_t i = 0; i < count; ++i) {
+        int local_handled = 0;
+        double value = kolibri_ai_apply_formula_to_task(candidates[i], task, &local_handled);
+        if (local_handled) {
+            if (handled) {
+                *handled = 1;
+            }
+            return value;
+        }
+    }
+
+    double baseline = kolibri_ai_reduce_task(task);
+    if (!ai) {
+        return baseline;
+    }
+    unsigned int noise_raw = rand_r(&ai->rng_state);
+    double magnitude = fabs(baseline);
+    if (magnitude < 1.0) {
+        magnitude = 1.0;
+    }
+    double jitter = ((int)(noise_raw % 201) - 100) / 1000.0; // [-0.1, 0.1]
+    return baseline + magnitude * jitter * 0.05;
+}
 
 static void kolibri_ai_seed_library(KolibriAI *ai) {
     if (!ai || !ai->library) {
@@ -126,6 +244,17 @@ KolibriAI *kolibri_ai_create(void) {
     ai->average_reward = 0.0;
     ai->exploration_rate = 0.4;
     ai->exploitation_rate = 0.6;
+    ai->selfplay_config.tasks_per_iteration = 2;
+    ai->selfplay_config.max_difficulty = 3;
+    ai->selfplay_current_difficulty = 1;
+    ai->selfplay_recent_success = 0;
+    ai->selfplay_recent_total = 0;
+    ai->selfplay_reward_avg = 0.0;
+    ai->selfplay_total_interactions = 0;
+    ai->rng_state = (unsigned int)time(NULL);
+    if (ai->rng_state == 0) {
+        ai->rng_state = 1;
+    }
 
     kolibri_ai_seed_library(ai);
     return ai;
@@ -194,6 +323,88 @@ void kolibri_ai_stop(KolibriAI *ai) {
     pthread_join(ai->worker, NULL);
 }
 
+void kolibri_ai_set_selfplay_config(KolibriAI *ai, const KolibriAISelfplayConfig *config) {
+    if (!ai || !config) {
+        return;
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    ai->selfplay_config.tasks_per_iteration = config->tasks_per_iteration;
+    uint32_t max_difficulty = config->max_difficulty;
+    if (max_difficulty == 0) {
+        max_difficulty = 1;
+    }
+    ai->selfplay_config.max_difficulty = max_difficulty;
+    if (ai->selfplay_current_difficulty == 0) {
+        ai->selfplay_current_difficulty = 1;
+    }
+    if (ai->selfplay_current_difficulty > ai->selfplay_config.max_difficulty) {
+        ai->selfplay_current_difficulty = ai->selfplay_config.max_difficulty;
+    }
+    pthread_mutex_unlock(&ai->mutex);
+}
+
+void kolibri_ai_record_interaction(KolibriAI *ai, const KolibriAISelfplayInteraction *interaction) {
+    if (!ai || !interaction) {
+        return;
+    }
+
+    log_info("self-play: %s | expected=%.3f predicted=%.3f error=%.3f reward=%.3f success=%s diff=%u",
+             interaction->task.description,
+             interaction->task.expected_result,
+             interaction->predicted_result,
+             interaction->error,
+             interaction->reward,
+             interaction->success ? "yes" : "no",
+             interaction->task.difficulty);
+
+    ai->selfplay_total_interactions++;
+    double count = (double)ai->selfplay_total_interactions;
+    if (count <= 0.0) {
+        count = 1.0;
+    }
+    ai->selfplay_reward_avg += (interaction->reward - ai->selfplay_reward_avg) / count;
+
+    ai->selfplay_recent_total++;
+    if (interaction->success) {
+        ai->selfplay_recent_success++;
+    }
+
+    size_t window = ai->selfplay_config.tasks_per_iteration;
+    if (window == 0) {
+        window = 1;
+    }
+    if (ai->selfplay_recent_total >= window) {
+        double ratio = (double)ai->selfplay_recent_success;
+        ratio /= (double)ai->selfplay_recent_total;
+        if (ratio > 0.75 && ai->selfplay_current_difficulty < ai->selfplay_config.max_difficulty) {
+            ai->selfplay_current_difficulty++;
+        } else if (ratio < 0.35 && ai->selfplay_current_difficulty > 1) {
+            ai->selfplay_current_difficulty--;
+        }
+        ai->selfplay_recent_total = 0;
+        ai->selfplay_recent_success = 0;
+    }
+}
+
+void kolibri_ai_apply_config(KolibriAI *ai, const struct kolibri_config_t *cfg) {
+    if (!ai || !cfg) {
+        return;
+    }
+
+    KolibriAISelfplayConfig sp_config = {
+        .tasks_per_iteration = cfg->selfplay.tasks_per_iteration,
+        .max_difficulty = cfg->selfplay.max_difficulty,
+    };
+    kolibri_ai_set_selfplay_config(ai, &sp_config);
+
+    pthread_mutex_lock(&ai->mutex);
+    if (cfg->seed != 0) {
+        ai->rng_state = cfg->seed;
+    }
+    pthread_mutex_unlock(&ai->mutex);
+}
+
 void kolibri_ai_process_iteration(KolibriAI *ai) {
     if (!ai) {
         return;
@@ -209,6 +420,47 @@ void kolibri_ai_process_iteration(KolibriAI *ai) {
 
     ai->exploitation_rate = fmin(0.9, fmax(0.5, ai->exploitation_rate + exploitation_delta));
     ai->exploration_rate = fmin(0.5, fmax(0.1, ai->exploration_rate + exploration_delta));
+
+    size_t tasks_to_run = ai->selfplay_config.tasks_per_iteration;
+    if (tasks_to_run > 0) {
+        uint32_t difficulty_cap = ai->selfplay_config.max_difficulty;
+        if (difficulty_cap == 0) {
+            difficulty_cap = 1;
+        }
+        uint32_t target_difficulty = ai->selfplay_current_difficulty;
+        if (target_difficulty == 0) {
+            target_difficulty = 1;
+        }
+        if (target_difficulty > difficulty_cap) {
+            target_difficulty = difficulty_cap;
+        }
+
+        for (size_t i = 0; i < tasks_to_run; ++i) {
+            KolibriSelfplayTask task;
+            if (kolibri_selfplay_generate_task(&ai->rng_state, target_difficulty, &task) != 0) {
+                continue;
+            }
+
+            double predicted = kolibri_ai_predict_on_task(ai, &task, NULL);
+            double error = fabs(predicted - task.expected_result);
+            int success = (error < 0.25);
+            double reward = success ? 1.0 - fmin(error, 1.0) : -fmin(error, 1.0);
+
+            KolibriAISelfplayInteraction interaction;
+            interaction.task = task;
+            interaction.predicted_result = predicted;
+            interaction.error = error;
+            interaction.reward = reward;
+            interaction.success = success;
+
+            kolibri_ai_record_interaction(ai, &interaction);
+        }
+
+        if (ai->selfplay_total_interactions > 0) {
+            double blend = ai->selfplay_reward_avg;
+            ai->average_reward = 0.8 * ai->average_reward + 0.2 * blend;
+        }
+    }
 
     if (ai->iterations % 60 == 0) {
         kolibri_ai_synthesise_formula(ai);
@@ -274,18 +526,25 @@ char *kolibri_ai_serialize_state(const KolibriAI *ai) {
     double exploitation = ai->exploitation_rate;
     double exploration = ai->exploration_rate;
     int running = ai->running;
+    uint32_t difficulty = ai->selfplay_current_difficulty;
+    double selfplay_reward = ai->selfplay_reward_avg;
+    uint32_t tasks_per_iteration = ai->selfplay_config.tasks_per_iteration;
     pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
 
     char temp[256];
     int written = snprintf(temp, sizeof(temp),
                            "{\"iterations\":%llu,\"formula_count\":%zu,\"average_reward\":%.3f,"
-                           "\"exploitation_rate\":%.3f,\"exploration_rate\":%.3f,\"running\":%d}",
+                           "\"exploitation_rate\":%.3f,\"exploration_rate\":%.3f,\"running\":%d,"
+                           "\"selfplay_difficulty\":%u,\"selfplay_reward\":%.3f,\"selfplay_tasks\":%u}",
                            (unsigned long long)iterations,
                            formula_count,
                            avg_reward,
                            exploitation,
                            exploration,
-                           running);
+                           running,
+                           difficulty,
+                           selfplay_reward,
+                           tasks_per_iteration);
     if (written < 0) {
         return NULL;
     }
