@@ -124,10 +124,43 @@ typedef struct {
 // AI подсистема
 static KolibriAI* node_ai = NULL;
 
+typedef struct {
+    pthread_t thread;
+    int running;
+    KolibriAI* ai;
+    uint16_t base_port;
+    uint8_t local_digit;
+} ai_sync_thread_t;
+
+static ai_sync_thread_t ai_sync_ctx = {0};
+
 uint64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+static void* ai_sync_worker(void* arg) {
+    ai_sync_thread_t* ctx = (ai_sync_thread_t*)arg;
+    while (keep_running && ctx->running) {
+        for (uint8_t d = 0; d < DECIMAL_BRANCHING; ++d) {
+            if (d == ctx->local_digit) {
+                continue;
+            }
+            char base_url[128];
+            unsigned int neighbor_port = (unsigned int)(ctx->base_port + d + 10000);
+            int written = snprintf(base_url, sizeof(base_url), "http://127.0.0.1:%u", neighbor_port);
+            if (written <= 0 || (size_t)written >= sizeof(base_url)) {
+                continue;
+            }
+            if (ctx->ai) {
+                kolibri_ai_sync_with_neighbor(ctx->ai, base_url);
+            }
+        }
+        struct timespec ts = {.tv_sec = 5, .tv_nsec = 0};
+        nanosleep(&ts, NULL);
+    }
+    return NULL;
 }
 
 
@@ -388,8 +421,11 @@ static void run_server(void) {
 // ==========================
 // Entry point
 
-extern int http_status_server_init(int port, rules_t* rules, decimal_cell_t* cell,
-                                   volatile sig_atomic_t* keep_running);
+extern int http_status_server_init(int port,
+                                   rules_t* rules,
+                                   decimal_cell_t* cell,
+                                   volatile sig_atomic_t* keep_running,
+                                   KolibriAI* ai);
 extern void http_status_server_run(void);
 extern void http_status_server_shutdown(void);
 
@@ -471,11 +507,23 @@ int main(int argc, char** argv) {
     }
     kolibri_ai_start(node_ai);
 
+    ai_sync_ctx.ai = node_ai;
+    ai_sync_ctx.base_port = port;
+    ai_sync_ctx.local_digit = my_digit;
+    ai_sync_ctx.running = 1;
+    bool ai_sync_started = false;
+    if (pthread_create(&ai_sync_ctx.thread, NULL, ai_sync_worker, &ai_sync_ctx) == 0) {
+        ai_sync_started = true;
+    } else {
+        ai_sync_ctx.running = 0;
+        LOG_ERROR("Failed to start AI sync thread: %s", strerror(errno));
+    }
+
     // Запуск HTTP API для мониторинга (мониторинговый порт)
     int http_port = port + 10000;
     pthread_t http_thread;
     bool http_thread_started = false;
-    if (http_status_server_init(http_port, &rules, &cell, &keep_running) == 0) {
+    if (http_status_server_init(http_port, &rules, &cell, &keep_running, node_ai) == 0) {
         if (pthread_create(&http_thread, NULL, http_status_server_thread, NULL) == 0) {
             http_thread_started = true;
         } else {
@@ -490,6 +538,11 @@ int main(int argc, char** argv) {
     run_server();
 
     keep_running = 0;
+
+    ai_sync_ctx.running = 0;
+    if (ai_sync_started) {
+        pthread_join(ai_sync_ctx.thread, NULL);
+    }
 
     if (http_thread_started) {
         pthread_join(http_thread, NULL);

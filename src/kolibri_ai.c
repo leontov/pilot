@@ -3,7 +3,14 @@
 #include "kolibri_ai.h"
 
 #include "formula.h"
+#include "util/config.h"
+#include "util/log.h"
 
+
+#include <errno.h>
+#include <json-c/json.h>
+#include <limits.h>
+#include <stdint.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -12,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
+
 struct KolibriAI {
     pthread_t worker;
     int running;
@@ -19,12 +27,69 @@ struct KolibriAI {
 
     FormulaCollection *library;
 
+
     double average_reward;
     double exploration_rate;
     double exploitation_rate;
+    double planning_score;
+    double recent_poe;
+    double recent_mdl;
     uint64_t iterations;
-    FormulaSearchConfig search_config;
+
 };
+
+static double kolibri_clamp(double value, double min_value, double max_value) {
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static void kolibri_curriculum_normalize(double *values, size_t count) {
+    double total = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        if (values[i] < 0.0) {
+            values[i] = 0.0;
+        }
+        total += values[i];
+    }
+
+    if (total <= 0.0) {
+        double uniform = 1.0 / (double)count;
+        for (size_t i = 0; i < count; ++i) {
+            values[i] = uniform;
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        values[i] /= total;
+    }
+}
+
+static void kolibri_curriculum_init(KolibriCurriculumState *state) {
+    if (!state) {
+        return;
+    }
+
+    const double defaults[KOLIBRI_DIFFICULTY_COUNT] = {0.45, 0.30, 0.18, 0.07};
+    for (size_t i = 0; i < KOLIBRI_DIFFICULTY_COUNT; ++i) {
+        state->distribution[i] = defaults[i];
+        state->success_ema[i] = 0.7;
+        state->reward_ema[i] = 0.55;
+        state->sample_count[i] = 0;
+    }
+
+    state->global_success_ema = 0.7;
+    state->integral_error = 0.0;
+    state->last_error = 0.0;
+    state->temperature = 0.6;
+    state->ema_alpha = 0.18;
+    state->current_level = KOLIBRI_DIFFICULTY_FOUNDATION;
+}
 
 typedef struct {
     const char *id;
@@ -37,6 +102,14 @@ static const default_formula_t k_default_formulas[] = {
     {"kolibri.memory.recall", "remember(city) -> answer(city)", 0.58},
     {"kolibri.pattern.sequence", "g(n) = 2*n + 1", 0.64},
 };
+
+
+    }
+    return value;
+}
+
+
+}
 
 static void kolibri_ai_seed_library(KolibriAI *ai) {
     if (!ai || !ai->library) {
@@ -67,7 +140,12 @@ static void kolibri_ai_seed_library(KolibriAI *ai) {
             total += ai->library->formulas[i].effectiveness;
         }
         ai->average_reward = total / (double)ai->library->count;
+        for (size_t i = 0; i < KOLIBRI_DIFFICULTY_COUNT; ++i) {
+            ai->curriculum.reward_ema[i] = ai->average_reward;
+        }
     }
+
+
 }
 
 typedef struct {
@@ -152,7 +230,7 @@ static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
     }
 }
 
-KolibriAI *kolibri_ai_create(const kolibri_config_t *cfg) {
+
     KolibriAI *ai = calloc(1, sizeof(KolibriAI));
     if (!ai) {
         return NULL;
@@ -163,8 +241,24 @@ KolibriAI *kolibri_ai_create(const kolibri_config_t *cfg) {
         return NULL;
     }
 
+    ai->pipeline = formula_training_pipeline_create(12);
+    if (!ai->pipeline) {
+        pthread_mutex_destroy(&ai->mutex);
+        free(ai);
+        return NULL;
+    }
+
     ai->library = formula_collection_create(8);
     if (!ai->library) {
+        formula_training_pipeline_destroy(ai->pipeline);
+        pthread_mutex_destroy(&ai->mutex);
+        free(ai);
+        return NULL;
+    }
+
+    ai->pipeline = formula_training_pipeline_create(16);
+    if (!ai->pipeline) {
+        formula_collection_destroy(ai->library);
         pthread_mutex_destroy(&ai->mutex);
         free(ai);
         return NULL;
@@ -174,25 +268,7 @@ KolibriAI *kolibri_ai_create(const kolibri_config_t *cfg) {
     ai->average_reward = 0.0;
     ai->exploration_rate = 0.4;
     ai->exploitation_rate = 0.6;
-    ai->search_config = formula_search_config_default();
-    if (cfg) {
-        ai->search_config = cfg->search;
-        if (ai->search_config.max_candidates == 0) {
-            ai->search_config.max_candidates = formula_search_config_default().max_candidates;
-        }
-        if (ai->search_config.max_terms == 0) {
-            ai->search_config.max_terms = formula_search_config_default().max_terms;
-        }
-        if (ai->search_config.max_coefficient == 0) {
-            ai->search_config.max_coefficient = formula_search_config_default().max_coefficient;
-        }
-        if (ai->search_config.max_formula_length == 0) {
-            ai->search_config.max_formula_length = formula_search_config_default().max_formula_length;
-        }
-        if (ai->search_config.base_effectiveness <= 0.0) {
-            ai->search_config.base_effectiveness = formula_search_config_default().base_effectiveness;
-        }
-    }
+
 
     kolibri_ai_seed_library(ai);
     return ai;
@@ -205,9 +281,15 @@ void kolibri_ai_destroy(KolibriAI *ai) {
 
     kolibri_ai_stop(ai);
     pthread_mutex_destroy(&ai->mutex);
+    kolibri_ai_dataset_clear(&ai->dataset);
+    kolibri_memory_module_clear(&ai->memory);
     if (ai->library) {
         formula_collection_destroy(ai->library);
     }
+    if (ai->pipeline) {
+        formula_training_pipeline_destroy(ai->pipeline);
+    }
+
     free(ai);
 }
 
@@ -251,20 +333,108 @@ void kolibri_ai_stop(KolibriAI *ai) {
     }
 
     pthread_mutex_lock(&ai->mutex);
-    if (!ai->running) {
-        pthread_mutex_unlock(&ai->mutex);
-        return;
-    }
+    int was_running = ai->running;
     ai->running = 0;
     pthread_mutex_unlock(&ai->mutex);
 
-    pthread_join(ai->worker, NULL);
+    if (was_running) {
+        pthread_join(ai->worker, NULL);
+    }
+
+    if (kolibri_ai_persist(ai) != 0) {
+        log_warn("kolibri_ai: failed to persist snapshot to %s", ai->snapshot_path);
+    }
+}
+
+void kolibri_ai_set_selfplay_config(KolibriAI *ai, const KolibriAISelfplayConfig *config) {
+    if (!ai || !config) {
+        return;
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    ai->selfplay_config.tasks_per_iteration = config->tasks_per_iteration;
+    uint32_t max_difficulty = config->max_difficulty;
+    if (max_difficulty == 0) {
+        max_difficulty = 1;
+    }
+    ai->selfplay_config.max_difficulty = max_difficulty;
+    if (ai->selfplay_current_difficulty == 0) {
+        ai->selfplay_current_difficulty = 1;
+    }
+    if (ai->selfplay_current_difficulty > ai->selfplay_config.max_difficulty) {
+        ai->selfplay_current_difficulty = ai->selfplay_config.max_difficulty;
+    }
+    pthread_mutex_unlock(&ai->mutex);
+}
+
+void kolibri_ai_record_interaction(KolibriAI *ai, const KolibriAISelfplayInteraction *interaction) {
+    if (!ai || !interaction) {
+        return;
+    }
+
+    log_info("self-play: %s | expected=%.3f predicted=%.3f error=%.3f reward=%.3f success=%s diff=%u",
+             interaction->task.description,
+             interaction->task.expected_result,
+             interaction->predicted_result,
+             interaction->error,
+             interaction->reward,
+             interaction->success ? "yes" : "no",
+             interaction->task.difficulty);
+
+    ai->selfplay_total_interactions++;
+    double count = (double)ai->selfplay_total_interactions;
+    if (count <= 0.0) {
+        count = 1.0;
+    }
+    ai->selfplay_reward_avg += (interaction->reward - ai->selfplay_reward_avg) / count;
+
+    ai->selfplay_recent_total++;
+    if (interaction->success) {
+        ai->selfplay_recent_success++;
+    }
+
+    size_t window = ai->selfplay_config.tasks_per_iteration;
+    if (window == 0) {
+        window = 1;
+    }
+    if (ai->selfplay_recent_total >= window) {
+        double ratio = (double)ai->selfplay_recent_success;
+        ratio /= (double)ai->selfplay_recent_total;
+        if (ratio > 0.75 && ai->selfplay_current_difficulty < ai->selfplay_config.max_difficulty) {
+            ai->selfplay_current_difficulty++;
+        } else if (ratio < 0.35 && ai->selfplay_current_difficulty > 1) {
+            ai->selfplay_current_difficulty--;
+        }
+        ai->selfplay_recent_total = 0;
+        ai->selfplay_recent_success = 0;
+    }
+}
+
+void kolibri_ai_apply_config(KolibriAI *ai, const struct kolibri_config_t *cfg) {
+    if (!ai || !cfg) {
+        return;
+    }
+
+    KolibriAISelfplayConfig sp_config = {
+        .tasks_per_iteration = cfg->selfplay.tasks_per_iteration,
+        .max_difficulty = cfg->selfplay.max_difficulty,
+    };
+    kolibri_ai_set_selfplay_config(ai, &sp_config);
+
+    pthread_mutex_lock(&ai->mutex);
+    if (cfg->seed != 0) {
+        ai->rng_state = cfg->seed;
+    }
+    pthread_mutex_unlock(&ai->mutex);
 }
 
 void kolibri_ai_process_iteration(KolibriAI *ai) {
     if (!ai) {
         return;
     }
+
+    double expected_reward = 0.0;
+    KolibriDifficultyLevel level = kolibri_ai_plan_actions(ai, &expected_reward);
 
     pthread_mutex_lock(&ai->mutex);
 
@@ -277,11 +447,32 @@ void kolibri_ai_process_iteration(KolibriAI *ai) {
     ai->exploitation_rate = fmin(0.9, fmax(0.5, ai->exploitation_rate + exploitation_delta));
     ai->exploration_rate = fmin(0.5, fmax(0.1, ai->exploration_rate + exploration_delta));
 
+
+
     if (ai->iterations % 60 == 0) {
         kolibri_ai_synthesise_formula(ai);
     }
 
     pthread_mutex_unlock(&ai->mutex);
+
+    static const double difficulty_scaling[KOLIBRI_DIFFICULTY_COUNT] = {0.82, 1.0, 1.14, 1.28};
+
+    double base_reward = expected_reward > 0.0 ? expected_reward : baseline_reward;
+    if (base_reward <= 0.0) {
+        base_reward = 0.5 + 0.05 * sin((double)current_iteration / 12.0);
+    }
+
+    double reward = base_reward * difficulty_scaling[level];
+    reward += 0.02 * sin((double)current_iteration / 8.0);
+    if (reward < 0.0) {
+        reward = 0.0;
+    }
+
+    double success_threshold = baseline_reward > 0.0 ? baseline_reward : 0.45;
+    success_threshold *= 0.88 + 0.04 * (double)level;
+    int success = reward >= success_threshold;
+
+    kolibri_ai_apply_reinforcement(ai, level, reward, success);
 }
 
 int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula) {
@@ -297,9 +488,55 @@ int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula) {
             total += ai->library->formulas[i].effectiveness;
         }
         ai->average_reward = total / (double)ai->library->count;
+
+        }
     }
     pthread_mutex_unlock(&ai->mutex);
     return rc;
+}
+
+int kolibri_ai_apply_reinforcement(KolibriAI *ai,
+                                   const Formula *formula,
+                                   const FormulaExperience *experience) {
+    if (!ai || !experience) {
+        return -1;
+    }
+
+    double reward = fmax(0.0, fmin(1.0, experience->reward));
+    double poe = fmax(0.0, fmin(1.0, experience->poe));
+    double mdl = experience->mdl < 0.0 ? 0.0 : experience->mdl;
+    double planning_update = poe - 0.35 * mdl;
+    if (planning_update < 0.0) {
+        planning_update = 0.0;
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    ai->recent_poe = poe;
+    ai->recent_mdl = mdl;
+    ai->average_reward = 0.9 * ai->average_reward + 0.1 * reward;
+    if (ai->planning_score <= 0.0) {
+        ai->planning_score = planning_update;
+    } else {
+        ai->planning_score = 0.8 * ai->planning_score + 0.2 * planning_update;
+    }
+
+    if (ai->library && formula) {
+        Formula *existing = formula_collection_find(ai->library, formula->id);
+        if (existing) {
+            if (reward > existing->effectiveness) {
+                existing->effectiveness = reward;
+            }
+        } else if (poe >= 0.55 && planning_update >= ai->planning_score * 0.9) {
+            Formula copy = {0};
+            if (formula_copy(&copy, formula) == 0) {
+                copy.effectiveness = reward;
+                formula_collection_add(ai->library, &copy);
+                formula_clear(&copy);
+            }
+        }
+    }
+    pthread_mutex_unlock(&ai->mutex);
+    return 0;
 }
 
 Formula *kolibri_ai_get_best_formula(KolibriAI *ai) {
@@ -329,6 +566,9 @@ static char *kolibri_ai_alloc_json(size_t initial) {
     return buffer;
 }
 
+
+}
+
 char *kolibri_ai_serialize_state(const KolibriAI *ai) {
     if (!ai) {
         return NULL;
@@ -340,19 +580,18 @@ char *kolibri_ai_serialize_state(const KolibriAI *ai) {
     double avg_reward = ai->average_reward;
     double exploitation = ai->exploitation_rate;
     double exploration = ai->exploration_rate;
+    double planning = ai->planning_score;
+    double recent_poe = ai->recent_poe;
+    double recent_mdl = ai->recent_mdl;
     int running = ai->running;
-    pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
 
-    char temp[256];
-    int written = snprintf(temp, sizeof(temp),
-                           "{\"iterations\":%llu,\"formula_count\":%zu,\"average_reward\":%.3f,"
-                           "\"exploitation_rate\":%.3f,\"exploration_rate\":%.3f,\"running\":%d}",
                            (unsigned long long)iterations,
                            formula_count,
                            avg_reward,
+                           recent_reward,
                            exploitation,
                            exploration,
-                           running);
+
     if (written < 0) {
         return NULL;
     }
@@ -448,16 +687,5 @@ char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results) {
     snprintf(json + len, capacity - len, "]}");
     return json;
 }
-void kolibri_ai_set_search_config(KolibriAI *ai, const FormulaSearchConfig *config) {
-    if (!ai) {
-        return;
-    }
 
-    pthread_mutex_lock(&ai->mutex);
-    if (config) {
-        ai->search_config = *config;
-    } else {
-        ai->search_config = formula_search_config_default();
-    }
-    pthread_mutex_unlock(&ai->mutex);
 }
