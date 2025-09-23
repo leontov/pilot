@@ -32,6 +32,29 @@ function digitsFromExpression(expr: string): number[] {
   return result;
 }
 
+function parseProgramInput(source: string): number[] {
+  const cleaned = source.replace(/[\[\]]/g, " ");
+  const tokens = cleaned.split(/[\s,]+/).filter(Boolean);
+  if (tokens.length === 0) {
+    throw new Error("Введите хотя бы один байт программы");
+  }
+  const result: number[] = [];
+  for (const token of tokens) {
+    if (token.trim() === "") {
+      continue;
+    }
+    const value = Number(token);
+    if (!Number.isInteger(value) || value < 0 || value > 255) {
+      throw new Error(`Некорректное значение байта: "${token}"`);
+    }
+    result.push(value);
+  }
+  if (result.length === 0) {
+    throw new Error("Не удалось распознать ни одного байта");
+  }
+  return result;
+}
+
 function renderDialog(container: HTMLElement) {
   const form = createElement("form", "panel form") as HTMLFormElement;
   const input = document.createElement("input");
@@ -119,7 +142,86 @@ function renderPlaceholder(container: HTMLElement, text: string) {
 }
 
 function renderPrograms(container: HTMLElement) {
-  renderPlaceholder(container, "Список программ появится на этапе B.");
+  const form = createElement("form", "program-form") as HTMLFormElement;
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "Введите байты программы, например: 16, 0, 0, 2";
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = "Запустить";
+  form.appendChild(textarea);
+  form.appendChild(submit);
+
+  const output = createElement("div", "program-output");
+  const statusEl = createElement("div", "program-status", "Статус: —");
+  const resultEl = createElement("div", "program-result", "Результат: —");
+  const traceTitle = createElement("div", "program-trace-title", "Трасса:");
+  const tracePre = createElement("pre", "output program-trace", "[]");
+
+  output.appendChild(statusEl);
+  output.appendChild(resultEl);
+  output.appendChild(traceTitle);
+  output.appendChild(tracePre);
+
+  container.appendChild(form);
+  container.appendChild(output);
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const raw = textarea.value.trim();
+    if (!raw) {
+      statusEl.textContent = "Статус: введите программу";
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+      return;
+    }
+
+    let program: number[];
+    try {
+      program = parseProgramInput(raw);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      statusEl.textContent = `Статус: ${message}`;
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+      return;
+    }
+
+    statusEl.textContent = "Статус: выполнение...";
+    resultEl.textContent = "Результат: —";
+    tracePre.textContent = "[]";
+
+    try {
+      const res = await fetch("/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ program })
+      });
+      const data = await res.json();
+      if ("error" in data) {
+        statusEl.textContent = `Статус: ошибка — ${String(data.error)}`;
+        resultEl.textContent = "Результат: —";
+        tracePre.textContent = "[]";
+        return;
+      }
+      const statusText = typeof data.status !== "undefined" ? String(data.status) : "—";
+      const stepsText = typeof data.steps !== "undefined" ? `, шаги: ${String(data.steps)}` : "";
+      statusEl.textContent = `Статус: ${statusText}${stepsText}`;
+      const resultText = typeof data.result !== "undefined" ? String(data.result) : "—";
+      resultEl.textContent = `Результат: ${resultText}`;
+      const traceData = data.trace;
+      if (Array.isArray(traceData)) {
+        tracePre.textContent = JSON.stringify(traceData, null, 2);
+      } else if (typeof traceData !== "undefined") {
+        tracePre.textContent = JSON.stringify(traceData, null, 2);
+      } else {
+        tracePre.textContent = "[]";
+      }
+    } catch (err) {
+      statusEl.textContent = `Статус: ошибка запроса — ${String(err)}`;
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+    }
+  });
 }
 
 function renderSynth(container: HTMLElement) {
@@ -184,6 +286,12 @@ function injectStyles() {
     button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
     pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
     .placeholder { opacity: 0.7; }
+    textarea { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #333; background: #222; color: #f5f5f5; font-family: monospace; min-height: 140px; resize: vertical; }
+    .program-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+    .program-form button { align-self: flex-start; }
+    .program-output { display: flex; flex-direction: column; gap: 8px; }
+    .program-status, .program-result, .program-trace-title { background: #1b1b1b; padding: 8px 10px; border-radius: 4px; }
+    .program-trace { max-height: 320px; overflow-y: auto; }
   `;
   document.head.appendChild(style);
 }
