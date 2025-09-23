@@ -17,39 +17,6 @@ function createElement(tag: string, className?: string, text?: string): HTMLElem
   return el;
 }
 
-type Theme = "light" | "dark";
-
-const THEME_STORAGE_KEY = "kolibri-ui-theme";
-
-function determineInitialTheme(): Theme {
-  if (typeof window === "undefined") {
-    return "dark";
-  }
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") {
-    return stored;
-  }
-  const prefersLight = window.matchMedia
-    ? window.matchMedia("(prefers-color-scheme: light)").matches
-    : false;
-  return prefersLight ? "light" : "dark";
-}
-
-function applyTheme(theme: Theme) {
-  document.body.dataset.theme = theme;
-  document.body.style.colorScheme = theme;
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }
-}
-
-function updateThemeToggle(button: HTMLButtonElement, theme: Theme) {
-  const nextTheme = theme === "dark" ? "light" : "dark";
-  const label = nextTheme === "dark" ? "Тёмная тема" : "Светлая тема";
-  button.textContent = label;
-  button.setAttribute("aria-label", `Переключить тему на ${nextTheme === "dark" ? "тёмную" : "светлую"}`);
-  button.setAttribute("title", label);
-  button.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
 }
 
 function digitsFromExpression(expr: string): number[] {
@@ -221,7 +188,7 @@ function renderDialog(container: HTMLElement) {
       output.textContent = JSON.stringify(data, null, 2);
 
     } catch (err) {
-      output.textContent = `Ошибка: ${String(err)}`;
+      showError(`Ошибка: ${String(err)}`);
     }
   });
 }
@@ -272,7 +239,7 @@ function renderMemory(container: HTMLElement) {
       const json = await res.json();
       pre.textContent = JSON.stringify(json, null, 2);
     } catch (err) {
-      pre.textContent = `Ошибка: ${String(err)}`;
+      showError(`Ошибка: ${String(err)}`);
     }
   });
 }
@@ -357,4 +324,5 @@ function mountApp() {
   renderers["dialog"](content);
 }
 
+<
 mountApp();
