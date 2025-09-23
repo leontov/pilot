@@ -1,7 +1,7 @@
 CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -pthread
 
-LDFLAGS := -lpthread -ljson-c
+LDFLAGS := -lpthread -lm -lcrypto
 
 BUILD_DIR := build/obj
 BIN_DIR := bin
