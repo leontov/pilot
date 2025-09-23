@@ -19,6 +19,8 @@
 #define JSON_CONTENT "application/json"
 
 static uint64_t server_start_ms = 0;
+static Blockchain *global_blockchain = NULL;
+
 
 static uint64_t now_ms(void) {
     struct timespec ts;
@@ -471,9 +473,7 @@ static void respond_health(const kolibri_config_t *cfg, http_response_t *resp) {
     (void)cfg;
     uint64_t now = now_ms();
     uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
-    char buf[128];
-    snprintf(buf, sizeof(buf), "{\"uptime_ms\":%llu}", (unsigned long long)uptime);
-    set_response(resp, 200, JSON_CONTENT, buf);
+
 }
 
 static void respond_metrics(const kolibri_config_t *cfg, http_response_t *resp) {
@@ -483,11 +483,7 @@ static void respond_metrics(const kolibri_config_t *cfg, http_response_t *resp) 
     }
     uint64_t now = now_ms();
     uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
-    char buf[256];
-    snprintf(buf,
-             sizeof(buf),
-             "{\"uptime_ms\":%llu,\"vm\":{\"max_steps\":%u,\"max_stack\":%u,\"trace_depth\":%u}}",
-             (unsigned long long)uptime,
+
              cfg->vm.max_steps,
              cfg->vm.max_stack,
              cfg->vm.trace_depth);

@@ -12,6 +12,12 @@ typedef struct {
     char prev_hash[65];
     time_t timestamp;
     uint32_t nonce;
+    double poe_sum;
+    double poe_average;
+    double mdl_sum;
+    double mdl_average;
+    double score_sum;
+    double score_average;
 } Block;
 
 typedef struct {
@@ -31,6 +37,8 @@ bool blockchain_verify(const Blockchain* chain);
 
 // Получение хэша последнего блока
 const char* blockchain_get_last_hash(const Blockchain* chain);
+
+double blockchain_score_formula(const Formula* formula, double* poe_out, double* mdl_out);
 
 // Освобождение ресурсов
 void blockchain_destroy(Blockchain* chain);
