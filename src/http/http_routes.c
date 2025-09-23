@@ -18,6 +18,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <limits.h>
+#include <json-c/json.h>
 
 #define WEB_DIST_DIR "web/dist"
 
@@ -81,50 +82,105 @@ static int ensure_capacity(uint8_t **buf, size_t *cap, size_t needed) {
     return 0;
 }
 
-static int parse_digits_array(const char *body, size_t body_len, uint8_t **out, size_t *out_len) {
-    (void)body_len;
-    size_t cap = 16;
-    uint8_t *buf = malloc(cap);
-    if (!buf) {
-        return -1;
+enum parse_error {
+    PARSE_OK = 0,
+    PARSE_ERR_JSON = -1,
+    PARSE_ERR_OOM = -2,
+    PARSE_ERR_ROOT_TYPE = -3,
+    PARSE_ERR_MISSING_FIELD = -4,
+    PARSE_ERR_FIELD_TYPE = -5,
+    PARSE_ERR_INVALID_VALUE = -6,
+};
+
+static int parse_json_object(const char *body, size_t body_len, struct json_object **out) {
+    if (!out) {
+        return PARSE_ERR_JSON;
     }
+    struct json_tokener *tok = json_tokener_new();
+    if (!tok) {
+        return PARSE_ERR_OOM;
+    }
+    struct json_object *root = json_tokener_parse_ex(tok, body, (int)body_len);
+    enum json_tokener_error jerr = json_tokener_get_error(tok);
+    json_tokener_free(tok);
+    if (jerr != json_tokener_success || !root) {
+        if (root) {
+            json_object_put(root);
+        }
+        return PARSE_ERR_JSON;
+    }
+    if (!json_object_is_type(root, json_type_object)) {
+        json_object_put(root);
+        return PARSE_ERR_ROOT_TYPE;
+    }
+    *out = root;
+    return PARSE_OK;
+}
+
+static int parse_digits_array(const char *body, size_t body_len, struct json_object **out_root, const char **out_input) {
+    struct json_object *root = NULL;
+    int rc = parse_json_object(body, body_len, &root);
+    if (rc != PARSE_OK) {
+        return rc;
+    }
+    struct json_object *input_obj = NULL;
+    if (!json_object_object_get_ex(root, "input", &input_obj)) {
+        json_object_put(root);
+        return PARSE_ERR_MISSING_FIELD;
+    }
+    if (!json_object_is_type(input_obj, json_type_string)) {
+        json_object_put(root);
+        return PARSE_ERR_FIELD_TYPE;
+    }
+    if (out_root) {
+        *out_root = root;
+    } else {
+        json_object_put(root);
+    }
+    if (out_input) {
+        *out_input = json_object_get_string(input_obj);
+    }
+    return PARSE_OK;
+}
+
+static int build_digits_from_input(const char *input, uint8_t **out, size_t *out_len) {
+    if (!input || !out || !out_len) {
+        return PARSE_ERR_INVALID_VALUE;
+    }
+    size_t cap = 0;
+    uint8_t *buf = NULL;
     size_t count = 0;
-    const char *start = strchr(body, '[');
-    const char *end = strrchr(body, ']');
-    if (!start || !end || end <= start) {
-        free(buf);
-        return -1;
-    }
-    start++;
-    const char *ptr = start;
-    while (ptr < end) {
-        while (ptr < end && (isspace((unsigned char)*ptr) || *ptr == ',')) {
-            ptr++;
+    for (const char *p = input; *p; ++p) {
+        unsigned char ch = (unsigned char)*p;
+        if (isspace(ch)) {
+            continue;
         }
-        if (ptr >= end) {
-            break;
-        }
-        char *next = NULL;
-        long v = strtol(ptr, &next, 10);
-        if (ptr == next) {
-            break;
-        }
-        if (v < 0 || v > 255) {
-            free(buf);
-            return -1;
-        }
-        if (count + 1 > cap) {
+        if (isdigit(ch)) {
             if (ensure_capacity(&buf, &cap, count + 1) != 0) {
                 free(buf);
-                return -1;
+                return PARSE_ERR_OOM;
             }
+            buf[count++] = (uint8_t)(ch - '0');
+            continue;
         }
-        buf[count++] = (uint8_t)v;
-        ptr = next;
+        if (ch == '+' || ch == '-' || ch == '*' || ch == '/') {
+            if (ensure_capacity(&buf, &cap, count + 1) != 0) {
+                free(buf);
+                return PARSE_ERR_OOM;
+            }
+            buf[count++] = (uint8_t)ch;
+            continue;
+        }
+        free(buf);
+        return PARSE_ERR_INVALID_VALUE;
+    }
+    if (count == 0) {
+        free(buf);
+        return PARSE_ERR_INVALID_VALUE;
     }
     *out = buf;
     *out_len = count;
-    return 0;
+    return PARSE_OK;
 }
 
 struct byte_buffer {
@@ -257,56 +313,51 @@ static int compile_expression_program(const uint8_t *digits, size_t len, struct 
     return 0;
 }
 
-static int parse_named_byte_array(const char *body,
-                                  size_t body_len,
-                                  const char *field,
-                                  uint8_t **out,
-                                  size_t *out_len) {
-    (void)body_len;
-    const char *field_key = strstr(body, field);
-    if (!field_key) {
-        return -1;
+
     }
-    const char *start = strchr(field_key, '[');
-    const char *end = strchr(field_key, ']');
-    if (!start || !end || end <= start) {
-        return -1;
+    if (!json_object_is_type(program_obj, json_type_array)) {
+        json_object_put(root);
+        return PARSE_ERR_FIELD_TYPE;
     }
-    size_t cap = 16;
-    uint8_t *buf = malloc(cap);
-    if (!buf) {
-        return -1;
+    if (out_root) {
+        *out_root = root;
+    } else {
+        json_object_put(root);
     }
-    size_t count = 0;
-    const char *ptr = start + 1;
-    while (ptr < end) {
-        while (ptr < end && (isspace((unsigned char)*ptr) || *ptr == ',')) {
-            ptr++;
+    if (out_program) {
+        *out_program = program_obj;
+    }
+    return PARSE_OK;
+}
+
+static int build_program_bytes(struct json_object *program_array, uint8_t **out, size_t *out_len) {
+    if (!program_array || !out || !out_len) {
+        return PARSE_ERR_INVALID_VALUE;
+    }
+    size_t len = json_object_array_length(program_array);
+    uint8_t *buf = NULL;
+    if (len > 0) {
+        buf = malloc(len);
+        if (!buf) {
+            return PARSE_ERR_OOM;
         }
-        if (ptr >= end) {
-            break;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        struct json_object *item = json_object_array_get_idx(program_array, (int)i);
+        if (!item || !json_object_is_type(item, json_type_int)) {
+            free(buf);
+            return PARSE_ERR_INVALID_VALUE;
         }
-        char *next = NULL;
-        long v = strtol(ptr, &next, 10);
-        if (ptr == next) {
-            break;
-        }
+        int v = json_object_get_int(item);
         if (v < 0 || v > 255) {
             free(buf);
-            return -1;
+            return PARSE_ERR_INVALID_VALUE;
         }
-        if (count + 1 > cap) {
-            if (ensure_capacity(&buf, &cap, count + 1) != 0) {
-                free(buf);
-                return -1;
-            }
-        }
-        buf[count++] = (uint8_t)v;
-        ptr = next;
+        buf[i] = (uint8_t)v;
     }
     *out = buf;
-    *out_len = count;
-    return 0;
+    *out_len = len;
+    return PARSE_OK;
 }
 
 static int parse_program_array(const char *body, size_t body_len, uint8_t **out, size_t *out_len) {
@@ -532,7 +583,7 @@ static void respond_status(const kolibri_config_t *cfg, http_response_t *resp) {
     set_response(resp, 200, "application/json", buf);
 }
 
-static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, size_t prog_len, http_response_t *resp) {
+static void respond_run_program(const kolibri_config_t *cfg, const uint8_t *prog_bytes, size_t prog_len, http_response_t *resp) {
     prog_t prog = {prog_bytes, prog_len};
     vm_limits_t limits = {cfg->vm.max_steps, cfg->vm.max_stack};
     vm_trace_entry_t *entries = calloc(cfg->vm.trace_depth, sizeof(vm_trace_entry_t));
@@ -588,11 +639,86 @@ static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, 
     free(entries);
 }
 
+static void respond_run(const kolibri_config_t *cfg, const char *body, size_t body_len, http_response_t *resp) {
+    struct json_object *root = NULL;
+    struct json_object *program_array = NULL;
+    int rc = parse_program_array(body, body_len, &root, &program_array);
+    if (rc != PARSE_OK) {
+        switch (rc) {
+        case PARSE_ERR_JSON:
+            set_response(resp, 400, "application/json", "{\"error\":\"invalid json\"}");
+            break;
+        case PARSE_ERR_ROOT_TYPE:
+            set_response(resp, 400, "application/json", "{\"error\":\"request must be object\"}");
+            break;
+        case PARSE_ERR_MISSING_FIELD:
+            set_response(resp, 400, "application/json", "{\"error\":\"missing program\"}");
+            break;
+        case PARSE_ERR_FIELD_TYPE:
+            set_response(resp, 400, "application/json", "{\"error\":\"program must be array\"}");
+            break;
+        case PARSE_ERR_OOM:
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+            break;
+        default:
+            set_response(resp, 400, "application/json", "{\"error\":\"invalid program\"}");
+            break;
+        }
+        return;
+    }
+    uint8_t *prog_bytes = NULL;
+    size_t prog_len = 0;
+    rc = build_program_bytes(program_array, &prog_bytes, &prog_len);
+    json_object_put(root);
+    if (rc != PARSE_OK) {
+        if (rc == PARSE_ERR_OOM) {
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+        } else {
+            set_response(resp, 400, "application/json", "{\"error\":\"invalid program\"}");
+        }
+        return;
+    }
+    respond_run_program(cfg, prog_bytes, prog_len, resp);
+    free(prog_bytes);
+}
+
 static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t body_len, http_response_t *resp) {
+    struct json_object *root = NULL;
+    const char *input = NULL;
+    int rc = parse_digits_array(body, body_len, &root, &input);
+    if (rc != PARSE_OK) {
+        switch (rc) {
+        case PARSE_ERR_JSON:
+            set_response(resp, 400, "application/json", "{\"error\":\"invalid json\"}");
+            break;
+        case PARSE_ERR_ROOT_TYPE:
+            set_response(resp, 400, "application/json", "{\"error\":\"request must be object\"}");
+            break;
+        case PARSE_ERR_MISSING_FIELD:
+            set_response(resp, 400, "application/json", "{\"error\":\"missing input\"}");
+            break;
+        case PARSE_ERR_FIELD_TYPE:
+            set_response(resp, 400, "application/json", "{\"error\":\"input must be string\"}");
+            break;
+        case PARSE_ERR_OOM:
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+            break;
+        default:
+            set_response(resp, 400, "application/json", "{\"error\":\"invalid input\"}");
+            break;
+        }
+        return;
+    }
     uint8_t *digits = NULL;
     size_t digits_len = 0;
-    if (parse_digits_array(body, body_len, &digits, &digits_len) != 0) {
-        set_response(resp, 400, "application/json", "{\"error\":\"invalid digits\"}");
+    rc = build_digits_from_input(input, &digits, &digits_len);
+    json_object_put(root);
+    if (rc != PARSE_OK) {
+        if (rc == PARSE_ERR_OOM) {
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+        } else {
+            set_response(resp, 400, "application/json", "{\"error\":\"unsupported expression\"}");
+        }
         return;
     }
     struct byte_buffer bb = {0};
@@ -603,7 +729,7 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
     }
     free(digits);
 
-    respond_run(cfg, bb.data, bb.len, resp);
+    respond_run_program(cfg, bb.data, bb.len, resp);
     free(bb.data);
 }
 
@@ -980,14 +1106,7 @@ int http_handle_request(const kolibri_config_t *cfg,
     }
 
     if (strcmp(method, "POST") == 0 && strcmp(path, "/run") == 0) {
-        uint8_t *prog_bytes = NULL;
-        size_t prog_len = 0;
-        if (parse_program_array(body, body_len, &prog_bytes, &prog_len) != 0) {
-            set_response(resp, 400, "application/json", "{\"error\":\"invalid program\"}");
-            return -1;
-        }
-        respond_run(cfg, prog_bytes, prog_len, resp);
-        free(prog_bytes);
+        respond_run(cfg, body ? body : "", body_len, resp);
         return 0;
     }
 
