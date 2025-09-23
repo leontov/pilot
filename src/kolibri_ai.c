@@ -23,6 +23,7 @@ struct KolibriAI {
     double exploration_rate;
     double exploitation_rate;
     uint64_t iterations;
+    double planning_score;
 };
 
 typedef struct {
@@ -127,6 +128,7 @@ KolibriAI *kolibri_ai_create(void) {
     ai->exploration_rate = 0.4;
     ai->exploitation_rate = 0.6;
 
+    ai->planning_score = 0.0;
     kolibri_ai_seed_library(ai);
     return ai;
 }
@@ -274,17 +276,19 @@ char *kolibri_ai_serialize_state(const KolibriAI *ai) {
     double exploitation = ai->exploitation_rate;
     double exploration = ai->exploration_rate;
     int running = ai->running;
+    double planning = ai->planning_score;
     pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
 
     char temp[256];
     int written = snprintf(temp, sizeof(temp),
                            "{\"iterations\":%llu,\"formula_count\":%zu,\"average_reward\":%.3f,"
-                           "\"exploitation_rate\":%.3f,\"exploration_rate\":%.3f,\"running\":%d}",
+                           "\"exploitation_rate\":%.3f,\"exploration_rate\":%.3f,\"planning_score\":%.3f,\"running\":%d}",
                            (unsigned long long)iterations,
                            formula_count,
                            avg_reward,
                            exploitation,
                            exploration,
+                           planning,
                            running);
     if (written < 0) {
         return NULL;
@@ -380,4 +384,76 @@ char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results) {
 
     snprintf(json + len, capacity - len, "]}");
     return json;
+}
+
+void kolibri_ai_apply_reinforcement(KolibriAI *ai,
+                                    FormulaExperience *experience,
+                                    double aggregate_poe,
+                                    double aggregate_mdl) {
+    if (!experience) {
+        return;
+    }
+
+    if (aggregate_poe < 0.0) {
+        aggregate_poe = 0.0;
+    } else if (aggregate_poe > 1.0) {
+        aggregate_poe = 1.0;
+    }
+
+    if (aggregate_mdl < 0.0) {
+        aggregate_mdl = 0.0;
+    }
+
+    experience->reward = aggregate_poe;
+    experience->accuracy = aggregate_poe;
+    experience->loss = aggregate_mdl;
+
+    double imitation_penalty = aggregate_mdl / (aggregate_mdl + 10.0);
+    if (imitation_penalty < 0.0) {
+        imitation_penalty = 0.0;
+    } else if (imitation_penalty > 1.0) {
+        imitation_penalty = 1.0;
+    }
+    experience->imitation_score = 1.0 - imitation_penalty;
+
+    if (!ai) {
+        return;
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    ai->average_reward = 0.85 * ai->average_reward + 0.15 * aggregate_poe;
+    pthread_mutex_unlock(&ai->mutex);
+}
+
+double kolibri_ai_plan_actions(KolibriAI *ai,
+                               double aggregate_poe,
+                               double aggregate_mdl) {
+    if (!ai) {
+        double score = aggregate_poe - 0.05 * aggregate_mdl;
+        return (score < 0.0) ? 0.0 : score;
+    }
+
+    if (aggregate_poe < 0.0) {
+        aggregate_poe = 0.0;
+    } else if (aggregate_poe > 1.0) {
+        aggregate_poe = 1.0;
+    }
+
+    if (aggregate_mdl < 0.0) {
+        aggregate_mdl = 0.0;
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    double exploitation = ai->exploitation_rate;
+    double exploration = ai->exploration_rate;
+    double blended_gain = aggregate_poe * (0.6 * exploitation + 0.4 * exploration);
+    double penalty = aggregate_mdl * (0.05 + 0.05 * exploration);
+    double score = blended_gain - penalty;
+    if (score < 0.0) {
+        score = 0.0;
+    }
+    ai->planning_score = score;
+    pthread_mutex_unlock(&ai->mutex);
+
+    return score;
 }

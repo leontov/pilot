@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "formula_core.h"
+#include "formula.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +24,15 @@ Formula *kolibri_ai_get_best_formula(KolibriAI *ai);
 
 char *kolibri_ai_serialize_state(const KolibriAI *ai);
 char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results);
+
+void kolibri_ai_apply_reinforcement(KolibriAI *ai,
+                                    FormulaExperience *experience,
+                                    double aggregate_poe,
+                                    double aggregate_mdl);
+
+double kolibri_ai_plan_actions(KolibriAI *ai,
+                               double aggregate_poe,
+                               double aggregate_mdl);
 
 #ifdef __cplusplus
 }

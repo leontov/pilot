@@ -24,13 +24,22 @@
 #define WEB_DIST_DIR "web/dist"
 
 static uint64_t server_start_ms = 0;
+static Blockchain *global_blockchain = NULL;
 
 
 void http_routes_set_start_time(uint64_t ms_since_epoch) {
     server_start_ms = ms_since_epoch;
 }
 
+void http_routes_set_blockchain(Blockchain *chain) {
+    global_blockchain = chain;
+}
 
+static const Block *blockchain_latest_block(void) {
+    if (!global_blockchain || global_blockchain->block_count == 0) {
+        return NULL;
+    }
+    return global_blockchain->blocks[global_blockchain->block_count - 1];
 }
 
 static uint64_t now_ms(void) {
@@ -602,12 +611,27 @@ static void respond_health(const kolibri_config_t *cfg, http_response_t *resp) {
     uint64_t now = now_ms();
     uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
     size_t memory_bytes = read_memory_usage_bytes();
-    char buf[256];
+    size_t block_count = global_blockchain ? global_blockchain->block_count : 0;
+    const Block *latest = blockchain_latest_block();
+    double poe_sum = latest ? latest->poe_sum : 0.0;
+    double mdl_sum = latest ? latest->mdl_sum : 0.0;
+    double poe_avg = latest ? latest->poe_average : 0.0;
+    double mdl_avg = latest ? latest->mdl_average : 0.0;
+    double score_avg = latest ? latest->score_average : 0.0;
+
+    char buf[320];
     snprintf(buf,
              sizeof(buf),
-             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":0}",
+             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":%zu,"
+             "\"latest_block\":{\"poe_sum\":%.3f,\"mdl_sum\":%.3f,\"poe_avg\":%.3f,\"mdl_avg\":%.3f,\"score_avg\":%.3f}}",
              (unsigned long long)uptime,
-             memory_bytes);
+             memory_bytes,
+             block_count,
+             poe_sum,
+             mdl_sum,
+             poe_avg,
+             mdl_avg,
+             score_avg);
     set_response(resp, 200, "application/json", buf);
 }
 
@@ -615,13 +639,27 @@ static void respond_metrics(const kolibri_config_t *cfg, http_response_t *resp) 
     uint64_t now = now_ms();
     uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
     size_t memory_bytes = read_memory_usage_bytes();
-    char buf[256];
+    size_t block_count = global_blockchain ? global_blockchain->block_count : 0;
+    const Block *latest = blockchain_latest_block();
+    double poe_sum = latest ? latest->poe_sum : 0.0;
+    double mdl_sum = latest ? latest->mdl_sum : 0.0;
+    double poe_avg = latest ? latest->poe_average : 0.0;
+    double mdl_avg = latest ? latest->mdl_average : 0.0;
+    double score_avg = latest ? latest->score_average : 0.0;
+    char buf[320];
     snprintf(buf,
              sizeof(buf),
-             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":0,"
+             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":%zu,"
+             "\"latest_block\":{\"poe_sum\":%.3f,\"mdl_sum\":%.3f,\"poe_avg\":%.3f,\"mdl_avg\":%.3f,\"score_avg\":%.3f},"
              "\"vm\":{\"max_steps\":%u,\"max_stack\":%u,\"trace_depth\":%u}}",
              (unsigned long long)uptime,
              memory_bytes,
+             block_count,
+             poe_sum,
+             mdl_sum,
+             poe_avg,
+             mdl_avg,
+             score_avg,
              cfg->vm.max_steps,
              cfg->vm.max_stack,
              cfg->vm.trace_depth);
