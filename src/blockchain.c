@@ -112,14 +112,21 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     }
     
     // Создание нового блока
-    Block* block = (Block*)malloc(sizeof(Block));
+    Block* block = (Block*)calloc(1, sizeof(Block));
     if (!block) return false;
 
+    block->formulas = (Formula**)calloc(count, sizeof(Formula*));
     if (!block->formulas) {
         free(block);
         return false;
     }
 
+    block->owned_formulas = (Formula*)calloc(count, sizeof(Formula));
+    if (!block->owned_formulas) {
+        free(block->formulas);
+        free(block);
+        return false;
+    }
 
     block->formula_count = count;
 
@@ -132,6 +139,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
                 for (size_t j = 0; j < i; ++j) {
                     formula_clear(&block->owned_formulas[j]);
                 }
+                formula_clear(dest);
                 free(block->owned_formulas);
                 free(block->formulas);
                 free(block);
@@ -224,13 +232,7 @@ void blockchain_destroy(Blockchain* chain) {
     
     for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
-        if (!block) {
-            continue;
-        }
 
-        if (block->owned_formulas) {
-            for (size_t j = 0; j < block->formula_count; ++j) {
-                formula_clear(&block->owned_formulas[j]);
             }
             free(block->owned_formulas);
         }
