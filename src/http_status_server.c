@@ -24,9 +24,11 @@ void run_http_status_server(int port, rules_t* rules, decimal_cell_t* cell) {
         // Простой парсер GET /status
         if (strstr(req, "GET /status")) {
             char resp[4096];
+            uint8_t digits[DECIMAL_CELL_FANOUT];
+            size_t active_neighbors = decimal_cell_collect_active_children(cell, digits, DECIMAL_CELL_FANOUT);
             snprintf(resp, sizeof(resp),
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nDigit: %d\nNeighbors: %d\nRules: %d\n",
-                cell->node_digit, cell->n_neighbors, rules->count);
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nDigit: %d\nNeighbors: %zu\nRules: %d\n",
+                cell->digit, active_neighbors, rules->count);
             write(client, resp, strlen(resp));
         } else if (strstr(req, "GET /rules")) {
             char resp[4096];
@@ -39,9 +41,13 @@ void run_http_status_server(int port, rules_t* rules, decimal_cell_t* cell) {
         } else if (strstr(req, "GET /neighbors")) {
             char resp[4096];
             int off = snprintf(resp, sizeof(resp), "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n");
-            for (size_t i = 0; i < cell->n_neighbors && off < sizeof(resp)-128; i++) {
-                off += snprintf(resp+off, sizeof(resp)-off, "Neighbor %zu: digit=%d active=%d last_sync=%llu\n",
-                    i, cell->neighbor_digits[i], cell->is_active[i], (unsigned long long)cell->last_sync[i]);
+            for (uint8_t digit = 0; digit < DECIMAL_CELL_FANOUT && off < sizeof(resp)-128; digit++) {
+                if (!cell->children[digit]) continue;
+                off += snprintf(resp+off, sizeof(resp)-off,
+                                "Neighbor digit=%u active=%d last_sync=%llu\n",
+                                digit,
+                                cell->child_active[digit] ? 1 : 0,
+                                (unsigned long long)cell->child_last_sync[digit]);
             }
             write(client, resp, strlen(resp));
         } else {
