@@ -22,6 +22,10 @@ void kolibri_ai_process_iteration(KolibriAI *ai);
 int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula);
 Formula *kolibri_ai_get_best_formula(KolibriAI *ai);
 
+int kolibri_ai_apply_reinforcement(KolibriAI *ai,
+                                   const Formula *formula,
+                                   const FormulaExperience *experience);
+
 char *kolibri_ai_serialize_state(const KolibriAI *ai);
 char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results);
 

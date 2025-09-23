@@ -33,6 +33,9 @@ struct KolibriAI {
     double average_reward;
     double exploration_rate;
     double exploitation_rate;
+    double planning_score;
+    double recent_poe;
+    double recent_mdl;
     uint64_t iterations;
 };
 
@@ -239,7 +242,13 @@ static void kolibri_ai_seed_library(KolibriAI *ai) {
         ai->average_reward = total / (double)ai->library->count;
     }
 
+    ai->planning_score = ai->average_reward;
+    ai->recent_poe = 0.0;
+    ai->recent_mdl = 1.0;
+
+
     kolibri_ai_seed_training(ai);
+
 }
 
 static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
@@ -308,9 +317,15 @@ KolibriAI *kolibri_ai_create(void) {
     ai->average_reward = 0.0;
     ai->exploration_rate = 0.4;
     ai->exploitation_rate = 0.6;
+
+    ai->planning_score = 0.0;
+    ai->recent_poe = 0.0;
+    ai->recent_mdl = 1.0;
+
     ai->experience_records = NULL;
     ai->experience_count = 0;
     ai->experience_capacity = 0;
+
 
     kolibri_ai_seed_library(ai);
     return ai;
@@ -423,6 +438,7 @@ int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula) {
             total += ai->library->formulas[i].effectiveness;
         }
         ai->average_reward = total / (double)ai->library->count;
+        ai->planning_score = 0.95 * ai->planning_score + 0.05 * ai->average_reward;
     }
     if (rc == 0) {
         FormulaExperience *exp = kolibri_ai_get_experience_record(ai, formula->id, 1);
@@ -454,6 +470,50 @@ int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula) {
     }
     pthread_mutex_unlock(&ai->mutex);
     return rc;
+}
+
+int kolibri_ai_apply_reinforcement(KolibriAI *ai,
+                                   const Formula *formula,
+                                   const FormulaExperience *experience) {
+    if (!ai || !experience) {
+        return -1;
+    }
+
+    double reward = fmax(0.0, fmin(1.0, experience->reward));
+    double poe = fmax(0.0, fmin(1.0, experience->poe));
+    double mdl = experience->mdl < 0.0 ? 0.0 : experience->mdl;
+    double planning_update = poe - 0.35 * mdl;
+    if (planning_update < 0.0) {
+        planning_update = 0.0;
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    ai->recent_poe = poe;
+    ai->recent_mdl = mdl;
+    ai->average_reward = 0.9 * ai->average_reward + 0.1 * reward;
+    if (ai->planning_score <= 0.0) {
+        ai->planning_score = planning_update;
+    } else {
+        ai->planning_score = 0.8 * ai->planning_score + 0.2 * planning_update;
+    }
+
+    if (ai->library && formula) {
+        Formula *existing = formula_collection_find(ai->library, formula->id);
+        if (existing) {
+            if (reward > existing->effectiveness) {
+                existing->effectiveness = reward;
+            }
+        } else if (poe >= 0.55 && planning_update >= ai->planning_score * 0.9) {
+            Formula copy = {0};
+            if (formula_copy(&copy, formula) == 0) {
+                copy.effectiveness = reward;
+                formula_collection_add(ai->library, &copy);
+                formula_clear(&copy);
+            }
+        }
+    }
+    pthread_mutex_unlock(&ai->mutex);
+    return 0;
 }
 
 Formula *kolibri_ai_get_best_formula(KolibriAI *ai) {
@@ -494,18 +554,25 @@ char *kolibri_ai_serialize_state(const KolibriAI *ai) {
     double avg_reward = ai->average_reward;
     double exploitation = ai->exploitation_rate;
     double exploration = ai->exploration_rate;
+    double planning = ai->planning_score;
+    double recent_poe = ai->recent_poe;
+    double recent_mdl = ai->recent_mdl;
     int running = ai->running;
     pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
 
-    char temp[256];
+    char temp[320];
     int written = snprintf(temp, sizeof(temp),
                            "{\"iterations\":%llu,\"formula_count\":%zu,\"average_reward\":%.3f,"
-                           "\"exploitation_rate\":%.3f,\"exploration_rate\":%.3f,\"running\":%d}",
+                           "\"exploitation_rate\":%.3f,\"exploration_rate\":%.3f,"
+                           "\"planning_score\":%.3f,\"recent_poe\":%.3f,\"recent_mdl\":%.3f,\"running\":%d}",
                            (unsigned long long)iterations,
                            formula_count,
                            avg_reward,
                            exploitation,
                            exploration,
+                           planning,
+                           recent_poe,
+                           recent_mdl,
                            running);
     if (written < 0) {
         return NULL;
