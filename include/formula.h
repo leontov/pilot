@@ -2,7 +2,7 @@
 #define FORMULA_H
 
 #include "formula_core.h"
-#include "vm/vm.h"
+
 
 // High level categories used by legacy evaluators.
 extern const int FORMULA_TYPE_SIMPLE;
@@ -122,7 +122,7 @@ typedef struct {
     FormulaTransformerModel transformer_model;
     unsigned char* weights;
     size_t weights_size;
-    char dataset_path[256];
+
 } FormulaTrainingPipeline;
 
 FormulaMemorySnapshot formula_memory_snapshot_clone(const FormulaMemoryFact* facts,
@@ -135,7 +135,7 @@ int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
                                           const char* path);
 int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,
                                           const char* path);
-int formula_training_pipeline_sync_weights_buffer(FormulaTrainingPipeline* pipeline);
+
 int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
                                       const FormulaCollection* library,
                                       const FormulaMemorySnapshot* snapshot,

@@ -37,14 +37,15 @@ link_directories(/opt/homebrew/opt/libmicrohttpd/lib)
 
 # Добавление исходных файлов
 set(SOURCES
-	src/main.c
-	src/decimal_cell.c
-	src/rules_engine.c
-	src/formula_advanced.c
-	src/learning.c
-	src/network.c
-	src/blockchain.c
-	src/formula.c
+        src/main.c
+        src/decimal_cell.c
+        src/rules_engine.c
+        src/formula_advanced.c
+        src/learning.c
+        src/network.c
+        src/blockchain.c
+        src/formula.c
+        src/synthesis/search.c
 )
 
 # Создание исполняемого файла
@@ -90,9 +91,9 @@ target_link_libraries(web_interface PRIVATE m pthread)
 # Simple tests
 add_executable(test_arithmetic tests/test_arithmetic.c src/arithmetic.c)
 target_link_libraries(test_arithmetic PRIVATE m)
-add_executable(test_rule_engine tests/test_rule_engine.c src/rule_engine.c src/embed.c src/formula.c)
+add_executable(test_rule_engine tests/test_rule_engine.c src/rule_engine.c src/embed.c src/formula.c src/synthesis/search.c)
 target_link_libraries(test_rule_engine PRIVATE ${JSONC_LIBRARIES} m)
-add_executable(test_formula tests/test_formula.c src/formula.c src/formula_advanced.c src/decimal_cell.c)
+add_executable(test_formula tests/test_formula.c src/formula.c src/formula_advanced.c src/decimal_cell.c src/synthesis/search.c)
 target_link_libraries(test_formula PRIVATE ${JSONC_LIBRARIES} uuid m)
 add_executable(test_decimal_cell tests/test_decimal_cell.c src/kolibri_decimal_cell.c)
 target_link_libraries(test_decimal_cell PRIVATE m)
@@ -111,7 +112,7 @@ target_include_directories(test_network PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/include)
 
-add_executable(test_blockchain tests/test_blockchain.c src/kovian_blockchain.c src/formula.c)
+add_executable(test_blockchain tests/test_blockchain.c src/kovian_blockchain.c src/formula.c src/synthesis/search.c)
 target_link_libraries(test_blockchain PRIVATE ${JSONC_LIBRARIES} OpenSSL::Crypto m)
 target_include_directories(test_blockchain PRIVATE
         ${CMAKE_SOURCE_DIR}/src

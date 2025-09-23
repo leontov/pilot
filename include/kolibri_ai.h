@@ -6,9 +6,6 @@
 
 
 
-#define KOLIBRI_AI_LEARNING_DATA_ENV "KOLIBRI_LEARNING_DATA"
-#define KOLIBRI_AI_LEARNING_DATA_DEFAULT "learning_data.jsonl"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,7 +35,7 @@ typedef enum {
     KOLIBRI_DIFFICULTY_CHALLENGE = 3
 } KolibriDifficultyLevel;
 
-KolibriAI *kolibri_ai_create(void);
+KolibriAI *kolibri_ai_create(const kolibri_config_t *cfg);
 void kolibri_ai_destroy(KolibriAI *ai);
 
 void kolibri_ai_start(KolibriAI *ai);
@@ -57,9 +54,7 @@ void kolibri_ai_apply_reinforcement(KolibriAI *ai,
 int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula);
 Formula *kolibri_ai_get_best_formula(KolibriAI *ai);
 
-int kolibri_ai_apply_reinforcement(KolibriAI *ai,
-                                   const Formula *formula,
-                                   const FormulaExperience *experience);
+
 
 char *kolibri_ai_serialize_state(const KolibriAI *ai);
 char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results);

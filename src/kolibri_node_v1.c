@@ -500,7 +500,7 @@ int main(int argc, char** argv) {
     }
 
     // Инициализация AI подсистемы
-    node_ai = kolibri_ai_create();
+    node_ai = kolibri_ai_create(NULL);
     if (!node_ai) {
         fprintf(stderr, "Failed to initialize AI subsystem\n");
         return 1;

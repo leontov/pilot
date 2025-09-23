@@ -148,6 +148,32 @@ static void kolibri_ai_seed_library(KolibriAI *ai) {
 
 }
 
+typedef struct {
+    KolibriAI *ai;
+    size_t limit;
+    size_t added;
+} ai_search_context_t;
+
+static int kolibri_ai_search_emit(const Formula *formula, void *user_data) {
+    ai_search_context_t *ctx = user_data;
+    if (!ctx || !ctx->ai || !formula) {
+        return 0;
+    }
+
+    if (ctx->limit > 0 && ctx->added >= ctx->limit) {
+        return 1;
+    }
+
+    if (formula_collection_add(ctx->ai->library, formula) == 0) {
+        ctx->added++;
+    }
+
+    if (ctx->limit > 0 && ctx->added >= ctx->limit) {
+        return 1;
+    }
+    return 0;
+}
+
 static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
     if (!ai || !ai->library) {
         return;
@@ -158,21 +184,42 @@ static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
         return;
     }
 
-    double phase = sin((double)ai->iterations / 30.0);
-    double effectiveness = 0.55 + 0.15 * phase;
+    size_t available = max_synthesized - ai->library->count;
+    size_t desired = ai->search_config.max_candidates;
+    if (desired == 0 || desired > available) {
+        desired = available;
+    }
 
-    Formula formula;
-    memset(&formula, 0, sizeof(formula));
-    formula.representation = FORMULA_REPRESENTATION_TEXT;
-    snprintf(formula.id, sizeof(formula.id), "kolibri.synthetic.%zu", ai->library->count + 1);
-    snprintf(formula.content, sizeof(formula.content),
-             "h_%llu(x) = %.0fx + %.0f", (unsigned long long)ai->iterations,
-             round(phase * 5.0) + 2.0, round(phase * 3.0) + 1.0);
-    formula.effectiveness = effectiveness;
-    formula.created_at = time(NULL);
-    formula.tests_passed = 1;
+    ai_search_context_t ctx = {
+        .ai = ai,
+        .limit = desired,
+        .added = 0,
+    };
 
-    formula_collection_add(ai->library, &formula);
+    FormulaSearchConfig config = ai->search_config;
+    if (config.max_candidates == 0 || config.max_candidates > desired) {
+        config.max_candidates = (uint32_t)desired;
+    }
+
+    formula_search_enumerate(ai->library, NULL, &config, kolibri_ai_search_emit, &ctx);
+
+    if (ctx.added == 0) {
+        double phase = sin((double)ai->iterations / 30.0);
+        double effectiveness = 0.55 + 0.15 * phase;
+
+        Formula formula;
+        memset(&formula, 0, sizeof(formula));
+        formula.representation = FORMULA_REPRESENTATION_TEXT;
+        snprintf(formula.id, sizeof(formula.id), "kolibri.synthetic.%zu", ai->library->count + 1);
+        snprintf(formula.content, sizeof(formula.content),
+                 "h_%llu(x) = %.0fx + %.0f", (unsigned long long)ai->iterations,
+                 round(phase * 5.0) + 2.0, round(phase * 3.0) + 1.0);
+        formula.effectiveness = effectiveness;
+        formula.created_at = time(NULL);
+        formula.tests_passed = 1;
+
+        formula_collection_add(ai->library, &formula);
+    }
 
     if (ai->library->count > 0) {
         double total = 0.0;
@@ -184,10 +231,6 @@ static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
 }
 
 
-}
-
-KolibriAI *kolibri_ai_create(void) {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
     KolibriAI *ai = calloc(1, sizeof(KolibriAI));
     if (!ai) {
         return NULL;
@@ -225,9 +268,6 @@ KolibriAI *kolibri_ai_create(void) {
     ai->average_reward = 0.0;
     ai->exploration_rate = 0.4;
     ai->exploitation_rate = 0.6;
-    ai->recent_reward = 0.0;
-    kolibri_curriculum_init(&ai->curriculum);
-
 
 
     kolibri_ai_seed_library(ai);
@@ -647,6 +687,5 @@ char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results) {
     snprintf(json + len, capacity - len, "]}");
     return json;
 }
-
 
 }
