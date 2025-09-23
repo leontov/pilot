@@ -11,6 +11,7 @@ static void set_defaults(kolibri_config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     strncpy(cfg->http.host, "0.0.0.0", sizeof(cfg->http.host) - 1);
     cfg->http.port = 9000;
+    cfg->http.max_body_size = 1024 * 1024;
     cfg->vm.max_steps = 2048;
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
@@ -82,6 +83,7 @@ int config_load(const char *path, kolibri_config_t *cfg) {
 
     strip_comments(buf);
 
+
     int rc = -1;
     struct json_object *root = json_tokener_parse(buf);
     if (!root || !json_object_is_type(root, json_type_object)) {
@@ -107,6 +109,15 @@ int config_load(const char *path, kolibri_config_t *cfg) {
     const char *host = json_object_get_string(value);
     strncpy(cfg->http.host, host, sizeof(cfg->http.host) - 1);
     cfg->http.host[sizeof(cfg->http.host) - 1] = '\0';
+
+    parse_string(buf, "host", cfg->http.host, sizeof(cfg->http.host));
+    parse_uint(buf, "port", (uint32_t *)&cfg->http.port);
+    parse_uint(buf, "max_body_size", &cfg->http.max_body_size);
+    parse_uint(buf, "max_steps", &cfg->vm.max_steps);
+    parse_uint(buf, "max_stack", &cfg->vm.max_stack);
+    parse_uint(buf, "trace_depth", &cfg->vm.trace_depth);
+    parse_uint(buf, "seed", &cfg->seed);
+
 
     if (!json_object_object_get_ex(http_obj, "port", &value) ||
         !json_object_is_type(value, json_type_int)) {
