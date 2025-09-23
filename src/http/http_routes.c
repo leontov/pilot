@@ -357,10 +357,11 @@ static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, 
         return;
     }
     int written = snprintf(json, cap,
-                           "{\"status\":%d,\"steps\":%u,\"result\":%llu,\"trace\":[",
+                           "{\"status\":%d,\"steps\":%u,\"result\":%llu,\"halted\":%u,\"trace\":[",
                            result.status,
                            result.steps,
-                           (unsigned long long)result.result);
+                           (unsigned long long)result.result,
+                           (unsigned)result.halted);
     if (written < 0) {
         free(json);
         free(entries);

@@ -82,6 +82,7 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
     uint16_t call_stack[CALL_STACK_MAX];
     size_t call_sp = 0;
     vm_status_t status = VM_OK;
+    uint8_t halted = 0;
 
     if (trace) {
         trace->count = 0;
@@ -337,6 +338,11 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
         }
         case 0x11: // NOP
             break;
+        case 0x12: { // HALT
+            status = VM_OK;
+            halted = 1;
+            goto done;
+        }
         default:
             status = VM_ERR_INVALID_OPCODE;
             goto done;
@@ -348,6 +354,7 @@ done:
         out->status = status;
         out->steps = steps;
         out->result = (sp > 0) ? (uint64_t)stack[sp - 1] : 0;
+        out->halted = halted;
     }
     free(stack);
     return 0;
