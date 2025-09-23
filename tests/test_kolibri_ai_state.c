@@ -17,7 +17,10 @@ static void ensure_contains(const char *json, const char *needle) {
 }
 
 int main(void) {
-    KolibriAI *ai = kolibri_ai_create();
+    kolibri_config_t cfg = {0};
+    cfg.search = formula_search_config_default();
+    cfg.search.max_candidates = 2;
+    KolibriAI *ai = kolibri_ai_create(&cfg);
     assert(ai != NULL);
 
     kolibri_ai_start(ai);

@@ -2,6 +2,7 @@
 #define FORMULA_H
 
 #include "formula_core.h"
+#include "synthesis/search.h"
 
 // High level categories used by legacy evaluators.
 extern const int FORMULA_TYPE_SIMPLE;
@@ -94,6 +95,7 @@ typedef struct {
     FormulaMemorySnapshot memory_snapshot;
     unsigned char* weights;
     size_t weights_size;
+    FormulaSearchConfig search_config;
 } FormulaTrainingPipeline;
 
 FormulaMemorySnapshot formula_memory_snapshot_clone(const FormulaMemoryFact* facts,
@@ -106,6 +108,8 @@ int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
                                           const char* path);
 int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,
                                           const char* path);
+void formula_training_pipeline_set_search_config(FormulaTrainingPipeline* pipeline,
+                                                 const FormulaSearchConfig* config);
 int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
                                       const FormulaCollection* library,
                                       const FormulaMemorySnapshot* snapshot,

@@ -15,6 +15,7 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->vm.max_steps = 2048;
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
+    cfg->search = formula_search_config_default();
     cfg->seed = 1337;
 }
 
@@ -93,6 +94,7 @@ int config_load(const char *path, kolibri_config_t *cfg) {
 
     struct json_object *http_obj = NULL;
     struct json_object *vm_obj = NULL;
+    struct json_object *search_obj = NULL;
     struct json_object *value = NULL;
 
     if (!json_object_object_get_ex(root, "http", &http_obj) ||
@@ -172,6 +174,50 @@ int config_load(const char *path, kolibri_config_t *cfg) {
         goto cleanup;
     }
     cfg->vm.trace_depth = (uint32_t)trace_depth;
+
+    if (json_object_object_get_ex(root, "search", &search_obj) &&
+        json_object_is_type(search_obj, json_type_object)) {
+        if (json_object_object_get_ex(search_obj, "max_candidates", &value) &&
+            json_object_is_type(value, json_type_int)) {
+            int64_t v = json_object_get_int64(value);
+            if (v >= 0 && v <= UINT32_MAX) {
+                cfg->search.max_candidates = (uint32_t)v;
+            }
+        }
+
+        if (json_object_object_get_ex(search_obj, "max_terms", &value) &&
+            json_object_is_type(value, json_type_int)) {
+            int64_t v = json_object_get_int64(value);
+            if (v > 0 && v <= UINT32_MAX) {
+                cfg->search.max_terms = (uint32_t)v;
+            }
+        }
+
+        if (json_object_object_get_ex(search_obj, "max_coefficient", &value) &&
+            json_object_is_type(value, json_type_int)) {
+            int64_t v = json_object_get_int64(value);
+            if (v > 0 && v <= UINT32_MAX) {
+                cfg->search.max_coefficient = (uint32_t)v;
+            }
+        }
+
+        if (json_object_object_get_ex(search_obj, "max_formula_length", &value) &&
+            json_object_is_type(value, json_type_int)) {
+            int64_t v = json_object_get_int64(value);
+            if (v > 0 && v <= UINT32_MAX) {
+                cfg->search.max_formula_length = (uint32_t)v;
+            }
+        }
+
+        if (json_object_object_get_ex(search_obj, "base_effectiveness", &value) &&
+            (json_object_is_type(value, json_type_double) ||
+             json_object_is_type(value, json_type_int))) {
+            double eff = json_object_get_double(value);
+            if (eff > 0.0) {
+                cfg->search.base_effectiveness = eff;
+            }
+        }
+    }
 
     if (!json_object_object_get_ex(root, "seed", &value) ||
         !json_object_is_type(value, json_type_int)) {

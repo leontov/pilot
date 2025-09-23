@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "synthesis/search.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +25,7 @@ typedef struct {
 typedef struct {
     http_config_t http;
     vm_config_t vm;
+    FormulaSearchConfig search;
     uint32_t seed;
 } kolibri_config_t;
 

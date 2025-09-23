@@ -342,6 +342,7 @@ FormulaTrainingPipeline* formula_training_pipeline_create(size_t capacity) {
     pipeline->candidates.capacity = capacity;
     pipeline->candidates.count = 0;
     formula_training_metrics_reset(&pipeline->metrics);
+    pipeline->search_config = formula_search_config_default();
     return pipeline;
 }
 
@@ -491,6 +492,19 @@ int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,
     return read_file_bytes(path, &pipeline->weights, &pipeline->weights_size);
 }
 
+void formula_training_pipeline_set_search_config(FormulaTrainingPipeline* pipeline,
+                                                 const FormulaSearchConfig* config) {
+    if (!pipeline) {
+        return;
+    }
+
+    if (config) {
+        pipeline->search_config = *config;
+    } else {
+        pipeline->search_config = formula_search_config_default();
+    }
+}
+
 static void formula_training_pipeline_reset_candidates(FormulaTrainingPipeline* pipeline) {
     if (!pipeline) {
         return;
@@ -542,6 +556,55 @@ static void formula_training_pipeline_add_from_memory(FormulaTrainingPipeline* p
     }
 }
 
+typedef struct {
+    FormulaTrainingPipeline* pipeline;
+    size_t remaining;
+} pipeline_search_context_t;
+
+static int pipeline_search_emit(const Formula* formula, void* user_data) {
+    pipeline_search_context_t* ctx = user_data;
+    if (!ctx || !ctx->pipeline || !formula) {
+        return 0;
+    }
+
+    if (ctx->remaining == 0) {
+        return 1;
+    }
+
+    size_t before = ctx->pipeline->candidates.count;
+    formula_training_pipeline_add_candidate(ctx->pipeline, formula, "search");
+    if (ctx->pipeline->candidates.count >= ctx->pipeline->candidates.capacity) {
+        ctx->remaining = 0;
+        return 1;
+    }
+
+    if (ctx->pipeline->candidates.count > before && ctx->remaining > 0) {
+        ctx->remaining--;
+    }
+    return ctx->remaining == 0 ? 1 : 0;
+}
+
+static void formula_training_pipeline_add_from_search(FormulaTrainingPipeline* pipeline,
+                                                      const FormulaCollection* library,
+                                                      const FormulaMemorySnapshot* snapshot,
+                                                      size_t max_candidates) {
+    if (!pipeline || !max_candidates) {
+        return;
+    }
+
+    FormulaSearchConfig config = pipeline->search_config;
+    if (config.max_candidates == 0 || config.max_candidates > max_candidates) {
+        config.max_candidates = (uint32_t)max_candidates;
+    }
+
+    pipeline_search_context_t ctx = {
+        .pipeline = pipeline,
+        .remaining = max_candidates,
+    };
+
+    formula_search_enumerate(library, snapshot, &config, pipeline_search_emit, &ctx);
+}
+
 int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
                                       const FormulaCollection* library,
                                       const FormulaMemorySnapshot* snapshot,
@@ -568,6 +631,17 @@ int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
     if (max_candidates > pipeline->candidates.count) {
         remaining = max_candidates - pipeline->candidates.count;
     }
+
+    if (remaining > 0) {
+        formula_training_pipeline_add_from_search(pipeline, library, &pipeline->memory_snapshot, remaining);
+    }
+
+    if (max_candidates > pipeline->candidates.count) {
+        remaining = max_candidates - pipeline->candidates.count;
+    } else {
+        remaining = 0;
+    }
+
     if (remaining > 0) {
         formula_training_pipeline_add_from_memory(pipeline, &pipeline->memory_snapshot, remaining);
     }

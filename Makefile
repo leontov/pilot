@@ -14,6 +14,7 @@ SRC := \
   src/vm/vm.c \
   src/fkv/fkv.c \
   src/formula_runtime.c \
+  src/synthesis/search.c \
   src/kolibri_ai.c \
   src/http/http_server.c \
   src/http/http_routes.c \

@@ -11,6 +11,14 @@
     "max_stack": 128,
     "trace_depth": 64
   },
+  // Formula search budget
+  "search": {
+    "max_candidates": 6,
+    "max_terms": 3,
+    "max_coefficient": 4,
+    "max_formula_length": 96,
+    "base_effectiveness": 0.48
+  },
   // PRNG seed for RANDOM10 opcode
   "seed": 1337
 }
