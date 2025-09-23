@@ -13,6 +13,10 @@
 
 static uint32_t lcg_state = 1337u;
 
+void vm_set_seed(uint32_t seed) {
+    lcg_state = seed;
+}
+
 static uint64_t current_time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -82,6 +86,7 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
     uint16_t call_stack[CALL_STACK_MAX];
     size_t call_sp = 0;
     vm_status_t status = VM_OK;
+    uint8_t halted = 0;
 
     if (trace) {
         trace->count = 0;
@@ -302,7 +307,7 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
-            fkv_put(key_digits, key_len, value_digits, value_len);
+            fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE);
             break;
         }
         case 0x0E: { // HASH10
@@ -337,6 +342,11 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
         }
         case 0x11: // NOP
             break;
+        case 0x12: { // HALT
+            status = VM_OK;
+            halted = 1;
+            goto done;
+        }
         default:
             status = VM_ERR_INVALID_OPCODE;
             goto done;
@@ -348,6 +358,7 @@ done:
         out->status = status;
         out->steps = steps;
         out->result = (sp > 0) ? (uint64_t)stack[sp - 1] : 0;
+        out->halted = halted;
     }
     free(stack);
     return 0;
