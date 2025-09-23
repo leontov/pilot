@@ -21,8 +21,14 @@ typedef struct {
 } vm_config_t;
 
 typedef struct {
+    uint32_t tasks_per_iteration;
+    uint32_t max_difficulty;
+} selfplay_config_t;
+
+typedef struct {
     http_config_t http;
     vm_config_t vm;
+    selfplay_config_t selfplay;
     uint32_t seed;
 } kolibri_config_t;
 
