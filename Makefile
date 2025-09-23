@@ -7,6 +7,9 @@ LDFLAGS := -lpthread -ljson-c -lm -luuid
 LDFLAGS := -lpthread -lm -lcrypto
 
 
+LDFLAGS := -lpthread -ljson-c -lcurl
+
+
 BUILD_DIR := build/obj
 BIN_DIR := bin
 TARGET := $(BIN_DIR)/kolibri_node
