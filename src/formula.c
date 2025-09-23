@@ -62,13 +62,31 @@ int formula_collection_add(FormulaCollection* collection, const Formula* formula
 // Поиск формулы по ID
 Formula* formula_collection_find(FormulaCollection* collection, const char* id) {
     if (!collection || !id) return NULL;
-    
+
     for (size_t i = 0; i < collection->count; i++) {
         if (strcmp(collection->formulas[i].id, id) == 0) {
             return &collection->formulas[i];
         }
     }
     return NULL;
+}
+
+void formula_collection_remove(FormulaCollection* collection, const char* id) {
+    if (!collection || !id) return;
+
+    for (size_t i = 0; i < collection->count; i++) {
+        if (strcmp(collection->formulas[i].id, id) == 0) {
+            if (i + 1 < collection->count) {
+                memmove(&collection->formulas[i],
+                        &collection->formulas[i + 1],
+                        (collection->count - i - 1) * sizeof(Formula));
+            }
+            if (collection->count > 0) {
+                collection->count--;
+            }
+            return;
+        }
+    }
 }
 
 // Распознавание типа формулы
@@ -341,4 +359,5 @@ void example_dynamic_complexity() {
     iteration++;
     int dynamic_complexity = calculate_dynamic_complexity(FORMULA_TYPE_SIMPLE, iteration);
     // ...дальнейшая обработка dynamic_complexity...
+    (void)dynamic_complexity;
 }
