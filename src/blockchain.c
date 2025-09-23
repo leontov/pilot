@@ -7,7 +7,11 @@
 
 #define INITIAL_CAPACITY 16
 #define DIFFICULTY_TARGET "000" // Первые три символа должны быть нулями
+#define GENESIS_PREV_HASH "0000000000000000000000000000000000000000000000000000000000000000"
 #define MAX_BLOCKCHAIN_SIZE 1000 // Максимальный размер блокчейна
+
+static const char GENESIS_PREV_HASH[] =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 // Обновление функции calculate_hash для использования EVP API
 static void calculate_hash(const Block* block, char* output) {
@@ -60,6 +64,24 @@ static void calculate_hash(const Block* block, char* output) {
     EVP_MD_CTX_free(ctx);
 }
 
+static Formula* blockchain_clone_formula(const Formula* src) {
+    if (!src) {
+        return NULL;
+    }
+
+    Formula* clone = (Formula*)calloc(1, sizeof(Formula));
+    if (!clone) {
+        return NULL;
+    }
+
+    if (formula_copy(clone, src) != 0) {
+        free(clone);
+        return NULL;
+    }
+
+    return clone;
+}
+
 Blockchain* blockchain_create(void) {
     Blockchain* chain = (Blockchain*)malloc(sizeof(Blockchain));
     if (!chain) return NULL;
@@ -94,20 +116,11 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     Block* block = (Block*)malloc(sizeof(Block));
     if (!block) return false;
 
-    block->owned_formulas = NULL;
-
-    block->formulas = (Formula**)malloc(sizeof(Formula*) * count);
     if (!block->formulas) {
         free(block);
         return false;
     }
 
-    block->owned_formulas = (Formula*)calloc(count, sizeof(Formula));
-    if (!block->owned_formulas) {
-        free(block->formulas);
-        free(block);
-        return false;
-    }
 
     block->formula_count = count;
 
@@ -137,7 +150,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     if (chain->block_count > 0) {
         strcpy(block->prev_hash, blockchain_get_last_hash(chain));
     } else {
-        strcpy(block->prev_hash, "0000000000000000000000000000000000000000000000000000000000000000");
+        strcpy(block->prev_hash, GENESIS_PREV_HASH);
     }
     
     // Майнинг блока (поиск подходящего nonce)
@@ -162,28 +175,39 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 
 bool blockchain_verify(const Blockchain* chain) {
     if (!chain) return false;
-    
-    for (size_t i = 1; i < chain->block_count; i++) {
-        char hash[65];
-        calculate_hash(chain->blocks[i-1], hash);
-        
-        // Проверка связи с предыдущим блоком
-        if (strcmp(hash, chain->blocks[i]->prev_hash) != 0) {
+
+
+        Block* block = chain->blocks[i];
+        if (!block) {
             return false;
         }
-        
-        // Проверка сложности
-        if (strncmp(hash, DIFFICULTY_TARGET, strlen(DIFFICULTY_TARGET)) != 0) {
+
+        char current_hash[65];
+        calculate_hash(block, current_hash);
+
+
             return false;
         }
+
+        if (i == 0) {
+
+            if (strcmp(block->prev_hash, GENESIS_PREV_HASH) != 0) {
+                return false;
+            }
+        } else {
+
+                return false;
+            }
+        }
+
     }
-    
+
     return true;
 }
 
 const char* blockchain_get_last_hash(const Blockchain* chain) {
     if (!chain || chain->block_count == 0) {
-        return "0000000000000000000000000000000000000000000000000000000000000000";
+        return GENESIS_PREV_HASH;
     }
     
     static char hash[65];
@@ -197,11 +221,7 @@ void blockchain_destroy(Blockchain* chain) {
     for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
         if (block) {
-            if (block->owned_formulas) {
-                for (size_t j = 0; j < block->formula_count; ++j) {
-                    formula_clear(&block->owned_formulas[j]);
-                }
-                free(block->owned_formulas);
+
             }
             free(block->formulas);
             free(block);

@@ -672,23 +672,12 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
 
     ai->iterations++;
 
-    if (planning.best_hypothesis && planning.best_hypothesis->formula.effectiveness > 0.55 &&
-        ai->iterations % 100 == 0) {
-        char* json = serialize_formula(&planning.best_hypothesis->formula);
-        if (json) {
-            LOG_AI("Sharing trained formula: %.2f reward, score=%.2f",
-                   planning.best_hypothesis->experience.reward, planning.planning_score);
-            // TODO: передать json соседним узлам через сетевой слой
-            free(json);
         }
     }
 
     if (ai->iterations % 250 == 0) {
         adjust_chain_difficulty(ai->blockchain);
-        LOG_INFO("[AI] status: iter=%lu complexity=%d formulas=%zu avg_reward=%.3f",
-                 ai->iterations, ai->complexity_level,
-                 ai->formulas ? ai->formulas->count : 0,
-                 ai->pipeline ? ai->pipeline->metrics.average_reward : 0.0);
+
     }
 
     pthread_mutex_unlock(&ai->mutex);
@@ -711,25 +700,16 @@ Formula* kolibri_ai_get_best_formula(KolibriAI* ai) {
     
     pthread_mutex_lock(&ai->mutex);
     
-    Formula* best = NULL;
-    double max_effectiveness = 0.0;
-    
-    for (size_t i = 0; i < ai->formulas->count; i++) {
-        if (ai->formulas->formulas[i].effectiveness > max_effectiveness) {
-            best = &ai->formulas->formulas[i];
-            max_effectiveness = best->effectiveness;
-        }
-    }
-    
+    const Formula* top[1] = {0};
     Formula* result = NULL;
-    if (best) {
+    if (formula_collection_get_top(ai->formulas, top, 1) == 1) {
         result = calloc(1, sizeof(Formula));
-        if (result && formula_copy(result, best) != 0) {
+        if (result && formula_copy(result, top[0]) != 0) {
             free(result);
             result = NULL;
         }
     }
-    
+
     pthread_mutex_unlock(&ai->mutex);
     return result;
 }

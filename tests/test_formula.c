@@ -5,10 +5,15 @@
 #include <string.h>
 #include <time.h>
 #include <uuid/uuid.h>
+#include <stdint.h>
 
 #include "decimal_cell.h"
 #include "formula.h"
 #include "formula_advanced.h"
+
+uint64_t now_ms(void) {
+    return (uint64_t)time(NULL) * 1000ULL;
+}
 
 static Formula* create_text_formula(const char* content) {
     Formula* formula = calloc(1, sizeof(Formula));
@@ -120,6 +125,11 @@ static void test_formula_collection_copy(void) {
     formula_collection_destroy(collection);
 }
 
+
+
+    formula_collection_destroy(collection);
+}
+
 static void test_analytic_formula_flow(void) {
     Formula* analytic = formula_create(FORMULA_LINEAR, 2);
     assert(analytic);
@@ -178,6 +188,7 @@ static void test_analytic_formula_flow(void) {
 int main(void) {
     test_text_formula_roundtrip();
     test_formula_collection_copy();
+
     test_analytic_formula_flow();
     test_training_pipeline_integration();
     return 0;
