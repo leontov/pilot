@@ -32,6 +32,66 @@ function digitsFromExpression(expr: string): number[] {
   return result;
 }
 
+type TraceEntry = {
+  step?: number;
+  ip?: number | string;
+  opcode?: string;
+  stack?: unknown;
+  gas?: number | string;
+  [key: string]: unknown;
+};
+
+function buildTraceTable(trace: TraceEntry[]): HTMLElement {
+  const table = createElement("table", "trace-table") as HTMLTableElement;
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  const headers: (keyof TraceEntry | "step")[] = [
+    "step",
+    "ip",
+    "opcode",
+    "stack",
+    "gas"
+  ];
+
+  headers.forEach((key) => {
+    const th = document.createElement("th");
+    th.textContent = key;
+    headerRow.appendChild(th);
+  });
+
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  trace.forEach((entry, idx) => {
+    const tr = document.createElement("tr");
+    headers.forEach((key) => {
+      const td = document.createElement("td");
+      const record = entry as Record<string, unknown>;
+      const rawValue =
+        key === "step" ? record[key] ?? idx : record[key as string];
+      let value: string;
+      if (rawValue === undefined || rawValue === null) {
+        value = "";
+      } else if (Array.isArray(rawValue) || typeof rawValue === "object") {
+        try {
+          value = JSON.stringify(rawValue);
+        } catch (err) {
+          value = String(rawValue);
+        }
+      } else {
+        value = String(rawValue);
+      }
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  return table;
+}
+
 function renderDialog(container: HTMLElement) {
   const form = createElement("form", "panel form") as HTMLFormElement;
   const input = document.createElement("input");
@@ -41,11 +101,13 @@ function renderDialog(container: HTMLElement) {
   submit.type = "submit";
   submit.textContent = "Выполнить";
   const output = createElement("pre", "output");
+  const traceContainer = createElement("div", "trace-container");
 
   form.appendChild(input);
   form.appendChild(submit);
   container.appendChild(form);
   container.appendChild(output);
+  container.appendChild(traceContainer);
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -53,6 +115,7 @@ function renderDialog(container: HTMLElement) {
     if (!expr) return;
     const payload = { digits: digitsFromExpression(expr) };
     output.textContent = "Загрузка...";
+    traceContainer.innerHTML = "";
     try {
       const res = await fetch("/dialog", {
         method: "POST",
@@ -60,7 +123,13 @@ function renderDialog(container: HTMLElement) {
         body: JSON.stringify(payload)
       });
       const data = await res.json();
+      const trace = Array.isArray(data.trace) ? data.trace : null;
       output.textContent = JSON.stringify(data, null, 2);
+      if (trace && trace.length > 0) {
+        const title = createElement("h3", "trace-title", "Трассировка");
+        traceContainer.appendChild(title);
+        traceContainer.appendChild(buildTraceTable(trace));
+      }
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
     }
@@ -182,8 +251,15 @@ function injectStyles() {
     .panel { display: flex; gap: 12px; margin-bottom: 16px; }
     input { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #222; color: #f5f5f5; }
     button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
-    pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
+    pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; margin-bottom: 12px; }
     .placeholder { opacity: 0.7; }
+    .trace-container { margin-top: 8px; }
+    .trace-title { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+    .trace-table { width: 100%; border-collapse: collapse; background: #141414; border-radius: 4px; overflow: hidden; }
+    .trace-table th { background: #2c2c2c; text-transform: uppercase; font-size: 12px; letter-spacing: 0.08em; color: #dcdcdc; }
+    .trace-table th, .trace-table td { padding: 8px; border-bottom: 1px solid #2a2a2a; text-align: left; font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .trace-table tr:nth-child(even) td { background: #101010; }
+    .trace-table tr:last-child td { border-bottom: none; }
   `;
   document.head.appendChild(style);
 }
