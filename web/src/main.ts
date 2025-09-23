@@ -209,25 +209,19 @@ function renderMemory(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Найти";
-  const spinner = createSpinner();
-  const pre = createElement("pre", "output");
+
 
   form.appendChild(input);
   form.appendChild(submit);
   form.appendChild(spinner);
   container.appendChild(form);
-  container.appendChild(pre);
+  container.appendChild(message);
+  container.appendChild(table);
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const key = input.value.trim();
     if (!key) return;
-    pre.textContent = "Загрузка...";
-    submit.disabled = true;
-    spinner.classList.remove("hidden");
-    try {
-
-    } catch (err) {
 
     }
   });
