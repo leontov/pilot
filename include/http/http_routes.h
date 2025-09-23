@@ -6,6 +6,8 @@
 
 #include "util/config.h"
 
+struct KolibriAI;
+
 typedef struct {
     char *data;
     size_t len;
@@ -21,5 +23,6 @@ int http_handle_request(const kolibri_config_t *cfg,
                         http_response_t *resp);
 void http_response_free(http_response_t *resp);
 void http_routes_set_start_time(uint64_t ms_since_epoch);
+void http_routes_attach_ai(struct KolibriAI *ai);
 
 #endif

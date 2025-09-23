@@ -9,6 +9,7 @@ static void set_defaults(kolibri_config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     strncpy(cfg->http.host, "0.0.0.0", sizeof(cfg->http.host) - 1);
     cfg->http.port = 9000;
+    cfg->http.max_body_size = 1024 * 1024;
     cfg->vm.max_steps = 2048;
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
@@ -109,6 +110,7 @@ int config_load(const char *path, kolibri_config_t *cfg) {
 
     parse_string(buf, "host", cfg->http.host, sizeof(cfg->http.host));
     parse_uint(buf, "port", (uint32_t *)&cfg->http.port);
+    parse_uint(buf, "max_body_size", &cfg->http.max_body_size);
     parse_uint(buf, "max_steps", &cfg->vm.max_steps);
     parse_uint(buf, "max_stack", &cfg->vm.max_stack);
     parse_uint(buf, "trace_depth", &cfg->vm.trace_depth);

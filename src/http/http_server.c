@@ -23,14 +23,39 @@
 
 #define RECV_BUFFER 8192
 
+typedef struct client_task_s {
+    int client_fd;
+    struct client_task_s *next;
+} client_task_t;
+
 typedef struct {
     int sockfd;
-    pthread_t thread;
+    pthread_t accept_thread;
+    pthread_t *worker_threads;
+    size_t worker_count;
     int running;
+    int stop_accept;
+    int stop_workers;
     kolibri_config_t cfg;
+    pthread_mutex_t queue_mutex;
+    pthread_cond_t queue_cond;
+    client_task_t *queue_head;
+    client_task_t *queue_tail;
 } server_state_t;
 
-static server_state_t server = { .sockfd = -1, .thread = 0, .running = 0 };
+static server_state_t server = {
+    .sockfd = -1,
+    .accept_thread = 0,
+    .worker_threads = NULL,
+    .worker_count = 0,
+    .running = 0,
+    .stop_accept = 0,
+    .stop_workers = 0,
+    .queue_mutex = PTHREAD_MUTEX_INITIALIZER,
+    .queue_cond = PTHREAD_COND_INITIALIZER,
+    .queue_head = NULL,
+    .queue_tail = NULL,
+};
 
 static int create_listen_socket(const char *host, uint16_t port) {
     struct addrinfo hints;
@@ -83,19 +108,108 @@ static const char *find_header(const char *haystack, const char *needle) {
     return NULL;
 }
 
-static ssize_t read_request(int client, char *buffer, size_t buf_len) {
-    ssize_t total = 0;
-    while (total < (ssize_t)buf_len) {
-        ssize_t n = recv(client, buffer + total, buf_len - total, 0);
-        if (n <= 0) {
-            return n;
+static int read_request(int client,
+                        char **out_buffer,
+                        size_t *out_len,
+                        size_t *out_header_len,
+                        size_t max_body) {
+    if (!out_buffer || !out_len || !out_header_len) {
+        return -1;
+    }
+
+    size_t capacity = RECV_BUFFER;
+    char *buffer = calloc(1, capacity + 1);
+    if (!buffer) {
+        return -1;
+    }
+
+    size_t total = 0;
+    size_t header_len = 0;
+    size_t content_length = 0;
+    int have_content_length = 0;
+
+    while (1) {
+        if (total >= capacity) {
+            size_t new_capacity = capacity * 2;
+            char *tmp = realloc(buffer, new_capacity + 1);
+            if (!tmp) {
+                free(buffer);
+                return -1;
+            }
+            buffer = tmp;
+            capacity = new_capacity;
         }
-        total += n;
-        if (strstr(buffer, "\r\n\r\n")) {
-            break;
+
+        ssize_t n = recv(client, buffer + total, capacity - total, 0);
+        if (n <= 0) {
+            free(buffer);
+            return -1;
+        }
+        total += (size_t)n;
+        buffer[total] = '\0';
+
+        if (header_len == 0) {
+            char *headers_end = strstr(buffer, "\r\n\r\n");
+            if (headers_end) {
+                header_len = (size_t)(headers_end - buffer) + 4;
+                size_t header_text_len = header_len >= 4 ? header_len - 4 : header_len;
+                char saved = buffer[header_text_len];
+                buffer[header_text_len] = '\0';
+                const char *cl_hdr = find_header(buffer, "content-length:");
+                buffer[header_text_len] = saved;
+                if (cl_hdr) {
+                    content_length = (size_t)strtoul(cl_hdr + 15, NULL, 10);
+                    have_content_length = 1;
+                }
+
+                if (have_content_length && max_body > 0 && content_length > max_body) {
+                    free(buffer);
+                    return -2;
+                }
+
+                if (have_content_length && content_length > SIZE_MAX - header_len) {
+                    free(buffer);
+                    return -1;
+                }
+
+                size_t required = header_len + content_length;
+                if (required > capacity) {
+                    size_t new_capacity = required;
+                    char *tmp = realloc(buffer, new_capacity + 1);
+                    if (!tmp) {
+                        free(buffer);
+                        return -1;
+                    }
+                    buffer = tmp;
+                    capacity = new_capacity;
+                }
+
+                if (total >= required) {
+                    break;
+                }
+            }
+        } else {
+            size_t required = header_len + content_length;
+            if (total >= required) {
+                break;
+            }
+            if (required > capacity) {
+                size_t new_capacity = required;
+                char *tmp = realloc(buffer, new_capacity + 1);
+                if (!tmp) {
+                    free(buffer);
+                    return -1;
+                }
+                buffer = tmp;
+                capacity = new_capacity;
+            }
         }
     }
-    return total;
+
+    *out_buffer = buffer;
+    *out_len = total;
+    *out_header_len = header_len;
+    return 0;
 }
 
 static const char *status_reason(int status) {
@@ -106,6 +220,8 @@ static const char *status_reason(int status) {
         return "Bad Request";
     case 404:
         return "Not Found";
+    case 413:
+        return "Payload Too Large";
     case 500:
     default:
         return "Internal Server Error";
@@ -128,41 +244,52 @@ static void send_response(int client, const http_response_t *resp) {
     }
 }
 
+static void send_payload_too_large(int client) {
+    http_response_t resp = {0};
+    resp.status = 413;
+    snprintf(resp.content_type, sizeof(resp.content_type), "application/json");
+    resp.data = strdup("{\"error\":\"payload too large\"}");
+    resp.len = strlen(resp.data);
+    send_response(client, &resp);
+    http_response_free(&resp);
+}
+
 static void handle_client(int client) {
-    char buffer[RECV_BUFFER + 1];
-    memset(buffer, 0, sizeof(buffer));
-    ssize_t received = read_request(client, buffer, RECV_BUFFER);
-    if (received <= 0) {
+    char *buffer = NULL;
+    size_t received = 0;
+    size_t header_len = 0;
+    int rc = read_request(client,
+                          &buffer,
+                          &received,
+                          &header_len,
+                          server.cfg.http.max_body_size);
+    if (rc == -2) {
+        send_payload_too_large(client);
+        return;
+    }
+    if (rc != 0) {
         return;
     }
 
     char method[8];
     char path[256];
     if (sscanf(buffer, "%7s %255s", method, path) != 2) {
+        free(buffer);
         return;
     }
 
-    const char *headers_end = strstr(buffer, "\r\n\r\n");
-    size_t header_len = headers_end ? (size_t)(headers_end - buffer + 4) : (size_t)received;
-    size_t body_len = (size_t)received - header_len;
-    char *body = buffer + header_len;
-
-    const char *cl_hdr = find_header(buffer, "content-length:");
-    size_t content_length = body_len;
-    if (cl_hdr) {
-        content_length = (size_t)strtoul(cl_hdr + 15, NULL, 10);
+    if (header_len == 0 || header_len > received) {
+        free(buffer);
+        return;
     }
 
-    if (content_length > body_len) {
-        size_t to_read = content_length - body_len;
-        if (to_read + received > RECV_BUFFER) {
-            to_read = RECV_BUFFER - received;
-        }
-        ssize_t n = recv(client, buffer + received, to_read, 0);
-        if (n > 0) {
-            received += n;
-            body_len += (size_t)n;
-        }
+    size_t body_len = received - header_len;
+    char *body = buffer + header_len;
+
+    if (server.cfg.http.max_body_size > 0 && body_len > server.cfg.http.max_body_size) {
+        send_payload_too_large(client);
+        free(buffer);
+        return;
     }
 
     http_response_t resp = {0};
@@ -174,12 +301,87 @@ static void handle_client(int client) {
     }
     send_response(client, &resp);
     http_response_free(&resp);
+    free(buffer);
 }
 
-static void *server_loop(void *arg) {
+static size_t determine_worker_count(void) {
+    long nproc = sysconf(_SC_NPROCESSORS_ONLN);
+    if (nproc < 1) {
+        return 4;
+    }
+    if (nproc > 32) {
+        return 32;
+    }
+    return (size_t)nproc;
+}
+
+static void enqueue_client(int client_fd) {
+    client_task_t *task = malloc(sizeof(client_task_t));
+    if (!task) {
+        log_error("Failed to allocate client task");
+        close(client_fd);
+        return;
+    }
+    task->client_fd = client_fd;
+    task->next = NULL;
+
+    pthread_mutex_lock(&server.queue_mutex);
+    if (server.queue_tail) {
+        server.queue_tail->next = task;
+    } else {
+        server.queue_head = task;
+    }
+    server.queue_tail = task;
+    pthread_cond_signal(&server.queue_cond);
+    pthread_mutex_unlock(&server.queue_mutex);
+}
+
+static client_task_t *dequeue_client(void) {
+    client_task_t *task = server.queue_head;
+    if (task) {
+        server.queue_head = task->next;
+        if (!server.queue_head) {
+            server.queue_tail = NULL;
+        }
+    }
+    return task;
+}
+
+static void *worker_loop(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&server.queue_mutex);
+        while (!server.queue_head && !server.stop_workers) {
+            pthread_cond_wait(&server.queue_cond, &server.queue_mutex);
+        }
+        if (server.stop_workers && !server.queue_head) {
+            pthread_mutex_unlock(&server.queue_mutex);
+            break;
+        }
+        client_task_t *task = dequeue_client();
+        pthread_mutex_unlock(&server.queue_mutex);
+        if (!task) {
+            continue;
+        }
+        int client = task->client_fd;
+        free(task);
+        handle_client(client);
+        close(client);
+    }
+    return NULL;
+}
+
+static void *accept_loop(void *arg) {
     (void)arg;
     log_info("HTTP server listening on %s:%u", server.cfg.http.host, server.cfg.http.port);
-    while (server.running) {
+    while (1) {
+        pthread_mutex_lock(&server.queue_mutex);
+        int should_stop = server.stop_accept;
+        pthread_mutex_unlock(&server.queue_mutex);
+        if (should_stop) {
+            break;
+        }
+
         struct sockaddr_in addr;
         socklen_t addrlen = sizeof(addr);
         int client = accept(server.sockfd, (struct sockaddr *)&addr, &addrlen);
@@ -187,10 +389,20 @@ static void *server_loop(void *arg) {
             if (errno == EINTR) {
                 continue;
             }
+            if (errno == EBADF || errno == EINVAL) {
+                break;
+            }
+            log_error("accept failed: %s", strerror(errno));
+            continue;
+        }
+        pthread_mutex_lock(&server.queue_mutex);
+        if (server.stop_workers) {
+            pthread_mutex_unlock(&server.queue_mutex);
+            close(client);
             break;
         }
-        handle_client(client);
-        close(client);
+        pthread_mutex_unlock(&server.queue_mutex);
+        enqueue_client(client);
     }
     return NULL;
 }
@@ -206,15 +418,63 @@ int http_server_start(const kolibri_config_t *cfg) {
     if (server.sockfd < 0) {
         return -1;
     }
+    server.queue_head = NULL;
+    server.queue_tail = NULL;
+    server.stop_accept = 0;
+    server.stop_workers = 0;
     server.running = 1;
     server.cfg = *cfg;
-    uint64_t start_ms = (uint64_t)time(NULL) * 1000ull;
-    http_routes_set_start_time(start_ms);
-    vm_set_seed(cfg->seed);
-    if (pthread_create(&server.thread, NULL, server_loop, NULL) != 0) {
+    size_t worker_count = determine_worker_count();
+    pthread_t *workers = calloc(worker_count, sizeof(pthread_t));
+    if (!workers) {
         close(server.sockfd);
         server.sockfd = -1;
         server.running = 0;
+        return -1;
+    }
+    for (size_t i = 0; i < worker_count; ++i) {
+        if (pthread_create(&workers[i], NULL, worker_loop, NULL) != 0) {
+            pthread_mutex_lock(&server.queue_mutex);
+            server.stop_workers = 1;
+            pthread_cond_broadcast(&server.queue_cond);
+            pthread_mutex_unlock(&server.queue_mutex);
+            for (size_t j = 0; j < i; ++j) {
+                pthread_join(workers[j], NULL);
+            }
+            free(workers);
+            close(server.sockfd);
+            server.sockfd = -1;
+            server.running = 0;
+            server.stop_workers = 0;
+            return -1;
+        }
+    }
+    server.worker_threads = workers;
+    server.worker_count = worker_count;
+    uint64_t start_ms = (uint64_t)time(NULL) * 1000ull;
+    http_routes_set_start_time(start_ms);
+
+    vm_set_seed(cfg->seed);
+    if (pthread_create(&server.thread, NULL, server_loop, NULL) != 0) {
+
+    if (pthread_create(&server.accept_thread, NULL, accept_loop, NULL) != 0) {
+        pthread_mutex_lock(&server.queue_mutex);
+        server.stop_accept = 1;
+        server.stop_workers = 1;
+        pthread_cond_broadcast(&server.queue_cond);
+        pthread_mutex_unlock(&server.queue_mutex);
+        for (size_t i = 0; i < server.worker_count; ++i) {
+            pthread_join(server.worker_threads[i], NULL);
+        }
+        free(server.worker_threads);
+        server.worker_threads = NULL;
+        server.worker_count = 0;
+
+        close(server.sockfd);
+        server.sockfd = -1;
+        server.running = 0;
+        server.stop_accept = 0;
+        server.stop_workers = 0;
         return -1;
     }
     return 0;
@@ -224,9 +484,35 @@ void http_server_stop(void) {
     if (!server.running) {
         return;
     }
+    pthread_mutex_lock(&server.queue_mutex);
     server.running = 0;
+    server.stop_accept = 1;
+    server.stop_workers = 1;
+    pthread_cond_broadcast(&server.queue_cond);
+    pthread_mutex_unlock(&server.queue_mutex);
     shutdown(server.sockfd, SHUT_RDWR);
     close(server.sockfd);
     server.sockfd = -1;
-    pthread_join(server.thread, NULL);
+    pthread_join(server.accept_thread, NULL);
+    for (size_t i = 0; i < server.worker_count; ++i) {
+        pthread_join(server.worker_threads[i], NULL);
+    }
+    free(server.worker_threads);
+    server.worker_threads = NULL;
+    server.worker_count = 0;
+
+    pthread_mutex_lock(&server.queue_mutex);
+    client_task_t *task = server.queue_head;
+    server.queue_head = NULL;
+    server.queue_tail = NULL;
+    pthread_mutex_unlock(&server.queue_mutex);
+    while (task) {
+        client_task_t *next = task->next;
+        close(task->client_fd);
+        free(task);
+        task = next;
+    }
+
+    server.stop_accept = 0;
+    server.stop_workers = 0;
 }
