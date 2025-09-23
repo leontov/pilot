@@ -3,17 +3,85 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <uuid/uuid.h>
 
 #include "decimal_cell.h"
 #include "formula.h"
 #include "formula_advanced.h"
 
+static Formula* create_text_formula(const char* content) {
+    Formula* formula = calloc(1, sizeof(Formula));
+    assert(formula);
+
+    uuid_t uuid;
+    uuid_generate(uuid);
+    uuid_unparse(uuid, formula->id);
+    formula->representation = FORMULA_REPRESENTATION_TEXT;
+    if (content) {
+        strncpy(formula->content, content, sizeof(formula->content) - 1);
+    }
+    formula->created_at = time(NULL);
+    return formula;
+}
+
+static const char* find_resource(const char* name, char* buffer, size_t size) {
+    const char* prefixes[] = {"", "../", "../../"};
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+        snprintf(buffer, size, "%s%s", prefixes[i], name);
+        FILE* file = fopen(buffer, "rb");
+        if (file) {
+            fclose(file);
+            return buffer;
+        }
+    }
+    return NULL;
+}
+
+static void test_training_pipeline_integration(void) {
+    FormulaCollection* collection = formula_collection_create(4);
+    assert(collection);
+
+    FormulaTrainingPipeline* pipeline = formula_training_pipeline_create(6);
+    assert(pipeline);
+
+    char path_buffer[256];
+    const char* dataset_path = find_resource("learning_data.json", path_buffer, sizeof(path_buffer));
+    assert(dataset_path);
+    assert(formula_training_pipeline_load_dataset(pipeline, dataset_path) == 0);
+
+    const char* weights_path = find_resource("mlp_weights.bin", path_buffer, sizeof(path_buffer));
+    if (weights_path) {
+        assert(formula_training_pipeline_load_weights(pipeline, weights_path) == 0);
+    }
+
+    FormulaMemoryFact fact = {0};
+    strncpy(fact.fact_id, "client_case", sizeof(fact.fact_id) - 1);
+    strncpy(fact.description, "клиентский запрос", sizeof(fact.description) - 1);
+    fact.importance = 0.8;
+    fact.reward = 0.5;
+    fact.timestamp = time(NULL);
+
+    FormulaMemorySnapshot snapshot = formula_memory_snapshot_clone(&fact, 1);
+    assert(snapshot.facts);
+
+    assert(formula_training_pipeline_prepare(pipeline, collection, &snapshot, 3) == 0);
+    assert(formula_training_pipeline_evaluate(pipeline, collection) == 0);
+    FormulaHypothesis* best = formula_training_pipeline_select_best(pipeline);
+    assert(best);
+    assert(best->experience.reward >= 0.0);
+    assert(formula_training_pipeline_record_experience(pipeline, &best->experience) == 0);
+
+    formula_memory_snapshot_release(&snapshot);
+    formula_training_pipeline_destroy(pipeline);
+    formula_collection_destroy(collection);
+}
+
 static void test_text_formula_roundtrip(void) {
-    Formula* formula = generate_random_formula(3);
+    Formula* formula = create_text_formula("f(x) = 2 * x^2 + 3");
     assert(formula);
     assert(formula->representation == FORMULA_REPRESENTATION_TEXT);
 
-    strcpy(formula->content, "f(x) = 2 * x^2 + 3");
     formula->effectiveness = 0.5;
 
     char* json = serialize_formula(formula);
@@ -36,7 +104,7 @@ static void test_formula_collection_copy(void) {
     FormulaCollection* collection = formula_collection_create(1);
     assert(collection);
 
-    Formula* generated = generate_random_formula(2);
+    Formula* generated = create_text_formula("f(x) = 5 * x + 1");
     assert(generated);
     generated->effectiveness = 0.75;
     assert(formula_collection_add(collection, generated) == 0);
@@ -49,6 +117,50 @@ static void test_formula_collection_copy(void) {
 
     formula_clear(generated);
     free(generated);
+    formula_collection_destroy(collection);
+}
+
+static Formula* create_analytic_formula(const char* id, const char* expression) {
+    Formula* formula = formula_create(FORMULA_LINEAR, 2);
+    assert(formula);
+
+    if (id) {
+        strncpy(formula->id, id, sizeof(formula->id) - 1);
+        formula->id[sizeof(formula->id) - 1] = '\0';
+    }
+
+    formula->coefficients[0] = 1.0;
+    formula->coefficients[1] = 1.0;
+    if (expression) {
+        formula->expression = strdup(expression);
+        assert(formula->expression);
+    }
+
+    return formula;
+}
+
+static void test_formula_collection_remove_cleanup(void) {
+    FormulaCollection* collection = formula_collection_create(2);
+    assert(collection);
+
+    Formula* first = create_analytic_formula("first", "f(x) = x + 1");
+    Formula* second = create_analytic_formula("second", "f(x) = x + 2");
+
+    assert(formula_collection_add(collection, first) == 0);
+    assert(formula_collection_add(collection, second) == 0);
+    assert(collection->count == 2);
+
+    formula_destroy(first);
+    formula_destroy(second);
+
+    formula_collection_remove(collection, "first");
+    assert(collection->count == 1);
+    assert(formula_collection_find(collection, "second") != NULL);
+
+    formula_collection_remove(collection, "second");
+    assert(collection->count == 0);
+    assert(formula_collection_find(collection, "second") == NULL);
+
     formula_collection_destroy(collection);
 }
 
@@ -110,6 +222,8 @@ static void test_analytic_formula_flow(void) {
 int main(void) {
     test_text_formula_roundtrip();
     test_formula_collection_copy();
+    test_formula_collection_remove_cleanup();
     test_analytic_formula_flow();
+    test_training_pipeline_integration();
     return 0;
 }
