@@ -34,6 +34,8 @@ function digitsFromExpression(expr: string): number[] {
 }
 
 function renderDialog(container: HTMLElement) {
+  const historyEntries: { input: string; answer: unknown; timestamp: string }[] = [];
+
   const form = createElement("form", "panel form") as HTMLFormElement;
   const input = document.createElement("input");
   input.type = "text";
@@ -43,10 +45,62 @@ function renderDialog(container: HTMLElement) {
   submit.textContent = "Выполнить";
   const output = createElement("pre", "output");
 
+  const historyContainer = createElement("div", "history-container");
+  const historyTitle = createElement("h3", "history-title", "История");
+  const historyList = createElement("ul", "history-list");
+  const historyEmpty = createElement("p", "history-empty", "Диалогов пока нет.");
+
+  const renderHistory = () => {
+    historyList.innerHTML = "";
+    if (historyEntries.length === 0) {
+      if (!historyContainer.contains(historyEmpty)) {
+        historyContainer.appendChild(historyEmpty);
+      }
+      if (historyContainer.contains(historyList)) {
+        historyContainer.removeChild(historyList);
+      }
+      return;
+    }
+
+    if (historyContainer.contains(historyEmpty)) {
+      historyContainer.removeChild(historyEmpty);
+    }
+    if (!historyContainer.contains(historyList)) {
+      historyContainer.appendChild(historyList);
+    }
+
+    historyEntries.forEach((entry) => {
+      const item = createElement("li", "history-item");
+      const meta = createElement("div", "history-meta");
+      const inputLabel = createElement("span", "history-input", entry.input);
+      const timeLabel = createElement("time", "history-time", entry.timestamp);
+      meta.appendChild(inputLabel);
+      meta.appendChild(timeLabel);
+
+      const answer = createElement("pre", "history-answer");
+      const answerText =
+        typeof entry.answer === "string"
+          ? entry.answer
+          : JSON.stringify(entry.answer, null, 2);
+      answer.textContent = answerText;
+
+      item.appendChild(meta);
+      item.appendChild(answer);
+      historyList.appendChild(item);
+    });
+  };
+
+  historyContainer.appendChild(historyTitle);
+  historyContainer.appendChild(historyEmpty);
+
+  const resultWrapper = createElement("div", "dialog-result");
+  resultWrapper.appendChild(output);
+  resultWrapper.appendChild(historyContainer);
+
   form.appendChild(input);
   form.appendChild(submit);
   container.appendChild(form);
-  container.appendChild(output);
+  container.appendChild(resultWrapper);
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -60,8 +114,17 @@ function renderDialog(container: HTMLElement) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data = await res.json();
       output.textContent = JSON.stringify(data, null, 2);
+      historyEntries.unshift({
+        input: expr,
+        answer: data,
+        timestamp: new Date().toLocaleString()
+      });
+      renderHistory();
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
     }
@@ -189,6 +252,22 @@ function injectStyles() {
     button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
     pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
     .placeholder { opacity: 0.7; }
+    .dialog-result { display: flex; gap: 16px; align-items: flex-start; }
+    .dialog-result .output { flex: 1; }
+    .history-container { width: 320px; background: #181818; border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+    .history-title { margin: 0; font-size: 1rem; }
+    .history-empty { margin: 0; opacity: 0.6; font-size: 0.9rem; }
+    .history-list { list-style: none; margin: 0; padding: 0; border: 1px solid #222; border-radius: 6px; overflow: hidden; }
+    .history-item { padding: 10px 12px; background: #111; display: flex; flex-direction: column; gap: 6px; }
+    .history-item:nth-child(odd) { background: #161616; }
+    .history-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 0.82rem; color: #a0a0a0; }
+    .history-input { font-weight: 600; color: #f5f5f5; }
+    .history-answer { margin: 0; background: rgba(255, 255, 255, 0.05); padding: 8px; border-radius: 4px; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
+    .history-time { font-variant-numeric: tabular-nums; }
+    @media (max-width: 900px) {
+      .dialog-result { flex-direction: column; }
+      .history-container { width: 100%; }
+    }
   `;
   document.head.appendChild(style);
 }
