@@ -8,6 +8,9 @@
 #define DIFFICULTY_TARGET "000" // Первые три символа должны быть нулями
 #define MAX_BLOCKCHAIN_SIZE 1000 // Максимальный размер блокчейна
 
+static const char GENESIS_PREV_HASH[] =
+    "0000000000000000000000000000000000000000000000000000000000000000";
+
 // Обновление функции calculate_hash для использования EVP API
 static void calculate_hash(const Block* block, char* output) {
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -110,7 +113,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     if (chain->block_count > 0) {
         strcpy(block->prev_hash, blockchain_get_last_hash(chain));
     } else {
-        strcpy(block->prev_hash, "0000000000000000000000000000000000000000000000000000000000000000");
+        strcpy(block->prev_hash, GENESIS_PREV_HASH);
     }
     
     // Майнинг блока (поиск подходящего nonce)
@@ -135,22 +138,42 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 
 bool blockchain_verify(const Blockchain* chain) {
     if (!chain) return false;
-    
-    for (size_t i = 1; i < chain->block_count; i++) {
-        char hash[65];
-        calculate_hash(chain->blocks[i-1], hash);
-        
-        // Проверка связи с предыдущим блоком
-        if (strcmp(hash, chain->blocks[i]->prev_hash) != 0) {
-            return false;
-        }
-        
-        // Проверка сложности
-        if (strncmp(hash, DIFFICULTY_TARGET, strlen(DIFFICULTY_TARGET)) != 0) {
-            return false;
-        }
+
+    if (chain->block_count == 0) {
+        return true;
     }
-    
+
+    const size_t difficulty_len = strlen(DIFFICULTY_TARGET);
+    char previous_hash[65];
+    bool has_previous_hash = false;
+
+    for (size_t i = 0; i < chain->block_count; ++i) {
+        Block* block = chain->blocks[i];
+        if (!block) {
+            return false;
+        }
+
+        char current_hash[65];
+        calculate_hash(block, current_hash);
+
+        if (strncmp(current_hash, DIFFICULTY_TARGET, difficulty_len) != 0) {
+            return false;
+        }
+
+        if (i == 0) {
+            if (strcmp(block->prev_hash, GENESIS_PREV_HASH) != 0) {
+                return false;
+            }
+        } else {
+            if (!has_previous_hash || strcmp(block->prev_hash, previous_hash) != 0) {
+                return false;
+            }
+        }
+
+        memcpy(previous_hash, current_hash, sizeof(current_hash));
+        has_previous_hash = true;
+    }
+
     return true;
 }
 
