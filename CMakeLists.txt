@@ -113,6 +113,7 @@ target_include_directories(test_blockchain PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${JSONC_INCLUDE_DIRS})
 
+
 # Добавляем пути к заголовочным файлам для веб-интерфейса
 target_include_directories(web_interface PRIVATE
     ${CMAKE_SOURCE_DIR}/src
