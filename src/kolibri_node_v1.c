@@ -56,6 +56,8 @@ static void cleanup_resources(void) {
 // Флаг для graceful shutdown
 static volatile sig_atomic_t keep_running = 1;
 
+static void* http_status_server_thread(void* arg);
+
 // Обработчик сигналов для graceful shutdown
 static void sig_handler(int signo) {
     if (signo == SIGINT || signo == SIGTERM) {
@@ -333,11 +335,22 @@ static void run_server(void) {
     static uint64_t last_log = 0;
     uint64_t last_meta = 0;
     uint64_t last_migrate = 0;
-    while (1) {
+    while (keep_running) {
         ssize_t len = recvfrom(server_sock, buffer, sizeof(buffer), 0,
                               (struct sockaddr*)&src_addr, &src_len);
         if (len < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (!keep_running) {
+                    break;
+                }
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (!keep_running) {
+                    break;
+                }
+                continue;
+            }
             perror("recvfrom");
             break;
         }
@@ -399,7 +412,16 @@ static void run_server(void) {
 // ==========================
 // Entry point
 
-extern void run_http_status_server(int port, rules_t* rules, decimal_cell_t* cell);
+extern int http_status_server_init(int port, rules_t* rules, decimal_cell_t* cell,
+                                   volatile sig_atomic_t* keep_running);
+extern void http_status_server_run(void);
+extern void http_status_server_shutdown(void);
+
+static void* http_status_server_thread(void* arg) {
+    (void)arg;
+    http_status_server_run();
+    return NULL;
+}
 
 int main(int argc, char** argv) {
     uint16_t port = DEFAULT_PORT;
@@ -475,10 +497,28 @@ int main(int argc, char** argv) {
 
     // Запуск HTTP API для мониторинга (мониторинговый порт)
     int http_port = port + 10000;
-    run_http_status_server(http_port, &rules, &cell);
+    pthread_t http_thread;
+    bool http_thread_started = false;
+    if (http_status_server_init(http_port, &rules, &cell, &keep_running) == 0) {
+        if (pthread_create(&http_thread, NULL, http_status_server_thread, NULL) == 0) {
+            http_thread_started = true;
+        } else {
+            LOG_ERROR("Failed to start HTTP status server thread: %s", strerror(errno));
+            http_status_server_shutdown();
+        }
+    } else {
+        LOG_ERROR("Failed to initialize HTTP status server: %s", strerror(errno));
+    }
 
     // Основной цикл обработки событий
     run_server();
+
+    keep_running = 0;
+
+    if (http_thread_started) {
+        pthread_join(http_thread, NULL);
+        http_status_server_shutdown();
+    }
 
     // Очистка ресурсов (эта часть не будет достигнута если run_server не завершится, но оставим для полноты)
     if (server_sock >= 0) {
