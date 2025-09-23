@@ -140,6 +140,7 @@ void formula_collection_remove(FormulaCollection* collection, const char* id) {
 
     for (size_t i = 0; i < collection->count; i++) {
         if (strcmp(collection->formulas[i].id, id) == 0) {
+            formula_clear(&collection->formulas[i]);
             if (i + 1 < collection->count) {
                 memmove(&collection->formulas[i],
                         &collection->formulas[i + 1],
@@ -147,6 +148,7 @@ void formula_collection_remove(FormulaCollection* collection, const char* id) {
             }
             if (collection->count > 0) {
                 collection->count--;
+                memset(&collection->formulas[collection->count], 0, sizeof(Formula));
             }
             return;
         }

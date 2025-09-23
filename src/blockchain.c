@@ -1,4 +1,5 @@
 #include "blockchain.h"
+#include "formula.h"
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/evp.h>
@@ -6,6 +7,7 @@
 
 #define INITIAL_CAPACITY 16
 #define DIFFICULTY_TARGET "000" // Первые три символа должны быть нулями
+#define GENESIS_PREV_HASH "0000000000000000000000000000000000000000000000000000000000000000"
 #define MAX_BLOCKCHAIN_SIZE 1000 // Максимальный размер блокчейна
 
 static const char GENESIS_PREV_HASH[] =
@@ -62,6 +64,24 @@ static void calculate_hash(const Block* block, char* output) {
     EVP_MD_CTX_free(ctx);
 }
 
+static Formula* blockchain_clone_formula(const Formula* src) {
+    if (!src) {
+        return NULL;
+    }
+
+    Formula* clone = (Formula*)calloc(1, sizeof(Formula));
+    if (!clone) {
+        return NULL;
+    }
+
+    if (formula_copy(clone, src) != 0) {
+        free(clone);
+        return NULL;
+    }
+
+    return clone;
+}
+
 Blockchain* blockchain_create(void) {
     Blockchain* chain = (Blockchain*)malloc(sizeof(Blockchain));
     if (!chain) return NULL;
@@ -96,14 +116,31 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     Block* block = (Block*)malloc(sizeof(Block));
     if (!block) return false;
     
-    block->formulas = (Formula**)malloc(sizeof(Formula*) * count);
+    block->formulas = (Formula**)calloc(count, sizeof(Formula*));
     if (!block->formulas) {
         free(block);
         return false;
     }
-    
+
     // Копирование формул
-    memcpy(block->formulas, formulas, sizeof(Formula*) * count);
+    for (size_t i = 0; i < count; i++) {
+        if (!formulas[i]) {
+            block->formulas[i] = NULL;
+            continue;
+        }
+
+        block->formulas[i] = blockchain_clone_formula(formulas[i]);
+        if (!block->formulas[i]) {
+            for (size_t j = 0; j < i; j++) {
+                if (block->formulas[j]) {
+                    formula_destroy(block->formulas[j]);
+                }
+            }
+            free(block->formulas);
+            free(block);
+            return false;
+        }
+    }
     block->formula_count = count;
     
     // Установка времени создания
@@ -139,15 +176,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 bool blockchain_verify(const Blockchain* chain) {
     if (!chain) return false;
 
-    if (chain->block_count == 0) {
-        return true;
-    }
 
-    const size_t difficulty_len = strlen(DIFFICULTY_TARGET);
-    char previous_hash[65];
-    bool has_previous_hash = false;
-
-    for (size_t i = 0; i < chain->block_count; ++i) {
         Block* block = chain->blocks[i];
         if (!block) {
             return false;
@@ -156,22 +185,21 @@ bool blockchain_verify(const Blockchain* chain) {
         char current_hash[65];
         calculate_hash(block, current_hash);
 
-        if (strncmp(current_hash, DIFFICULTY_TARGET, difficulty_len) != 0) {
+
             return false;
         }
 
         if (i == 0) {
+
             if (strcmp(block->prev_hash, GENESIS_PREV_HASH) != 0) {
                 return false;
             }
         } else {
-            if (!has_previous_hash || strcmp(block->prev_hash, previous_hash) != 0) {
+
                 return false;
             }
         }
 
-        memcpy(previous_hash, current_hash, sizeof(current_hash));
-        has_previous_hash = true;
     }
 
     return true;
@@ -179,7 +207,7 @@ bool blockchain_verify(const Blockchain* chain) {
 
 const char* blockchain_get_last_hash(const Blockchain* chain) {
     if (!chain || chain->block_count == 0) {
-        return "0000000000000000000000000000000000000000000000000000000000000000";
+        return GENESIS_PREV_HASH;
     }
     
     static char hash[65];
@@ -193,6 +221,11 @@ void blockchain_destroy(Blockchain* chain) {
     for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
         if (block) {
+            for (size_t j = 0; j < block->formula_count; j++) {
+                if (block->formulas && block->formulas[j]) {
+                    formula_destroy(block->formulas[j]);
+                }
+            }
             free(block->formulas);
             free(block);
         }
