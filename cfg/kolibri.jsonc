@@ -2,7 +2,8 @@
   // HTTP configuration
   "http": {
     "host": "0.0.0.0",
-    "port": 9000
+    "port": 9000,
+    "max_body_size": 1048576
   },
   // VM execution defaults
   "vm": {

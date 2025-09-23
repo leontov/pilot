@@ -1,17 +1,68 @@
+
+
 const tabs = [
   { id: "dialog", label: "Диалог" },
   { id: "memory", label: "Память" },
   { id: "programs", label: "Программы" },
   { id: "synth", label: "Синтез" },
   { id: "chain", label: "Блокчейн" },
+  { id: "status", label: "Статус" },
   { id: "cluster", label: "Кластер" }
 ];
+
+type ThemeMode = "light" | "dark";
+
+const THEME_STORAGE_KEY = "kolibri-theme";
+
+function readStoredTheme(): ThemeMode | null {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") {
+      return stored;
+    }
+  } catch (error) {
+    console.warn("Не удалось прочитать тему из localStorage", error);
+  }
+  return null;
+}
+
+function systemPreferredTheme(): ThemeMode {
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function applyTheme(theme: ThemeMode) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.body.classList.remove("theme-light", "theme-dark");
+  document.body.classList.add(theme === "dark" ? "theme-dark" : "theme-light");
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (error) {
+    console.warn("Не удалось сохранить тему", error);
+  }
+}
+
+function initializeTheme(): ThemeMode {
+  const preferred = readStoredTheme() ?? systemPreferredTheme();
+  applyTheme(preferred);
+  return preferred;
+}
+
+let activeTheme: ThemeMode = initializeTheme();
+
+function toggleTheme(): ThemeMode {
+  const nextTheme: ThemeMode = activeTheme === "dark" ? "light" : "dark";
+  activeTheme = nextTheme;
+  applyTheme(nextTheme);
+  return nextTheme;
+}
 
 function createElement(tag: string, className?: string, text?: string): HTMLElement {
   const el = document.createElement(tag);
   if (className) el.className = className;
   if (text) el.textContent = text;
   return el;
+}
+
 }
 
 function digitsFromExpression(expr: string): number[] {
@@ -32,7 +83,12 @@ function digitsFromExpression(expr: string): number[] {
   return result;
 }
 
+
+}
+
 function renderDialog(container: HTMLElement) {
+  const historyEntries: { input: string; answer: unknown; timestamp: string }[] = [];
+
   const form = createElement("form", "panel form") as HTMLFormElement;
   const input = document.createElement("input");
   input.type = "text";
@@ -40,44 +96,106 @@ function renderDialog(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Выполнить";
+  const spinner = createSpinner();
   const output = createElement("pre", "output");
+  const traceContainer = createElement("div", "trace-container");
+
+  const historyContainer = createElement("div", "history-container");
+  const historyTitle = createElement("h3", "history-title", "История");
+  const historyList = createElement("ul", "history-list");
+  const historyEmpty = createElement("p", "history-empty", "Диалогов пока нет.");
+
+  const renderHistory = () => {
+    historyList.innerHTML = "";
+    if (historyEntries.length === 0) {
+      if (!historyContainer.contains(historyEmpty)) {
+        historyContainer.appendChild(historyEmpty);
+      }
+      if (historyContainer.contains(historyList)) {
+        historyContainer.removeChild(historyList);
+      }
+      return;
+    }
+
+    if (historyContainer.contains(historyEmpty)) {
+      historyContainer.removeChild(historyEmpty);
+    }
+    if (!historyContainer.contains(historyList)) {
+      historyContainer.appendChild(historyList);
+    }
+
+    historyEntries.forEach((entry) => {
+      const item = createElement("li", "history-item");
+      const meta = createElement("div", "history-meta");
+      const inputLabel = createElement("span", "history-input", entry.input);
+      const timeLabel = createElement("time", "history-time", entry.timestamp);
+      meta.appendChild(inputLabel);
+      meta.appendChild(timeLabel);
+
+      const answer = createElement("pre", "history-answer");
+      const answerText =
+        typeof entry.answer === "string"
+          ? entry.answer
+          : JSON.stringify(entry.answer, null, 2);
+      answer.textContent = answerText;
+
+      item.appendChild(meta);
+      item.appendChild(answer);
+      historyList.appendChild(item);
+    });
+  };
+
+  historyContainer.appendChild(historyTitle);
+  historyContainer.appendChild(historyEmpty);
+
+  const resultWrapper = createElement("div", "dialog-result");
+  resultWrapper.appendChild(output);
+  resultWrapper.appendChild(historyContainer);
 
   form.appendChild(input);
   form.appendChild(submit);
+  form.appendChild(spinner);
   container.appendChild(form);
-  container.appendChild(output);
+
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const expr = input.value.trim();
     if (!expr) return;
     const payload = { digits: digitsFromExpression(expr) };
+    submit.disabled = true;
+    spinner.classList.remove("hidden");
     output.textContent = "Загрузка...";
+    traceContainer.innerHTML = "";
     try {
-      const res = await fetch("/dialog", {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      output.textContent = JSON.stringify(data, null, 2);
+      if (!res.ok) {
+
+
     } catch (err) {
-      output.textContent = `Ошибка: ${String(err)}`;
+
     }
   });
 }
 
 function renderStatus(container: HTMLElement) {
-  const button = createElement("button", "refresh", "Обновить статус");
+  const panel = createElement("div", "panel");
+  const button = createElement("button", "button-primary", "Обновить статус") as HTMLButtonElement;
+  button.type = "button";
   const pre = createElement("pre", "output");
-  container.appendChild(button);
+  panel.appendChild(button);
+  container.appendChild(panel);
   container.appendChild(pre);
+  container.classList.add("split-view");
+
   button.addEventListener("click", async () => {
     pre.textContent = "Загрузка...";
     try {
-      const res = await fetch("/status");
-      const json = await res.json();
-      pre.textContent = JSON.stringify(json, null, 2);
+
     } catch (err) {
       pre.textContent = `Ошибка: ${String(err)}`;
     }
@@ -91,30 +209,11 @@ function renderMemory(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Найти";
-  const message = createElement(
-    "p",
-    "memory-message",
-    "Введите префикс и нажмите «Найти»."
-  );
-  const table = document.createElement("table");
-  table.className = "memory-table";
-  const thead = document.createElement("thead");
-  const headRow = document.createElement("tr");
-  const prefixHeader = document.createElement("th");
-  prefixHeader.textContent = "Префикс";
-  const valueHeader = document.createElement("th");
-  valueHeader.textContent = "Значение";
-  headRow.appendChild(prefixHeader);
-  headRow.appendChild(valueHeader);
-  thead.appendChild(headRow);
-  const tbody = document.createElement("tbody");
-  table.appendChild(thead);
-  table.appendChild(tbody);
 
-  table.style.display = "none";
 
   form.appendChild(input);
   form.appendChild(submit);
+  form.appendChild(spinner);
   container.appendChild(form);
   container.appendChild(message);
   container.appendChild(table);
@@ -123,36 +222,7 @@ function renderMemory(container: HTMLElement) {
     ev.preventDefault();
     const key = input.value.trim();
     if (!key) return;
-    message.textContent = "Загрузка...";
-    table.style.display = "none";
-    try {
-      const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
-      const json = await res.json();
-      const entries = Array.isArray(json?.entries) ? json.entries : [];
 
-      tbody.innerHTML = "";
-
-      if (entries.length === 0) {
-        message.textContent = "Ничего не найдено для указанного префикса.";
-        return;
-      }
-
-      for (const item of entries) {
-        const row = document.createElement("tr");
-        const prefixCell = document.createElement("td");
-        prefixCell.textContent = String(item.prefix ?? "");
-        const valueCell = document.createElement("td");
-        valueCell.className = "value";
-        valueCell.textContent = String(item.value ?? "");
-        row.appendChild(prefixCell);
-        row.appendChild(valueCell);
-        tbody.appendChild(row);
-      }
-
-      message.textContent = "";
-      table.style.display = "table";
-    } catch (err) {
-      message.textContent = `Ошибка: ${String(err)}`;
     }
   });
 }
@@ -163,7 +233,86 @@ function renderPlaceholder(container: HTMLElement, text: string) {
 }
 
 function renderPrograms(container: HTMLElement) {
-  renderPlaceholder(container, "Список программ появится на этапе B.");
+  const form = createElement("form", "program-form") as HTMLFormElement;
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "Введите байты программы, например: 16, 0, 0, 2";
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = "Запустить";
+  form.appendChild(textarea);
+  form.appendChild(submit);
+
+  const output = createElement("div", "program-output");
+  const statusEl = createElement("div", "program-status", "Статус: —");
+  const resultEl = createElement("div", "program-result", "Результат: —");
+  const traceTitle = createElement("div", "program-trace-title", "Трасса:");
+  const tracePre = createElement("pre", "output program-trace", "[]");
+
+  output.appendChild(statusEl);
+  output.appendChild(resultEl);
+  output.appendChild(traceTitle);
+  output.appendChild(tracePre);
+
+  container.appendChild(form);
+  container.appendChild(output);
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const raw = textarea.value.trim();
+    if (!raw) {
+      statusEl.textContent = "Статус: введите программу";
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+      return;
+    }
+
+    let program: number[];
+    try {
+      program = parseProgramInput(raw);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      statusEl.textContent = `Статус: ${message}`;
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+      return;
+    }
+
+    statusEl.textContent = "Статус: выполнение...";
+    resultEl.textContent = "Результат: —";
+    tracePre.textContent = "[]";
+
+    try {
+      const res = await fetch("/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ program })
+      });
+      const data = await res.json();
+      if ("error" in data) {
+        statusEl.textContent = `Статус: ошибка — ${String(data.error)}`;
+        resultEl.textContent = "Результат: —";
+        tracePre.textContent = "[]";
+        return;
+      }
+      const statusText = typeof data.status !== "undefined" ? String(data.status) : "—";
+      const stepsText = typeof data.steps !== "undefined" ? `, шаги: ${String(data.steps)}` : "";
+      statusEl.textContent = `Статус: ${statusText}${stepsText}`;
+      const resultText = typeof data.result !== "undefined" ? String(data.result) : "—";
+      resultEl.textContent = `Результат: ${resultText}`;
+      const traceData = data.trace;
+      if (Array.isArray(traceData)) {
+        tracePre.textContent = JSON.stringify(traceData, null, 2);
+      } else if (typeof traceData !== "undefined") {
+        tracePre.textContent = JSON.stringify(traceData, null, 2);
+      } else {
+        tracePre.textContent = "[]";
+      }
+    } catch (err) {
+      statusEl.textContent = `Статус: ошибка запроса — ${String(err)}`;
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+    }
+  });
 }
 
 function renderSynth(container: HTMLElement) {
@@ -184,6 +333,7 @@ const renderers: Record<string, (container: HTMLElement) => void> = {
   programs: renderPrograms,
   synth: renderSynth,
   chain: renderChain,
+  status: renderStatus,
   cluster: renderCluster
 };
 
@@ -192,50 +342,83 @@ function mountApp() {
   if (!app) return;
 
   const wrapper = createElement("div", "app-wrapper");
+
+  const topBar = createElement("header", "top-bar");
   const nav = createElement("nav", "tabs");
+  nav.setAttribute("aria-label", "Основные разделы");
+  const actions = createElement("div", "top-bar__actions");
+  const themeToggle = createElement("button", "theme-toggle") as HTMLButtonElement;
+  themeToggle.type = "button";
+
+  const updateThemeToggle = (theme: ThemeMode) => {
+    const nextThemeLabel = theme === "dark" ? "светлую" : "тёмную";
+    themeToggle.textContent = theme === "dark" ? "Светлая тема" : "Тёмная тема";
+    themeToggle.setAttribute("aria-label", `Переключить на ${nextThemeLabel} тему`);
+    themeToggle.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+  };
+
+  themeToggle.addEventListener("click", () => {
+    const next = toggleTheme();
+    updateThemeToggle(next);
+  });
+  updateThemeToggle(activeTheme);
+
+  actions.appendChild(themeToggle);
+
+  const content = createElement("section", "content content-single");
+
+  const header = createElement("header", "app-header");
+  const nav = createElement("nav", "tabs");
+  nav.setAttribute("aria-label", "Основные разделы Kolibri Studio");
+  const controls = createElement("div", "header-controls");
+  const themeToggle = createElement("button", "theme-toggle") as HTMLButtonElement;
+  themeToggle.type = "button";
+
+  let theme = determineInitialTheme();
+  applyTheme(theme);
+  updateThemeToggle(themeToggle, theme);
+
+  themeToggle.addEventListener("click", () => {
+    theme = theme === "dark" ? "light" : "dark";
+    applyTheme(theme);
+    updateThemeToggle(themeToggle, theme);
+  });
+
+  controls.appendChild(themeToggle);
+  header.appendChild(nav);
+  header.appendChild(controls);
+
   const content = createElement("section", "content");
 
+  content.setAttribute("role", "region");
+
   tabs.forEach((tab, idx) => {
-    const btn = createElement("button", idx === 0 ? "tab active" : "tab", tab.label);
+    const btn = createElement("button", idx === 0 ? "tab active" : "tab", tab.label) as HTMLButtonElement;
+    btn.type = "button";
     btn.addEventListener("click", () => {
-      nav.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
+      nav.querySelectorAll<HTMLButtonElement>(".tab").forEach((el) => el.classList.remove("active"));
       btn.classList.add("active");
       content.innerHTML = "";
+      content.className = "content";
       const renderer = renderers[tab.id];
       renderer(content);
+      content.setAttribute("data-view", tab.id);
     });
     nav.appendChild(btn);
   });
 
-  wrapper.appendChild(nav);
+  topBar.appendChild(nav);
+  topBar.appendChild(actions);
+  wrapper.appendChild(topBar);
+
+  wrapper.appendChild(header);
+
   wrapper.appendChild(content);
   app.appendChild(wrapper);
 
   renderers["dialog"](content);
+  content.setAttribute("data-view", "dialog");
 }
 
-function injectStyles() {
-  const style = document.createElement("style");
-  style.textContent = `
-    body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #f5f5f5; }
-    .app-wrapper { display: flex; flex-direction: column; height: 100vh; }
-    .tabs { display: flex; gap: 8px; padding: 12px; background: #1b1b1b; }
-    .tab { background: #2c2c2c; border: none; color: #f5f5f5; padding: 8px 14px; cursor: pointer; border-radius: 4px; }
-    .tab.active { background: #3f64ff; }
-    .content { flex: 1; padding: 16px; overflow-y: auto; }
-    .panel { display: flex; gap: 12px; margin-bottom: 16px; }
-    input { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #222; color: #f5f5f5; }
-    button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
-    pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
-    .placeholder { opacity: 0.7; }
-    .memory-message { margin: 0 0 12px; opacity: 0.85; }
-    .memory-table { width: 100%; border-collapse: collapse; background: #181818; }
-    .memory-table th, .memory-table td { border: 1px solid #333; padding: 8px 12px; }
-    .memory-table th { text-align: left; background: #1f1f1f; }
-    .memory-table td.value { text-align: right; font-variant-numeric: tabular-nums; }
-  `;
-  document.head.appendChild(style);
-}
 
-injectStyles();
 mountApp();
