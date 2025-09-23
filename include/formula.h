@@ -2,6 +2,7 @@
 #define FORMULA_H
 
 #include "formula_core.h"
+#include "vm/vm.h"
 
 // High level categories used by legacy evaluators.
 extern const int FORMULA_TYPE_SIMPLE;
@@ -85,6 +86,8 @@ typedef struct {
     double imitation_score;
     double accuracy;
     double loss;
+    double poe;
+    double mdl;
     char source[128];
     char task_id[64];
 } FormulaExperience;
@@ -141,6 +144,12 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
 FormulaHypothesis* formula_training_pipeline_select_best(FormulaTrainingPipeline* pipeline);
 int formula_training_pipeline_record_experience(FormulaTrainingPipeline* pipeline,
                                                const FormulaExperience* experience);
+
+int evaluate_formula_with_vm(const Formula* formula,
+                             vm_result_t* out_result,
+                             double* out_poe,
+                             double* out_mdl,
+                             size_t* out_program_len);
 
 
 #endif // FORMULA_H

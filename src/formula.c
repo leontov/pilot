@@ -1,4 +1,5 @@
 #include "formula.h"
+#include "synthesis/formula_vm_eval.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
@@ -995,41 +996,76 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
 
     for (size_t i = 0; i < pipeline->candidates.count; ++i) {
         FormulaHypothesis* hypothesis = &pipeline->candidates.hypotheses[i];
-        double best_alignment = 0.0;
-        double accumulated_effectiveness = 0.0;
+        vm_result_t vm_out = {0};
+        double poe = 0.0;
+        double mdl = 1.0;
+        size_t program_len = 0;
+        int eval_rc = evaluate_formula_with_vm(&hypothesis->formula,
+                                               &vm_out,
+                                               &poe,
+                                               &mdl,
+                                               &program_len);
+
+        double dataset_score = 0.0;
+        double best_dataset_score = 0.0;
+        size_t valid_targets = 0;
         const FormulaDatasetEntry* best_entry = NULL;
 
-        for (size_t j = 0; j < pipeline->dataset.count; ++j) {
-            const FormulaDatasetEntry* entry = &pipeline->dataset.entries[j];
-            double overlap = compute_text_overlap(hypothesis->formula.content, entry->task);
-            double alignment = overlap * fabs(entry->effectiveness);
-            accumulated_effectiveness += alignment;
-            if (alignment > best_alignment) {
-                best_alignment = alignment;
-                best_entry = entry;
+        if (eval_rc == 0 && vm_out.status == VM_OK && pipeline->dataset.count > 0) {
+            for (size_t j = 0; j < pipeline->dataset.count; ++j) {
+                const FormulaDatasetEntry* entry = &pipeline->dataset.entries[j];
+                char* endptr = NULL;
+                double expected = strtod(entry->response, &endptr);
+                if (!endptr || endptr == entry->response) {
+                    continue;
+                }
+                double diff = fabs(expected - (double)vm_out.result);
+                double score = 1.0 / (1.0 + diff);
+                dataset_score += score;
+                if (score > best_dataset_score) {
+                    best_dataset_score = score;
+                    best_entry = entry;
+                }
+                valid_targets++;
+            }
+            if (valid_targets > 0) {
+                dataset_score /= (double)valid_targets;
             }
         }
 
         double reward = 0.0;
-        if (pipeline->dataset.count > 0) {
-            reward = accumulated_effectiveness / (double)pipeline->dataset.count;
+        double accuracy = 0.0;
+        if (eval_rc == 0 && vm_out.status == VM_OK) {
+            double base = 0.6 * poe + 0.4 * dataset_score;
+            double penalty = 0.2 * mdl;
+            reward = fmax(0.0, fmin(1.0, base - penalty));
+            accuracy = (valid_targets > 0) ? best_dataset_score : poe;
+        } else {
+            poe = 0.0;
+            mdl = 1.0;
         }
 
         double imitation = compute_memory_alignment(hypothesis, &pipeline->memory_snapshot);
-        double success = reward > 0.2 ? 1.0 : reward;
+        double success = poe > 0.5 ? 1.0 : reward;
 
         hypothesis->experience.reward = reward;
         hypothesis->experience.imitation_score = imitation;
-        hypothesis->experience.accuracy = fmax(0.0, best_alignment);
+        hypothesis->experience.accuracy = fmax(0.0, accuracy);
         hypothesis->experience.loss = fmax(0.0, 1.0 - reward);
+        hypothesis->experience.poe = poe;
+        hypothesis->experience.mdl = mdl;
         if (best_entry) {
-            strncpy(hypothesis->experience.task_id, best_entry->task,
+            strncpy(hypothesis->experience.task_id,
+                    best_entry->task,
                     sizeof(hypothesis->experience.task_id) - 1);
+            hypothesis->experience.task_id[sizeof(hypothesis->experience.task_id) - 1] = '\0';
+        } else {
+            hypothesis->experience.task_id[0] = '\0';
         }
 
         hypothesis->formula.effectiveness = reward;
 
-        if (library && reward > 0.35) {
+        if (library && poe > 0.55 && reward > 0.25) {
             formula_collection_add(library, &hypothesis->formula);
         }
 
@@ -1054,7 +1090,10 @@ FormulaHypothesis* formula_training_pipeline_select_best(FormulaTrainingPipeline
     double best_score = -1.0;
     for (size_t i = 0; i < pipeline->candidates.count; ++i) {
         FormulaHypothesis* hypothesis = &pipeline->candidates.hypotheses[i];
-        double score = hypothesis->experience.reward + 0.2 * hypothesis->experience.imitation_score;
+        double score = 0.5 * hypothesis->experience.reward +
+                        0.3 * hypothesis->experience.poe -
+                        0.2 * hypothesis->experience.mdl +
+                        0.2 * hypothesis->experience.imitation_score;
         if (score > best_score) {
             best_index = i;
             best_score = score;
@@ -1079,9 +1118,9 @@ int formula_training_pipeline_record_experience(FormulaTrainingPipeline* pipelin
         (pipeline->metrics.average_imitation * (pipeline->metrics.total_evaluated - 1) +
          experience->imitation_score) /
         (double)pipeline->metrics.total_evaluated;
+    double success = experience->poe > 0.5 ? 1.0 : fmax(0.0, experience->reward);
     pipeline->metrics.success_rate =
-        (pipeline->metrics.success_rate * (pipeline->metrics.total_evaluated - 1) +
-         (experience->reward > 0.2 ? 1.0 : experience->reward)) /
+        (pipeline->metrics.success_rate * (pipeline->metrics.total_evaluated - 1) + success) /
         (double)pipeline->metrics.total_evaluated;
     return 0;
 }
