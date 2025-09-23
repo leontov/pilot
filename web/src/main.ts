@@ -71,6 +71,8 @@ function digitsFromExpression(expr: string): number[] {
 }
 
 function renderDialog(container: HTMLElement) {
+  const historyEntries: { input: string; answer: unknown; timestamp: string }[] = [];
+
   const form = createElement("form", "panel form") as HTMLFormElement;
   const input = document.createElement("input");
   input.type = "text";
@@ -80,10 +82,62 @@ function renderDialog(container: HTMLElement) {
   submit.textContent = "Выполнить";
   const output = createElement("pre", "output");
 
+  const historyContainer = createElement("div", "history-container");
+  const historyTitle = createElement("h3", "history-title", "История");
+  const historyList = createElement("ul", "history-list");
+  const historyEmpty = createElement("p", "history-empty", "Диалогов пока нет.");
+
+  const renderHistory = () => {
+    historyList.innerHTML = "";
+    if (historyEntries.length === 0) {
+      if (!historyContainer.contains(historyEmpty)) {
+        historyContainer.appendChild(historyEmpty);
+      }
+      if (historyContainer.contains(historyList)) {
+        historyContainer.removeChild(historyList);
+      }
+      return;
+    }
+
+    if (historyContainer.contains(historyEmpty)) {
+      historyContainer.removeChild(historyEmpty);
+    }
+    if (!historyContainer.contains(historyList)) {
+      historyContainer.appendChild(historyList);
+    }
+
+    historyEntries.forEach((entry) => {
+      const item = createElement("li", "history-item");
+      const meta = createElement("div", "history-meta");
+      const inputLabel = createElement("span", "history-input", entry.input);
+      const timeLabel = createElement("time", "history-time", entry.timestamp);
+      meta.appendChild(inputLabel);
+      meta.appendChild(timeLabel);
+
+      const answer = createElement("pre", "history-answer");
+      const answerText =
+        typeof entry.answer === "string"
+          ? entry.answer
+          : JSON.stringify(entry.answer, null, 2);
+      answer.textContent = answerText;
+
+      item.appendChild(meta);
+      item.appendChild(answer);
+      historyList.appendChild(item);
+    });
+  };
+
+  historyContainer.appendChild(historyTitle);
+  historyContainer.appendChild(historyEmpty);
+
+  const resultWrapper = createElement("div", "dialog-result");
+  resultWrapper.appendChild(output);
+  resultWrapper.appendChild(historyContainer);
+
   form.appendChild(input);
   form.appendChild(submit);
   container.appendChild(form);
-  container.appendChild(output);
+  container.appendChild(resultWrapper);
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -97,8 +151,17 @@ function renderDialog(container: HTMLElement) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data = await res.json();
       output.textContent = JSON.stringify(data, null, 2);
+      historyEntries.unshift({
+        input: expr,
+        answer: data,
+        timestamp: new Date().toLocaleString()
+      });
+      renderHistory();
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
     }
