@@ -141,16 +141,42 @@ int http_status_server_init(int port, rules_t* rules, decimal_cell_t* cell,
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        return -1;
+    }
+
+    if (listen(sock, 16) < 0) {
+        close(sock);
+        return -1;
+    }
+
+    status_sock = sock;
+    status_rules = rules;
+    status_cell = cell;
+    status_keep_running = keep_running;
+
+    return 0;
+}
+
+void http_status_server_run(void) {
+    if (status_sock < 0 || !status_rules || !status_cell || !status_keep_running) {
+        return;
+    }
+
+    while (*status_keep_running) {
+        struct sockaddr_in client_addr;
+        socklen_t addr_len = sizeof(client_addr);
+        int client = accept(status_sock, (struct sockaddr*)&client_addr, &addr_len);
+        if (client < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                continue;
             }
             break;
         }
 
         handle_client(client);
     }
-
-    status_rules = NULL;
-    status_cell = NULL;
-    status_keep_running = NULL;
 }
 
 void http_status_server_shutdown(void) {
@@ -159,4 +185,8 @@ void http_status_server_shutdown(void) {
         close(status_sock);
         status_sock = -1;
     }
+
+    status_rules = NULL;
+    status_cell = NULL;
+    status_keep_running = NULL;
 }
