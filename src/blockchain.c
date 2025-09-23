@@ -115,33 +115,33 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     // Создание нового блока
     Block* block = (Block*)malloc(sizeof(Block));
     if (!block) return false;
-    
-    block->formulas = (Formula**)calloc(count, sizeof(Formula*));
+
     if (!block->formulas) {
         free(block);
         return false;
     }
 
-    // Копирование формул
-    for (size_t i = 0; i < count; i++) {
-        if (!formulas[i]) {
-            block->formulas[i] = NULL;
-            continue;
+
+    block->formula_count = count;
+
+    for (size_t i = 0; i < count; ++i) {
+        Formula* src = formulas[i];
+        Formula* dest = &block->owned_formulas[i];
+
+        if (src) {
+            if (formula_copy(dest, src) != 0) {
+                for (size_t j = 0; j < i; ++j) {
+                    formula_clear(&block->owned_formulas[j]);
+                }
+                free(block->owned_formulas);
+                free(block->formulas);
+                free(block);
+                return false;
+            }
         }
 
-        block->formulas[i] = blockchain_clone_formula(formulas[i]);
-        if (!block->formulas[i]) {
-            for (size_t j = 0; j < i; j++) {
-                if (block->formulas[j]) {
-                    formula_destroy(block->formulas[j]);
-                }
-            }
-            free(block->formulas);
-            free(block);
-            return false;
-        }
+        block->formulas[i] = dest;
     }
-    block->formula_count = count;
     
     // Установка времени создания
     block->timestamp = time(NULL);
@@ -221,10 +221,7 @@ void blockchain_destroy(Blockchain* chain) {
     for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
         if (block) {
-            for (size_t j = 0; j < block->formula_count; j++) {
-                if (block->formulas && block->formulas[j]) {
-                    formula_destroy(block->formulas[j]);
-                }
+
             }
             free(block->formulas);
             free(block);
