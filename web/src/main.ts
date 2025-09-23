@@ -4,6 +4,7 @@ const tabs = [
   { id: "programs", label: "Программы" },
   { id: "synth", label: "Синтез" },
   { id: "chain", label: "Блокчейн" },
+  { id: "status", label: "Статус" },
   { id: "cluster", label: "Кластер" }
 ];
 
@@ -68,10 +69,13 @@ function renderDialog(container: HTMLElement) {
 }
 
 function renderStatus(container: HTMLElement) {
-  const button = createElement("button", "refresh", "Обновить статус");
+  const panel = createElement("div", "panel");
+  const button = createElement("button", "", "Обновить статус");
   const pre = createElement("pre", "output");
-  container.appendChild(button);
+  panel.appendChild(button);
+  container.appendChild(panel);
   container.appendChild(pre);
+
   button.addEventListener("click", async () => {
     pre.textContent = "Загрузка...";
     try {
@@ -140,6 +144,7 @@ const renderers: Record<string, (container: HTMLElement) => void> = {
   programs: renderPrograms,
   synth: renderSynth,
   chain: renderChain,
+  status: renderStatus,
   cluster: renderCluster
 };
 
