@@ -1,3 +1,36 @@
+interface RunTraceEntry {
+  step: number;
+  ip: number;
+  op: number;
+  stack: number;
+  gas: number;
+}
+
+interface RunResponse {
+  status: number;
+  steps: number;
+  result: number;
+  trace: RunTraceEntry[];
+}
+
+interface DialogResponse extends RunResponse {}
+
+interface FkvEntry {
+  key: string;
+  value: string;
+}
+
+interface FkvResponse {
+  entries: FkvEntry[];
+}
+
+interface StatusResponse {
+  uptime_ms: number;
+  vm_max_steps: number;
+  vm_max_stack: number;
+  seed: number;
+}
+
 const tabs = [
   { id: "dialog", label: "Диалог" },
   { id: "memory", label: "Память" },
@@ -60,8 +93,27 @@ function renderDialog(container: HTMLElement) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      output.textContent = JSON.stringify(data, null, 2);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data: DialogResponse = await res.json();
+      const lines = [
+        `Статус: ${data.status}`,
+        `Шаги: ${data.steps}`,
+        `Результат: ${data.result}`
+      ];
+      if (data.trace.length > 0) {
+        lines.push(
+          "Трасса:",
+          ...data.trace.map(
+            (entry, idx) =>
+              `  #${idx + 1} step=${entry.step} ip=${entry.ip} op=${entry.op} stack=${entry.stack} gas=${entry.gas}`
+          )
+        );
+      } else {
+        lines.push("Трасса: нет записей");
+      }
+      output.textContent = lines.join("\n");
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
     }
@@ -80,8 +132,16 @@ function renderStatus(container: HTMLElement) {
     pre.textContent = "Загрузка...";
     try {
       const res = await fetch("/status");
-      const json = await res.json();
-      pre.textContent = JSON.stringify(json, null, 2);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const json: StatusResponse = await res.json();
+      pre.textContent = [
+        `Аптайм: ${json.uptime_ms} мс`,
+        `VM max steps: ${json.vm_max_steps}`,
+        `VM max stack: ${json.vm_max_stack}`,
+        `Seed: ${json.seed}`
+      ].join("\n");
     } catch (err) {
       pre.textContent = `Ошибка: ${String(err)}`;
     }
@@ -109,8 +169,17 @@ function renderMemory(container: HTMLElement) {
     pre.textContent = "Загрузка...";
     try {
       const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
-      const json = await res.json();
-      pre.textContent = JSON.stringify(json, null, 2);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const json: FkvResponse = await res.json();
+      if (!Array.isArray(json.entries) || json.entries.length === 0) {
+        pre.textContent = "Совпадений не найдено.";
+        return;
+      }
+      pre.textContent = json.entries
+        .map((entry) => `${entry.key} → ${entry.value}`)
+        .join("\n");
     } catch (err) {
       pre.textContent = `Ошибка: ${String(err)}`;
     }
