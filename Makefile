@@ -1,7 +1,7 @@
 CC ?= gcc
-CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -pthread
+CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
-LDFLAGS := -lpthread -ljson-c
+LDFLAGS := -lpthread -ljson-c -lm -luuid
 
 BUILD_DIR := build/obj
 BIN_DIR := bin
@@ -23,6 +23,7 @@ SRC := \
 TEST_VM_SRC := tests/unit/test_vm.c src/vm/vm.c src/util/log.c src/util/config.c src/fkv/fkv.c
 TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/config.c
 TEST_CONFIG_SRC := tests/unit/test_config.c src/util/config.c src/util/log.c
+TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c
 
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
@@ -50,11 +51,11 @@ run: build
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR) logs/* data/* web/node_modules web/dist
 
-.PHONY: test test-vm test-fkv test-http-routes bench clean run build
+.PHONY: test test-vm test-fkv test-config test-kolibri-ai test-http-routes bench clean run build
 
 
 
-test: build test-vm test-fkv test-config
+test: build test-vm test-fkv test-config test-kolibri-ai
 
 
 $(BUILD_DIR)/tests/unit/test_vm: $(TEST_VM_SRC)
@@ -78,6 +79,13 @@ $(BUILD_DIR)/tests/unit/test_config: $(TEST_CONFIG_SRC)
 
 test-config: $(BUILD_DIR)/tests/unit/test_config
 
+	$<
+
+$(BUILD_DIR)/tests/test_kolibri_ai_iterations: $(TEST_KOLIBRI_ITER_SRC)
+	@mkdir -p $(BUILD_DIR)/tests
+	$(CC) $(CFLAGS) $(TEST_KOLIBRI_ITER_SRC) -o $@ $(filter-out -ljson-c -luuid,$(LDFLAGS))
+
+test-kolibri-ai: $(BUILD_DIR)/tests/test_kolibri_ai_iterations
 	$<
 
 bench: build
