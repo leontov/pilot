@@ -6,11 +6,14 @@
 #include "util/config.h"
 #include "util/log.h"
 
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 static volatile sig_atomic_t running = 1;
 
@@ -45,13 +48,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-
-        fkv_shutdown();
-        if (log_fp) {
-            fclose(log_fp);
-        }
-        return 1;
-    }
 
 
     signal(SIGINT, handle_signal);
