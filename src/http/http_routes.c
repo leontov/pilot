@@ -2,6 +2,7 @@
 
 #include "blockchain.h"
 #include "fkv/fkv.h"
+#include "kolibri_ai.h"
 #include "util/log.h"
 #include "vm/vm.h"
 
@@ -20,16 +21,13 @@
 #define WEB_DIST_DIR "web/dist"
 
 static uint64_t server_start_ms = 0;
-static Blockchain *global_blockchain = NULL;
-static unsigned long next_program_id = 1;
+
 
 void http_routes_set_start_time(uint64_t ms_since_epoch) {
     server_start_ms = ms_since_epoch;
 }
 
-void http_routes_set_blockchain(Blockchain *chain) {
-    global_blockchain = chain;
-    next_program_id = 1;
+
 }
 
 static uint64_t now_ms(void) {
@@ -551,10 +549,11 @@ static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, 
         return;
     }
     int written = snprintf(json, cap,
-                           "{\"status\":%d,\"steps\":%u,\"result\":%llu,\"trace\":[",
+                           "{\"status\":%d,\"steps\":%u,\"result\":%llu,\"halted\":%u,\"trace\":[",
                            result.status,
                            result.steps,
-                           (unsigned long long)result.result);
+                           (unsigned long long)result.result,
+                           (unsigned)result.halted);
     if (written < 0) {
         free(json);
         free(entries);
@@ -605,6 +604,74 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
 
     respond_run(cfg, bb.data, bb.len, resp);
     free(bb.data);
+}
+
+static void respond_ai_state(http_response_t *resp) {
+    if (!attached_ai) {
+        set_response(resp, 503, "application/json", "{\"error\":\"ai subsystem offline\"}");
+        return;
+    }
+
+    char *json = kolibri_ai_serialize_state(attached_ai);
+    if (!json) {
+        set_response(resp, 500, "application/json", "{\"error\":\"state unavailable\"}");
+        return;
+    }
+
+    resp->data = json;
+    resp->len = strlen(json);
+    resp->status = 200;
+    snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
+}
+
+static size_t parse_limit_param(const char *path, size_t default_limit) {
+    const char *query = strchr(path, '?');
+    if (!query) {
+        return default_limit;
+    }
+    query++;
+    while (*query) {
+        if (strncmp(query, "limit=", 6) == 0) {
+            query += 6;
+            char *end = NULL;
+            unsigned long value = strtoul(query, &end, 10);
+            if (end && end != query && value > 0) {
+                return (size_t)value;
+            }
+        }
+        const char *amp = strchr(query, '&');
+        if (!amp) {
+            break;
+        }
+        query = amp + 1;
+    }
+    return default_limit;
+}
+
+static void respond_ai_formulas(const char *path, http_response_t *resp) {
+    if (!attached_ai) {
+        set_response(resp, 503, "application/json", "{\"error\":\"ai subsystem offline\"}");
+        return;
+    }
+
+    size_t limit = parse_limit_param(path, 5);
+    if (limit == 0) {
+        limit = 5;
+    }
+    if (limit > 16) {
+        limit = 16;
+    }
+
+    char *json = kolibri_ai_serialize_formulas(attached_ai, limit);
+    if (!json) {
+        set_response(resp, 500, "application/json", "{\"error\":\"formulas unavailable\"}");
+        return;
+    }
+
+    resp->data = json;
+    resp->len = strlen(json);
+    resp->status = 200;
+    snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
 }
 
 static int respond_fkv_prefix(const char *path, http_response_t *resp) {
@@ -805,6 +872,16 @@ int http_handle_request(const kolibri_config_t *cfg,
 
     if (strcmp(method, "GET") == 0 && strcmp(path, "/status") == 0) {
         respond_status(cfg, resp);
+        return 0;
+    }
+
+    if (strcmp(method, "GET") == 0 && strcmp(path, "/api/v1/ai/state") == 0) {
+        respond_ai_state(resp);
+        return 0;
+    }
+
+    if (strcmp(method, "GET") == 0 && strncmp(path, "/api/v1/ai/formulas", 20) == 0) {
+        respond_ai_formulas(path, resp);
         return 0;
     }
 

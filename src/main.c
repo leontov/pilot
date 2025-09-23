@@ -2,6 +2,7 @@
 #include "fkv/fkv.h"
 #include "http/http_routes.h"
 #include "http/http_server.h"
+#include "kolibri_ai.h"
 #include "util/config.h"
 #include "util/log.h"
 
@@ -44,24 +45,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    Blockchain *chain = blockchain_create();
-    if (!chain) {
-        log_error("failed to initialize blockchain");
+
         fkv_shutdown();
         if (log_fp) {
             fclose(log_fp);
         }
         return 1;
     }
-    http_routes_set_blockchain(chain);
+
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     if (http_server_start(&cfg) != 0) {
         log_error("failed to start HTTP server");
-        http_routes_set_blockchain(NULL);
-        blockchain_destroy(chain);
+
         fkv_shutdown();
         if (log_fp) {
             fclose(log_fp);
@@ -74,8 +72,7 @@ int main(int argc, char **argv) {
     }
 
     http_server_stop();
-    http_routes_set_blockchain(NULL);
-    blockchain_destroy(chain);
+
     fkv_shutdown();
     if (log_fp) {
         fclose(log_fp);
