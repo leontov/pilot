@@ -1,6 +1,7 @@
 #ifndef BLOCKCHAIN_H
 #define BLOCKCHAIN_H
 
+#include <stdbool.h>
 #include <time.h>
 #include "formula_advanced.h"
 
