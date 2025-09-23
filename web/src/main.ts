@@ -1,4 +1,3 @@
-import "./styles.css";
 
 const tabs = [
   { id: "dialog", label: "Диалог" },
@@ -183,9 +182,6 @@ function renderDialog(container: HTMLElement) {
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
-      const data = await res.json();
-      const trace = Array.isArray(data.trace) ? data.trace : null;
-      output.textContent = JSON.stringify(data, null, 2);
 
     } catch (err) {
       showError(`Ошибка: ${String(err)}`);
@@ -207,8 +203,16 @@ function renderStatus(container: HTMLElement) {
     pre.textContent = "Загрузка...";
     try {
       const res = await fetch("/status");
-      const json = await res.json();
-      pre.textContent = JSON.stringify(json, null, 2);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const json: StatusResponse = await res.json();
+      pre.textContent = [
+        `Аптайм: ${json.uptime_ms} мс`,
+        `VM max steps: ${json.vm_max_steps}`,
+        `VM max stack: ${json.vm_max_stack}`,
+        `Seed: ${json.seed}`
+      ].join("\n");
     } catch (err) {
       pre.textContent = `Ошибка: ${String(err)}`;
     }
@@ -236,8 +240,17 @@ function renderMemory(container: HTMLElement) {
     pre.textContent = "Загрузка...";
     try {
       const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
-      const json = await res.json();
-      pre.textContent = JSON.stringify(json, null, 2);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const json: FkvResponse = await res.json();
+      if (!Array.isArray(json.entries) || json.entries.length === 0) {
+        pre.textContent = "Совпадений не найдено.";
+        return;
+      }
+      pre.textContent = json.entries
+        .map((entry) => `${entry.key} → ${entry.value}`)
+        .join("\n");
     } catch (err) {
       showError(`Ошибка: ${String(err)}`);
     }
