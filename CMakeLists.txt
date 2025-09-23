@@ -115,6 +115,12 @@ target_include_directories(test_blockchain PRIVATE
 
 
 
+add_executable(test_decimal_cell tests/test_decimal_cell.c src/kolibri_decimal_cell.c)
+target_link_libraries(test_decimal_cell PRIVATE m)
+target_include_directories(test_decimal_cell PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/include)
+
 # Добавляем пути к заголовочным файлам для веб-интерфейса
 target_include_directories(web_interface PRIVATE
     ${CMAKE_SOURCE_DIR}/src

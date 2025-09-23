@@ -67,9 +67,6 @@ static void sig_handler(int signo) {
 }
 
 
-// Прототипы функций
-void cleanup_decimal_cell(decimal_cell_t* cell);
-
 // ==========================
 // Configuration and Constants
 
@@ -119,8 +116,6 @@ void fill_neighbor_addr(uint8_t digit, struct sockaddr_in* addr, uint16_t base_p
 // ==========================
 // Utilities
 
-#define MAX_NEIGHBORS 9
-
 typedef struct {
     char node_id[32];
     struct sockaddr_in addr;
@@ -135,7 +130,6 @@ uint64_t now_ms(void) {
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-/* Локальная функция add_neighbor удалена, используем decimal_cell_add_path(&cell, path, len, true) */
 
 // ==========================
 // Network handling
@@ -285,43 +279,21 @@ void create_metarule(void) {
 // Замена неактивных соседей на новые
 void adapt_neighbors(void) {
     uint64_t now = now_ms();
-    for (uint8_t digit = 0; digit < DECIMAL_CELL_FANOUT; digit++) {
-        if (!cell.children[digit]) continue;
-        if (cell.child_active[digit]) continue;
-        if ((now - cell.child_last_sync[digit]) <= 90000) continue;
 
-        bool used[DECIMAL_CELL_FANOUT] = {0};
-        used[cell.digit] = true;
-        for (uint8_t existing = 0; existing < DECIMAL_CELL_FANOUT; existing++) {
-            if (cell.children[existing] && cell.child_active[existing]) {
-                used[existing] = true;
-            }
-        }
-
-        for (uint8_t candidate = 0; candidate < DECIMAL_CELL_FANOUT; candidate++) {
-            if (used[candidate]) continue;
-            decimal_cell_deactivate_path(&cell, &digit, 1, now);
-            decimal_cell_add_path(&cell, &candidate, 1, true);
-            printf("[TOPOLOGY] Neighbor %u replaced by digit %u\n", digit, candidate);
-            break;
         }
     }
 }
 
 // Отправка лучшего правила соседу
 void migrate_best_rule(void) {
-    uint8_t neighbors[DECIMAL_CELL_FANOUT];
-    size_t neighbor_count = decimal_cell_collect_active_children(&cell, neighbors, DECIMAL_CELL_FANOUT);
-    if (rules.count == 0 || neighbor_count == 0) return;
+
     // Находим правило с максимальным fitness
     int best = 0;
     for (int i = 1; i < rules.count; i++) {
         if (rules.fitness[i] > rules.fitness[best]) best = i;
     }
     // Выбираем случайного соседа
-    int nidx = rand() % (int)neighbor_count;
-    struct sockaddr_in n_addr;
-    fill_neighbor_addr(neighbors[nidx], &n_addr, DEFAULT_PORT);
+
     // Формируем сообщение (MAGIC + тип + pattern + action + tier + fitness)
     char msg[BUFFER_SIZE];
     memset(msg, 0, sizeof(msg));
@@ -330,7 +302,7 @@ void migrate_best_rule(void) {
     int off = MAGIC_LEN + 1;
     int plen = snprintf(msg+off, sizeof(msg)-off, "%s|%s|%d|%.4f", rules.patterns[best], rules.actions[best], rules.tiers[best], rules.fitness[best]);
     sendto(server_sock, msg, off+plen, 0, (struct sockaddr*)&n_addr, sizeof(n_addr));
-    printf("[MIGRATE] Sent best rule to neighbor %d: %s -> %s\n", neighbors[nidx], rules.patterns[best], rules.actions[best]);
+
 }
 
 // ==========================
@@ -367,11 +339,7 @@ static void run_server(void) {
         uint64_t t = now_ms();
         // Периодическая синхронизация с соседями (HELLO)
         if (t - last_sync > 1000) {
-            uint8_t neighbors[DECIMAL_CELL_FANOUT];
-            size_t neighbor_count = decimal_cell_collect_active_children(&cell, neighbors, DECIMAL_CELL_FANOUT);
-            for (size_t i = 0; i < neighbor_count; i++) {
-                struct sockaddr_in n_addr;
-                fill_neighbor_addr(neighbors[i], &n_addr, DEFAULT_PORT);
+
                 send_hello_to_neighbor(&n_addr);
             }
             last_sync = t;
@@ -398,13 +366,7 @@ static void run_server(void) {
                        (uint64_t)t, i, rules.patterns[i], rules.actions[i],
                        rules.tiers[i], rules.fitness[i]);
             }
-            for (uint8_t digit = 0; digit < DECIMAL_CELL_FANOUT; digit++) {
-                if (!cell.children[digit]) continue;
-                printf("T=%" PRIu64 " NEIGHBOR_DIGIT=%u active=%d last_sync=%" PRIu64 "\n",
-                       (uint64_t)t,
-                       digit,
-                       cell.child_active[digit] ? 1 : 0,
-                       (uint64_t)cell.child_last_sync[digit]);
+
             }
             last_log = t;
         }
@@ -496,9 +458,9 @@ int main(int argc, char** argv) {
     }
 
     // Добавляем 9 соседей (все цифры кроме своей)
-    for (uint8_t d = 0; d < 10; d++) {
+    for (uint8_t d = 0; d < DECIMAL_BRANCHING; d++) {
         if (d == my_digit) continue;
-        decimal_cell_add_path(&cell, &d, 1, true);
+
     }
 
     // Инициализация AI подсистемы
