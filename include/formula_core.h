@@ -47,6 +47,8 @@ typedef struct {
     Formula* formulas;
     size_t count;
     size_t capacity;
+    size_t best_indices[2];
+    size_t best_count;
 } FormulaCollection;
 
 #endif // FORMULA_CORE_H

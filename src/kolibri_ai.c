@@ -136,51 +136,54 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
     
     // Каждые 500 итераций - комбинируем формулы
     if (ai->iterations % 500 == 0 && ai->formulas->count >= 2) {
-        // Берем две лучшие формулы
-        Formula* best1 = &ai->formulas->formulas[0];
-        Formula* best2 = &ai->formulas->formulas[1];
-        
-        // Создаем новую композитную формулу
-        Formula* combined = calloc(1, sizeof(Formula));
-        if (combined) {
-            uuid_t uuid;
-            uuid_generate(uuid);
-            uuid_unparse(uuid, combined->id);
-            
-            // Комбинируем формулы разными способами
-            if (rand() % 2 == 0) {
-                snprintf(combined->content, sizeof(combined->content),
-                        "f(x) = (%s) + (%s)", 
-                        best1->content + 7,  // Пропускаем "f(x) = "
-                        best2->content + 7);
-            } else {
-                snprintf(combined->content, sizeof(combined->content),
-                        "f(x) = (%s) * (%s)", 
-                        best1->content + 7,
-                        best2->content + 7);
-            }
-            
-            combined->effectiveness = 0.0;
-            combined->created_at = time(NULL);
-            combined->tests_passed = 0;
-            combined->confirmations = 0;
-            combined->representation = FORMULA_REPRESENTATION_TEXT;
-            combined->coefficients = NULL;
-            combined->coeff_count = 0;
-            combined->expression = NULL;
-            combined->type = FORMULA_LINEAR;
+        const Formula* top_formulas[2] = {0};
+        size_t top_count = formula_collection_get_top(ai->formulas, top_formulas, 2);
+        if (top_count >= 2) {
+            const Formula* best1 = top_formulas[0];
+            const Formula* best2 = top_formulas[1];
 
-            // Оцениваем и возможно добавляем
-            if (validate_formula(combined)) {
-                combined->effectiveness = evaluate_effectiveness(combined);
-                if (combined->effectiveness >= 0.35) {
-                    formula_collection_add(ai->formulas, combined);
-                    printf("[AI] Created combined formula: %s (eff=%.4f)\n",
-                           combined->content, combined->effectiveness);
+            // Создаем новую композитную формулу
+            Formula* combined = calloc(1, sizeof(Formula));
+            if (combined) {
+                uuid_t uuid;
+                uuid_generate(uuid);
+                uuid_unparse(uuid, combined->id);
+
+                // Комбинируем формулы разными способами
+                if (rand() % 2 == 0) {
+                    snprintf(combined->content, sizeof(combined->content),
+                             "f(x) = (%s) + (%s)",
+                             best1->content + 7,  // Пропускаем "f(x) = "
+                             best2->content + 7);
+                } else {
+                    snprintf(combined->content, sizeof(combined->content),
+                             "f(x) = (%s) * (%s)",
+                             best1->content + 7,
+                             best2->content + 7);
                 }
+
+                combined->effectiveness = 0.0;
+                combined->created_at = time(NULL);
+                combined->tests_passed = 0;
+                combined->confirmations = 0;
+                combined->representation = FORMULA_REPRESENTATION_TEXT;
+                combined->coefficients = NULL;
+                combined->coeff_count = 0;
+                combined->expression = NULL;
+                combined->type = FORMULA_LINEAR;
+
+                // Оцениваем и возможно добавляем
+                if (validate_formula(combined)) {
+                    combined->effectiveness = evaluate_effectiveness(combined);
+                    if (combined->effectiveness >= 0.35) {
+                        formula_collection_add(ai->formulas, combined);
+                        printf("[AI] Created combined formula: %s (eff=%.4f)\n",
+                               combined->content, combined->effectiveness);
+                    }
+                }
+                formula_clear(combined);
+                free(combined);
             }
-            formula_clear(combined);
-            free(combined);
         }
     }
 
@@ -194,9 +197,13 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
         adjust_chain_difficulty(ai->blockchain);
         
         // Выводим статистику
+        const Formula* status_top[1] = {0};
+        double best_eff = 0.0;
+        if (formula_collection_get_top(ai->formulas, status_top, 1) == 1) {
+            best_eff = status_top[0]->effectiveness;
+        }
         printf("[AI] Status: complexity=%d, formulas=%zu, best_eff=%.4f\n",
-               ai->complexity_level, ai->formulas->count,
-               ai->formulas->count > 0 ? ai->formulas->formulas[0].effectiveness : 0.0);
+               ai->complexity_level, ai->formulas->count, best_eff);
     }
     
     pthread_mutex_unlock(&ai->mutex);
@@ -219,25 +226,16 @@ Formula* kolibri_ai_get_best_formula(KolibriAI* ai) {
     
     pthread_mutex_lock(&ai->mutex);
     
-    Formula* best = NULL;
-    double max_effectiveness = 0.0;
-    
-    for (size_t i = 0; i < ai->formulas->count; i++) {
-        if (ai->formulas->formulas[i].effectiveness > max_effectiveness) {
-            best = &ai->formulas->formulas[i];
-            max_effectiveness = best->effectiveness;
-        }
-    }
-    
+    const Formula* top[1] = {0};
     Formula* result = NULL;
-    if (best) {
+    if (formula_collection_get_top(ai->formulas, top, 1) == 1) {
         result = calloc(1, sizeof(Formula));
-        if (result && formula_copy(result, best) != 0) {
+        if (result && formula_copy(result, top[0]) != 0) {
             free(result);
             result = NULL;
         }
     }
-    
+
     pthread_mutex_unlock(&ai->mutex);
     return result;
 }

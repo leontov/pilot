@@ -7,6 +7,69 @@
 #include <uuid/uuid.h>
 #include <json-c/json.h>
 
+static void formula_collection_reset_top(FormulaCollection* collection) {
+    if (!collection) {
+        return;
+    }
+
+    collection->best_indices[0] = SIZE_MAX;
+    collection->best_indices[1] = SIZE_MAX;
+    collection->best_count = 0;
+}
+
+static void formula_collection_consider_index(FormulaCollection* collection, size_t index) {
+    if (!collection || index >= collection->count) {
+        return;
+    }
+
+    const Formula* candidate = &collection->formulas[index];
+
+    if (collection->best_count == 0) {
+        collection->best_indices[0] = index;
+        collection->best_count = 1;
+        return;
+    }
+
+    size_t current_best = collection->best_indices[0];
+    const Formula* best_formula = &collection->formulas[current_best];
+
+    if (candidate->effectiveness > best_formula->effectiveness) {
+        size_t previous_best = collection->best_indices[0];
+        collection->best_indices[0] = index;
+        if (collection->best_count == 1) {
+            collection->best_indices[1] = previous_best;
+            collection->best_count = 2;
+        } else {
+            collection->best_indices[1] = previous_best;
+        }
+        return;
+    }
+
+    if (collection->best_count == 1) {
+        collection->best_indices[1] = index;
+        collection->best_count = 2;
+        return;
+    }
+
+    size_t current_second = collection->best_indices[1];
+    const Formula* second_formula = &collection->formulas[current_second];
+
+    if (candidate->effectiveness > second_formula->effectiveness) {
+        collection->best_indices[1] = index;
+    }
+}
+
+static void formula_collection_recompute_top(FormulaCollection* collection) {
+    if (!collection) {
+        return;
+    }
+
+    formula_collection_reset_top(collection);
+    for (size_t i = 0; i < collection->count; i++) {
+        formula_collection_consider_index(collection, i);
+    }
+}
+
 // Определения типов формул
 const int FORMULA_TYPE_SIMPLE = 0;
 const int FORMULA_TYPE_POLYNOMIAL = 1;
@@ -85,6 +148,7 @@ FormulaCollection* formula_collection_create(size_t initial_capacity) {
 
     collection->count = 0;
     collection->capacity = initial_capacity;
+    formula_collection_reset_top(collection);
     return collection;
 }
 
@@ -123,6 +187,7 @@ int formula_collection_add(FormulaCollection* collection, const Formula* formula
     }
 
     collection->count++;
+    formula_collection_consider_index(collection, collection->count - 1);
     return 0;
 }
 
@@ -151,9 +216,34 @@ void formula_collection_remove(FormulaCollection* collection, const char* id) {
             if (collection->count > 0) {
                 collection->count--;
             }
+            formula_collection_recompute_top(collection);
             return;
         }
     }
+}
+
+size_t formula_collection_get_top(const FormulaCollection* collection,
+                                  const Formula** out_formulas,
+                                  size_t max_results) {
+    if (!collection || !out_formulas || max_results == 0) {
+        return 0;
+    }
+
+    size_t available = collection->best_count;
+    if (available > max_results) {
+        available = max_results;
+    }
+
+    size_t produced = 0;
+    for (size_t i = 0; i < available; i++) {
+        size_t index = collection->best_indices[i];
+        if (index >= collection->count) {
+            break;
+        }
+        out_formulas[produced++] = &collection->formulas[index];
+    }
+
+    return produced;
 }
 
 // Распознавание типа формулы
