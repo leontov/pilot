@@ -1,3 +1,4 @@
+#include "blockchain.h"
 #include "fkv/fkv.h"
 #include "http/http_routes.h"
 #include "http/http_server.h"
@@ -48,12 +49,13 @@ int main(int argc, char **argv) {
     }
 
 
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     if (http_server_start(&cfg) != 0) {
         log_error("failed to start HTTP server");
-        kolibri_ai_destroy(ai);
+
         fkv_shutdown();
         if (log_fp) {
             fclose(log_fp);

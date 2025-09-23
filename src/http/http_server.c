@@ -4,6 +4,7 @@
 
 #include "http/http_routes.h"
 #include "util/log.h"
+#include "vm/vm.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -452,6 +453,10 @@ int http_server_start(const kolibri_config_t *cfg) {
     server.worker_count = worker_count;
     uint64_t start_ms = (uint64_t)time(NULL) * 1000ull;
     http_routes_set_start_time(start_ms);
+
+    vm_set_seed(cfg->seed);
+    if (pthread_create(&server.thread, NULL, server_loop, NULL) != 0) {
+
     if (pthread_create(&server.accept_thread, NULL, accept_loop, NULL) != 0) {
         pthread_mutex_lock(&server.queue_mutex);
         server.stop_accept = 1;
@@ -464,6 +469,7 @@ int http_server_start(const kolibri_config_t *cfg) {
         free(server.worker_threads);
         server.worker_threads = NULL;
         server.worker_count = 0;
+
         close(server.sockfd);
         server.sockfd = -1;
         server.running = 0;
