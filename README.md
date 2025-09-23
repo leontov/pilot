@@ -56,4 +56,8 @@ Unit tests cover the Δ-VM arithmetic instructions and the F-KV prefix lookup.
 
 ## Roadmap
 
-Stage A focuses on the core loop and interfaces. Later milestones will extend the F-KV with persistence/compression, add program synthesis strategies, incorporate the knowledge blockchain, and expand the HTTP/UI surfaces.
+The end-to-end development plan is captured in [`docs/roadmap.md`](docs/roadmap.md). It outlines milestone gates (Prototype Core → Networked Intelligence → Product Readiness → Pilot Launch), sprint-by-sprint deliverables, cross-cutting workstreams, and risk mitigations that keep Kolibri Ω aligned with its ≤ 50 MB decimal-first mandate.
+
+## Demo playbook
+
+For investor-grade demonstrations and product validation scenarios, consult [`docs/demos.md`](docs/demos.md). The playbook now outlines seventy-eight curated demos, associated KPIs, and exact launch instructions for Kolibri Studio and the public HTTP API.
