@@ -90,7 +90,7 @@ target_link_libraries(web_interface PRIVATE m pthread)
 # Simple tests
 add_executable(test_arithmetic tests/test_arithmetic.c src/arithmetic.c)
 target_link_libraries(test_arithmetic PRIVATE m)
-add_executable(test_rule_engine tests/test_rule_engine.c src/rule_engine.c src/embed.c)
+add_executable(test_rule_engine tests/test_rule_engine.c src/rule_engine.c src/embed.c src/formula.c)
 target_link_libraries(test_rule_engine PRIVATE ${JSONC_LIBRARIES} m)
 add_executable(test_formula tests/test_formula.c src/formula.c src/formula_advanced.c src/decimal_cell.c)
 target_link_libraries(test_formula PRIVATE ${JSONC_LIBRARIES} uuid m)
