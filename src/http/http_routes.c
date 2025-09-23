@@ -1,59 +1,56 @@
 #include "http/http_routes.h"
 
+
 #include "blockchain.h"
 #include "fkv/fkv.h"
 #include "kolibri_ai.h"
 #include "synthesis/formula_vm_eval.h"
-#include "util/log.h"
-#include "vm/vm.h"
 
-#include <ctype.h>
-#include <stdbool.h>
+
+#include "util/log.h"
+
 #include <errno.h>
-#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/resource.h>
-#include <sys/stat.h>
 #include <time.h>
-#include <unistd.h>
-#include <limits.h>
-#include <json-c/json.h>
 
-#define WEB_DIST_DIR "web/dist"
+#define JSON_CONTENT "application/json"
 
 static uint64_t server_start_ms = 0;
 
-
-void http_routes_set_start_time(uint64_t ms_since_epoch) {
-    server_start_ms = ms_since_epoch;
-}
-
-
-}
-
 static uint64_t now_ms(void) {
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return 0;
+    }
     return (uint64_t)ts.tv_sec * 1000ull + ts.tv_nsec / 1000000ull;
 }
 
 static void set_response(http_response_t *resp, int status, const char *content_type, const char *body) {
-    size_t len = strlen(body);
-    resp->data = malloc(len + 1);
-    if (!resp->data) {
-        resp->status = 500;
-        snprintf(resp->content_type, sizeof(resp->content_type), "text/plain");
-        resp->data = NULL;
-        resp->len = 0;
+    if (!resp || !body || !content_type) {
         return;
     }
-    memcpy(resp->data, body, len + 1);
+    size_t len = strlen(body);
+    char *copy = malloc(len + 1);
+    if (!copy) {
+        log_error("failed to allocate response body");
+        resp->data = NULL;
+        resp->len = 0;
+        resp->status = 500;
+        snprintf(resp->content_type, sizeof(resp->content_type), "text/plain");
+        return;
+    }
+    memcpy(copy, body, len + 1);
+    resp->data = copy;
     resp->len = len;
     resp->status = status;
     snprintf(resp->content_type, sizeof(resp->content_type), "%s", content_type);
+}
+
+void http_routes_set_start_time(uint64_t ms_since_epoch) {
+    server_start_ms = ms_since_epoch;
 }
 
 void http_response_free(http_response_t *resp) {
@@ -66,6 +63,7 @@ void http_response_free(http_response_t *resp) {
     resp->status = 0;
     resp->content_type[0] = '\0';
 }
+
 
 static int ensure_capacity(uint8_t **buf, size_t *cap, size_t needed) {
     if (*cap >= needed) {
@@ -473,87 +471,33 @@ static void respond_health(const kolibri_config_t *cfg, http_response_t *resp) {
     (void)cfg;
     uint64_t now = now_ms();
     uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
-    size_t memory_bytes = read_memory_usage_bytes();
-    char buf[256];
-    snprintf(buf,
-             sizeof(buf),
-             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":0}",
-             (unsigned long long)uptime,
-             memory_bytes);
-    set_response(resp, 200, "application/json", buf);
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"uptime_ms\":%llu}", (unsigned long long)uptime);
+    set_response(resp, 200, JSON_CONTENT, buf);
 }
 
 static void respond_metrics(const kolibri_config_t *cfg, http_response_t *resp) {
+    if (!cfg) {
+        set_response(resp, 500, JSON_CONTENT, "{\"error\":\"config missing\"}");
+        return;
+    }
     uint64_t now = now_ms();
     uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
-    size_t memory_bytes = read_memory_usage_bytes();
     char buf[256];
     snprintf(buf,
              sizeof(buf),
-             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":0,"
-             "\"vm\":{\"max_steps\":%u,\"max_stack\":%u,\"trace_depth\":%u}}",
+             "{\"uptime_ms\":%llu,\"vm\":{\"max_steps\":%u,\"max_stack\":%u,\"trace_depth\":%u}}",
              (unsigned long long)uptime,
-             memory_bytes,
              cfg->vm.max_steps,
              cfg->vm.max_stack,
              cfg->vm.trace_depth);
-    set_response(resp, 200, "application/json", buf);
+    set_response(resp, 200, JSON_CONTENT, buf);
 }
 
-
-    prog_t prog = {prog_bytes, prog_len};
-    vm_limits_t limits = {cfg->vm.max_steps, cfg->vm.max_stack};
-    vm_trace_entry_t *entries = calloc(cfg->vm.trace_depth, sizeof(vm_trace_entry_t));
-    vm_trace_t trace = {entries, cfg->vm.trace_depth, 0, 0};
-    vm_result_t result;
-    int rc = vm_run(&prog, &limits, &trace, &result);
-
-    char *json = NULL;
-    size_t len = 0;
-    size_t cap = 256;
-    json = malloc(cap);
-    if (!json) {
-        set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
-        free(entries);
-        return;
-    }
-
-                           result.status,
-                           result.steps,
-                           (unsigned long long)result.result,
-                           (unsigned)result.halted);
-    if (written < 0) {
-        free(json);
-        free(entries);
-        set_response(resp, 500, "application/json", "{\"error\":\"format\"}");
-        return;
-    }
-    len = (size_t)written;
-    append_trace_json(&json, &len, &cap, &trace);
-    if (len + 3 > cap) {
-        char *tmp = realloc(json, len + 3);
-        if (!tmp) {
-            free(json);
-            free(entries);
-            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
-            return;
-        }
-        json = tmp;
-        cap = len + 3;
-    }
-    snprintf(json + len, cap - len, "]}");
-    len = strlen(json);
-
-    resp->data = json;
-    resp->len = len;
-    if (rc != 0) {
-        resp->status = 500;
-    } else {
-        resp->status = (result.status == VM_OK) ? 200 : 400;
-    }
-    snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
-    free(entries);
+static void respond_not_found(http_response_t *resp) {
+    set_response(resp, 404, JSON_CONTENT, "{\"error\":\"not found\"}");
 }
+
 
 
 }
@@ -783,7 +727,10 @@ static int serve_static_file(const char *path, http_response_t *resp) {
     resp->status = 200;
     snprintf(resp->content_type, sizeof(resp->content_type), "%s", mime_from_path(full_path));
     return 0;
-}
+
+static void respond_not_implemented(http_response_t *resp) {
+    set_response(resp, 501, JSON_CONTENT, "{\"error\":\"not implemented\"}");
+
 
 int http_handle_request(const kolibri_config_t *cfg,
                         const char *method,
@@ -791,28 +738,31 @@ int http_handle_request(const kolibri_config_t *cfg,
                         const char *body,
                         size_t body_len,
                         http_response_t *resp) {
+    (void)body;
+    (void)body_len;
     if (!cfg || !method || !path || !resp) {
+        errno = EINVAL;
         return -1;
     }
 
-
-    }
-
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/dialog") == 0) {
-        respond_dialog(cfg, body ? body : "", body_len, resp);
-        return 0;
-    }
-
-
-        return 0;
-    }
-
     if (strcmp(method, "GET") == 0) {
-        if (serve_static_file(path, resp) == 0) {
+        if (strcmp(path, "/api/v1/health") == 0) {
+            respond_health(cfg, resp);
             return 0;
         }
+        if (strcmp(path, "/api/v1/metrics") == 0) {
+            respond_metrics(cfg, resp);
+            return 0;
+        }
+        respond_not_found(resp);
+        return -1;
     }
 
-    set_response(resp, 404, "application/json", "{\"error\":\"not found\"}");
+    if (strcmp(method, "POST") == 0) {
+        respond_not_implemented(resp);
+        return -1;
+    }
+
+    respond_not_found(resp);
     return -1;
 }

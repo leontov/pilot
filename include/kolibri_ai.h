@@ -29,6 +29,13 @@ int kolibri_ai_apply_reinforcement(KolibriAI *ai,
 char *kolibri_ai_serialize_state(const KolibriAI *ai);
 char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results);
 
+int kolibri_ai_process_remote_formula(KolibriAI *ai,
+                                      const Formula *formula,
+                                      const FormulaExperience *experience);
+char *kolibri_ai_export_snapshot(const KolibriAI *ai);
+int kolibri_ai_import_snapshot(KolibriAI *ai, const char *json_payload);
+int kolibri_ai_sync_with_neighbor(KolibriAI *ai, const char *neighbor_base_url);
+
 #ifdef __cplusplus
 }
 #endif

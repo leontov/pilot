@@ -4,6 +4,8 @@
 
 #include "formula.h"
 
+#include <curl/curl.h>
+#include <json-c/json.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -12,12 +14,21 @@
 #include <time.h>
 #include <unistd.h>
 
+typedef struct {
+    char id[64];
+    FormulaExperience experience;
+} formula_experience_record_t;
+
 struct KolibriAI {
     pthread_t worker;
     int running;
     pthread_mutex_t mutex;
 
     FormulaCollection *library;
+    FormulaTrainingPipeline *pipeline;
+    formula_experience_record_t *experience_records;
+    size_t experience_count;
+    size_t experience_capacity;
 
     double average_reward;
     double exploration_rate;
@@ -39,6 +50,166 @@ static const default_formula_t k_default_formulas[] = {
     {"kolibri.memory.recall", "remember(city) -> answer(city)", 0.58},
     {"kolibri.pattern.sequence", "g(n) = 2*n + 1", 0.64},
 };
+
+static FormulaExperience *kolibri_ai_get_experience_record(KolibriAI *ai,
+                                                           const char *id,
+                                                           int create_if_missing) {
+    if (!ai || !id) {
+        return NULL;
+    }
+    for (size_t i = 0; i < ai->experience_count; ++i) {
+        if (strcmp(ai->experience_records[i].id, id) == 0) {
+            return &ai->experience_records[i].experience;
+        }
+    }
+    if (!create_if_missing) {
+        return NULL;
+    }
+    size_t new_count = ai->experience_count + 1;
+    if (new_count > ai->experience_capacity) {
+        size_t new_cap = ai->experience_capacity == 0 ? 8 : ai->experience_capacity * 2;
+        while (new_cap < new_count) {
+            new_cap *= 2;
+        }
+        formula_experience_record_t *tmp = realloc(ai->experience_records,
+                                                   new_cap * sizeof(formula_experience_record_t));
+        if (!tmp) {
+            return NULL;
+        }
+        ai->experience_records = tmp;
+        ai->experience_capacity = new_cap;
+    }
+    formula_experience_record_t *slot = &ai->experience_records[ai->experience_count++];
+    memset(slot, 0, sizeof(*slot));
+    strncpy(slot->id, id, sizeof(slot->id) - 1);
+    slot->id[sizeof(slot->id) - 1] = '\0';
+    return &slot->experience;
+}
+
+static int pipeline_append_dataset_entry(FormulaTrainingPipeline *pipeline,
+                                         const FormulaDatasetEntry *entry) {
+    if (!pipeline || !entry) {
+        return -1;
+    }
+    FormulaDataset *dataset = &pipeline->dataset;
+    for (size_t i = 0; i < dataset->count; ++i) {
+        if (strncmp(dataset->entries[i].task, entry->task,
+                    sizeof(dataset->entries[i].task)) == 0) {
+            return 0;
+        }
+    }
+    FormulaDatasetEntry *tmp = realloc(dataset->entries,
+                                       (dataset->count + 1) * sizeof(FormulaDatasetEntry));
+    if (!tmp) {
+        return -1;
+    }
+    dataset->entries = tmp;
+    dataset->entries[dataset->count] = *entry;
+    dataset->count += 1;
+    return 0;
+}
+
+static int pipeline_append_memory_fact(FormulaTrainingPipeline *pipeline,
+                                       const FormulaMemoryFact *fact) {
+    if (!pipeline || !fact) {
+        return -1;
+    }
+    FormulaMemorySnapshot *snapshot = &pipeline->memory_snapshot;
+    for (size_t i = 0; i < snapshot->count; ++i) {
+        if (strncmp(snapshot->facts[i].fact_id, fact->fact_id,
+                    sizeof(snapshot->facts[i].fact_id)) == 0) {
+            return 0;
+        }
+    }
+    FormulaMemoryFact *tmp = realloc(snapshot->facts,
+                                     (snapshot->count + 1) * sizeof(FormulaMemoryFact));
+    if (!tmp) {
+        return -1;
+    }
+    snapshot->facts = tmp;
+    snapshot->facts[snapshot->count] = *fact;
+    snapshot->count += 1;
+    return 0;
+}
+
+static void kolibri_ai_seed_training(KolibriAI *ai) {
+    if (!ai || !ai->pipeline) {
+        return;
+    }
+    time_t now = time(NULL);
+    for (size_t i = 0; i < sizeof(k_default_formulas) / sizeof(k_default_formulas[0]); ++i) {
+        const default_formula_t *defaults = &k_default_formulas[i];
+        FormulaDatasetEntry entry = {0};
+        snprintf(entry.task, sizeof(entry.task), "bootstrap:%s", defaults->id);
+        snprintf(entry.response, sizeof(entry.response), "%s", defaults->content);
+        entry.effectiveness = defaults->effectiveness;
+        entry.rating = 1;
+        entry.timestamp = now;
+        pipeline_append_dataset_entry(ai->pipeline, &entry);
+
+        FormulaMemoryFact fact = {0};
+        snprintf(fact.fact_id, sizeof(fact.fact_id), "fact:%s", defaults->id);
+        snprintf(fact.description, sizeof(fact.description), "seed:%s", defaults->content);
+        fact.importance = 0.5 + 0.1 * (double)i;
+        fact.reward = defaults->effectiveness;
+        fact.timestamp = now;
+        pipeline_append_memory_fact(ai->pipeline, &fact);
+
+        FormulaExperience *exp = kolibri_ai_get_experience_record(ai, defaults->id, 1);
+        if (exp) {
+            exp->reward = defaults->effectiveness;
+            exp->imitation_score = defaults->effectiveness * 0.8;
+            exp->accuracy = defaults->effectiveness * 0.9;
+            exp->loss = 1.0 - defaults->effectiveness;
+            snprintf(exp->source, sizeof(exp->source), "seed");
+            snprintf(exp->task_id, sizeof(exp->task_id), "%s", entry.task);
+        }
+    }
+}
+
+static void kolibri_ai_merge_dataset(KolibriAI *ai,
+                                     const FormulaDatasetEntry *entries,
+                                     size_t count) {
+    if (!ai || !ai->pipeline || !entries) {
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        pipeline_append_dataset_entry(ai->pipeline, &entries[i]);
+    }
+}
+
+static void kolibri_ai_merge_memory(KolibriAI *ai,
+                                    const FormulaMemoryFact *facts,
+                                    size_t count) {
+    if (!ai || !ai->pipeline || !facts) {
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        pipeline_append_memory_fact(ai->pipeline, &facts[i]);
+    }
+}
+
+typedef struct {
+    char *data;
+    size_t size;
+} curl_buffer_t;
+
+static size_t kolibri_ai_curl_write(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    size_t total = size * nmemb;
+    curl_buffer_t *buffer = (curl_buffer_t *)userdata;
+    if (total == 0) {
+        return 0;
+    }
+    char *tmp = realloc(buffer->data, buffer->size + total + 1);
+    if (!tmp) {
+        return 0;
+    }
+    buffer->data = tmp;
+    memcpy(buffer->data + buffer->size, ptr, total);
+    buffer->size += total;
+    buffer->data[buffer->size] = '\0';
+    return total;
+}
 
 static void kolibri_ai_seed_library(KolibriAI *ai) {
     if (!ai || !ai->library) {
@@ -70,9 +241,14 @@ static void kolibri_ai_seed_library(KolibriAI *ai) {
         }
         ai->average_reward = total / (double)ai->library->count;
     }
+
     ai->planning_score = ai->average_reward;
     ai->recent_poe = 0.0;
     ai->recent_mdl = 1.0;
+
+
+    kolibri_ai_seed_training(ai);
+
 }
 
 static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
@@ -111,6 +287,7 @@ static void kolibri_ai_synthesise_formula(KolibriAI *ai) {
 }
 
 KolibriAI *kolibri_ai_create(void) {
+    curl_global_init(CURL_GLOBAL_DEFAULT);
     KolibriAI *ai = calloc(1, sizeof(KolibriAI));
     if (!ai) {
         return NULL;
@@ -128,13 +305,27 @@ KolibriAI *kolibri_ai_create(void) {
         return NULL;
     }
 
+    ai->pipeline = formula_training_pipeline_create(16);
+    if (!ai->pipeline) {
+        formula_collection_destroy(ai->library);
+        pthread_mutex_destroy(&ai->mutex);
+        free(ai);
+        return NULL;
+    }
+
     ai->iterations = 0;
     ai->average_reward = 0.0;
     ai->exploration_rate = 0.4;
     ai->exploitation_rate = 0.6;
+
     ai->planning_score = 0.0;
     ai->recent_poe = 0.0;
     ai->recent_mdl = 1.0;
+
+    ai->experience_records = NULL;
+    ai->experience_count = 0;
+    ai->experience_capacity = 0;
+
 
     kolibri_ai_seed_library(ai);
     return ai;
@@ -150,6 +341,14 @@ void kolibri_ai_destroy(KolibriAI *ai) {
     if (ai->library) {
         formula_collection_destroy(ai->library);
     }
+    if (ai->pipeline) {
+        formula_training_pipeline_destroy(ai->pipeline);
+    }
+    free(ai->experience_records);
+    ai->experience_records = NULL;
+    ai->experience_count = 0;
+    ai->experience_capacity = 0;
+    curl_global_cleanup();
     free(ai);
 }
 
@@ -240,6 +439,34 @@ int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula) {
         }
         ai->average_reward = total / (double)ai->library->count;
         ai->planning_score = 0.95 * ai->planning_score + 0.05 * ai->average_reward;
+    }
+    if (rc == 0) {
+        FormulaExperience *exp = kolibri_ai_get_experience_record(ai, formula->id, 1);
+        if (exp) {
+            exp->reward = formula->effectiveness;
+            exp->imitation_score = ai->average_reward;
+            exp->accuracy = fmax(0.0, formula->effectiveness - 0.1);
+            exp->loss = fmax(0.0, 1.0 - formula->effectiveness);
+            snprintf(exp->source, sizeof(exp->source), "local");
+            snprintf(exp->task_id, sizeof(exp->task_id), "local:%s", formula->id);
+        }
+        if (ai->pipeline) {
+            FormulaDatasetEntry entry = {0};
+            snprintf(entry.task, sizeof(entry.task), "library:%s", formula->id);
+            snprintf(entry.response, sizeof(entry.response), "%s", formula->content);
+            entry.effectiveness = formula->effectiveness;
+            entry.rating = 1;
+            entry.timestamp = time(NULL);
+            pipeline_append_dataset_entry(ai->pipeline, &entry);
+
+            FormulaMemoryFact fact = {0};
+            snprintf(fact.fact_id, sizeof(fact.fact_id), "memory:%s", formula->id);
+            snprintf(fact.description, sizeof(fact.description), "%s", formula->content);
+            fact.importance = 0.4;
+            fact.reward = formula->effectiveness;
+            fact.timestamp = entry.timestamp;
+            pipeline_append_memory_fact(ai->pipeline, &fact);
+        }
     }
     pthread_mutex_unlock(&ai->mutex);
     return rc;
@@ -441,4 +668,375 @@ char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results) {
 
     snprintf(json + len, capacity - len, "]}");
     return json;
+}
+
+int kolibri_ai_process_remote_formula(KolibriAI *ai,
+                                      const Formula *formula,
+                                      const FormulaExperience *experience) {
+    if (!ai || !formula || !experience) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    int rc = 0;
+    Formula *existing = ai->library ? formula_collection_find(ai->library, formula->id) : NULL;
+    if (existing) {
+        rc = formula_copy(existing, formula);
+    } else if (ai->library) {
+        rc = formula_collection_add(ai->library, formula);
+    } else {
+        rc = -1;
+    }
+
+    if (rc == 0 && ai->library && ai->library->count > 0) {
+        double total = 0.0;
+        for (size_t i = 0; i < ai->library->count; ++i) {
+            total += ai->library->formulas[i].effectiveness;
+        }
+        ai->average_reward = total / (double)ai->library->count;
+        FormulaExperience *slot = kolibri_ai_get_experience_record(ai, formula->id, 1);
+        if (slot) {
+            *slot = *experience;
+        }
+        if (ai->pipeline) {
+            formula_training_pipeline_record_experience(ai->pipeline, experience);
+        }
+    }
+    pthread_mutex_unlock(&ai->mutex);
+    return rc;
+}
+
+char *kolibri_ai_export_snapshot(const KolibriAI *ai) {
+    if (!ai) {
+        return NULL;
+    }
+
+    pthread_mutex_lock((pthread_mutex_t *)&ai->mutex);
+    struct json_object *root = json_object_new_object();
+    struct json_object *dataset = json_object_new_array();
+    struct json_object *memory = json_object_new_array();
+    struct json_object *formulas = json_object_new_array();
+
+    if (ai->pipeline) {
+        for (size_t i = 0; i < ai->pipeline->dataset.count; ++i) {
+            const FormulaDatasetEntry *entry = &ai->pipeline->dataset.entries[i];
+            struct json_object *obj = json_object_new_object();
+            json_object_object_add(obj, "task", json_object_new_string(entry->task));
+            json_object_object_add(obj, "response", json_object_new_string(entry->response));
+            json_object_object_add(obj, "effectiveness", json_object_new_double(entry->effectiveness));
+            json_object_object_add(obj, "rating", json_object_new_int(entry->rating));
+            json_object_object_add(obj, "timestamp", json_object_new_int64(entry->timestamp));
+            json_object_array_add(dataset, obj);
+        }
+
+        for (size_t i = 0; i < ai->pipeline->memory_snapshot.count; ++i) {
+            const FormulaMemoryFact *fact = &ai->pipeline->memory_snapshot.facts[i];
+            struct json_object *obj = json_object_new_object();
+            json_object_object_add(obj, "fact_id", json_object_new_string(fact->fact_id));
+            json_object_object_add(obj, "description", json_object_new_string(fact->description));
+            json_object_object_add(obj, "importance", json_object_new_double(fact->importance));
+            json_object_object_add(obj, "reward", json_object_new_double(fact->reward));
+            json_object_object_add(obj, "timestamp", json_object_new_int64(fact->timestamp));
+            json_object_array_add(memory, obj);
+        }
+    }
+
+    if (ai->library) {
+        for (size_t i = 0; i < ai->library->count; ++i) {
+            const Formula *formula = &ai->library->formulas[i];
+            struct json_object *obj = json_object_new_object();
+            json_object_object_add(obj, "id", json_object_new_string(formula->id));
+            json_object_object_add(obj, "representation", json_object_new_int(formula->representation));
+            json_object_object_add(obj, "effectiveness", json_object_new_double(formula->effectiveness));
+            json_object_object_add(obj, "created_at", json_object_new_int64(formula->created_at));
+            json_object_object_add(obj, "tests_passed", json_object_new_int(formula->tests_passed));
+            json_object_object_add(obj, "confirmations", json_object_new_int(formula->confirmations));
+            if (formula->representation == FORMULA_REPRESENTATION_TEXT) {
+                json_object_object_add(obj, "content", json_object_new_string(formula->content));
+            }
+
+            FormulaExperience *exp = kolibri_ai_get_experience_record((KolibriAI *)ai, formula->id, 0);
+            if (exp) {
+                struct json_object *exp_obj = json_object_new_object();
+                json_object_object_add(exp_obj, "reward", json_object_new_double(exp->reward));
+                json_object_object_add(exp_obj, "imitation_score", json_object_new_double(exp->imitation_score));
+                json_object_object_add(exp_obj, "accuracy", json_object_new_double(exp->accuracy));
+                json_object_object_add(exp_obj, "loss", json_object_new_double(exp->loss));
+                json_object_object_add(exp_obj, "source", json_object_new_string(exp->source));
+                json_object_object_add(exp_obj, "task_id", json_object_new_string(exp->task_id));
+                json_object_object_add(obj, "experience", exp_obj);
+            }
+            json_object_array_add(formulas, obj);
+        }
+    }
+
+    json_object_object_add(root, "dataset", dataset);
+    json_object_object_add(root, "memory", memory);
+    json_object_object_add(root, "formulas", formulas);
+
+    const char *json_str = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    char *result = NULL;
+    if (json_str) {
+        result = strdup(json_str);
+    }
+    json_object_put(root);
+    pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
+    return result;
+}
+
+int kolibri_ai_import_snapshot(KolibriAI *ai, const char *json_payload) {
+    if (!ai || !json_payload) {
+        return -1;
+    }
+
+    struct json_tokener *tok = json_tokener_new();
+    if (!tok) {
+        return -1;
+    }
+    struct json_object *root = json_tokener_parse_ex(tok, json_payload, (int)strlen(json_payload));
+    enum json_tokener_error err = json_tokener_get_error(tok);
+    json_tokener_free(tok);
+    if (err != json_tokener_success || !root) {
+        if (root) {
+            json_object_put(root);
+        }
+        return -1;
+    }
+    if (!json_object_is_type(root, json_type_object)) {
+        json_object_put(root);
+        return -1;
+    }
+
+    FormulaDatasetEntry *dataset_entries = NULL;
+    size_t dataset_count = 0;
+    FormulaMemoryFact *memory_facts = NULL;
+    size_t memory_count = 0;
+
+    struct json_object *dataset_obj = NULL;
+    if (json_object_object_get_ex(root, "dataset", &dataset_obj) &&
+        json_object_is_type(dataset_obj, json_type_array)) {
+        size_t count = json_object_array_length(dataset_obj);
+        if (count > 0) {
+            dataset_entries = calloc(count, sizeof(FormulaDatasetEntry));
+            if (!dataset_entries) {
+                json_object_put(root);
+                return -1;
+            }
+            for (size_t i = 0; i < count; ++i) {
+                struct json_object *entry = json_object_array_get_idx(dataset_obj, (int)i);
+                if (!entry) {
+                    continue;
+                }
+                FormulaDatasetEntry *target = &dataset_entries[dataset_count];
+                struct json_object *value = NULL;
+                if (json_object_object_get_ex(entry, "task", &value)) {
+                    const char *task = json_object_get_string(value);
+                    if (task) {
+                        strncpy(target->task, task, sizeof(target->task) - 1);
+                    }
+                }
+                if (json_object_object_get_ex(entry, "response", &value)) {
+                    const char *response = json_object_get_string(value);
+                    if (response) {
+                        strncpy(target->response, response, sizeof(target->response) - 1);
+                    }
+                }
+                if (json_object_object_get_ex(entry, "effectiveness", &value)) {
+                    target->effectiveness = json_object_get_double(value);
+                }
+                if (json_object_object_get_ex(entry, "rating", &value)) {
+                    target->rating = json_object_get_int(value);
+                }
+                if (json_object_object_get_ex(entry, "timestamp", &value)) {
+                    target->timestamp = (time_t)json_object_get_int64(value);
+                }
+                dataset_count++;
+            }
+        }
+    }
+
+    struct json_object *memory_obj = NULL;
+    if (json_object_object_get_ex(root, "memory", &memory_obj) &&
+        json_object_is_type(memory_obj, json_type_array)) {
+        size_t count = json_object_array_length(memory_obj);
+        if (count > 0) {
+            memory_facts = calloc(count, sizeof(FormulaMemoryFact));
+            if (!memory_facts) {
+                free(dataset_entries);
+                json_object_put(root);
+                return -1;
+            }
+            for (size_t i = 0; i < count; ++i) {
+                struct json_object *fact_obj = json_object_array_get_idx(memory_obj, (int)i);
+                if (!fact_obj) {
+                    continue;
+                }
+                FormulaMemoryFact *target = &memory_facts[memory_count];
+                struct json_object *value = NULL;
+                if (json_object_object_get_ex(fact_obj, "fact_id", &value)) {
+                    const char *fact_id = json_object_get_string(value);
+                    if (fact_id) {
+                        strncpy(target->fact_id, fact_id, sizeof(target->fact_id) - 1);
+                    }
+                }
+                if (json_object_object_get_ex(fact_obj, "description", &value)) {
+                    const char *desc = json_object_get_string(value);
+                    if (desc) {
+                        strncpy(target->description, desc, sizeof(target->description) - 1);
+                    }
+                }
+                if (json_object_object_get_ex(fact_obj, "importance", &value)) {
+                    target->importance = json_object_get_double(value);
+                }
+                if (json_object_object_get_ex(fact_obj, "reward", &value)) {
+                    target->reward = json_object_get_double(value);
+                }
+                if (json_object_object_get_ex(fact_obj, "timestamp", &value)) {
+                    target->timestamp = (time_t)json_object_get_int64(value);
+                }
+                memory_count++;
+            }
+        }
+    }
+
+    pthread_mutex_lock(&ai->mutex);
+    kolibri_ai_merge_dataset(ai, dataset_entries, dataset_count);
+    kolibri_ai_merge_memory(ai, memory_facts, memory_count);
+    pthread_mutex_unlock(&ai->mutex);
+
+    struct json_object *formulas_obj = NULL;
+    if (json_object_object_get_ex(root, "formulas", &formulas_obj) &&
+        json_object_is_type(formulas_obj, json_type_array)) {
+        size_t count = json_object_array_length(formulas_obj);
+        for (size_t i = 0; i < count; ++i) {
+            struct json_object *formula_obj = json_object_array_get_idx(formulas_obj, (int)i);
+            if (!formula_obj) {
+                continue;
+            }
+            Formula formula = {0};
+            FormulaExperience experience = {0};
+            struct json_object *value = NULL;
+            if (json_object_object_get_ex(formula_obj, "id", &value)) {
+                const char *id = json_object_get_string(value);
+                if (id) {
+                    strncpy(formula.id, id, sizeof(formula.id) - 1);
+                }
+            }
+            if (json_object_object_get_ex(formula_obj, "representation", &value)) {
+                formula.representation = (FormulaRepresentation)json_object_get_int(value);
+            } else {
+                formula.representation = FORMULA_REPRESENTATION_TEXT;
+            }
+            if (json_object_object_get_ex(formula_obj, "effectiveness", &value)) {
+                formula.effectiveness = json_object_get_double(value);
+            }
+            if (json_object_object_get_ex(formula_obj, "created_at", &value)) {
+                formula.created_at = (time_t)json_object_get_int64(value);
+            }
+            if (json_object_object_get_ex(formula_obj, "tests_passed", &value)) {
+                formula.tests_passed = (uint32_t)json_object_get_int(value);
+            }
+            if (json_object_object_get_ex(formula_obj, "confirmations", &value)) {
+                formula.confirmations = (uint32_t)json_object_get_int(value);
+            }
+            if (formula.representation == FORMULA_REPRESENTATION_TEXT) {
+                if (json_object_object_get_ex(formula_obj, "content", &value)) {
+                    const char *content = json_object_get_string(value);
+                    if (content) {
+                        strncpy(formula.content, content, sizeof(formula.content) - 1);
+                    }
+                }
+            }
+
+            struct json_object *exp_obj = NULL;
+            if (json_object_object_get_ex(formula_obj, "experience", &exp_obj) &&
+                json_object_is_type(exp_obj, json_type_object)) {
+                if (json_object_object_get_ex(exp_obj, "reward", &value)) {
+                    experience.reward = json_object_get_double(value);
+                }
+                if (json_object_object_get_ex(exp_obj, "imitation_score", &value)) {
+                    experience.imitation_score = json_object_get_double(value);
+                }
+                if (json_object_object_get_ex(exp_obj, "accuracy", &value)) {
+                    experience.accuracy = json_object_get_double(value);
+                }
+                if (json_object_object_get_ex(exp_obj, "loss", &value)) {
+                    experience.loss = json_object_get_double(value);
+                }
+                if (json_object_object_get_ex(exp_obj, "source", &value)) {
+                    const char *source = json_object_get_string(value);
+                    if (source) {
+                        strncpy(experience.source, source, sizeof(experience.source) - 1);
+                    }
+                }
+                if (json_object_object_get_ex(exp_obj, "task_id", &value)) {
+                    const char *task_id = json_object_get_string(value);
+                    if (task_id) {
+                        strncpy(experience.task_id, task_id, sizeof(experience.task_id) - 1);
+                    }
+                }
+            }
+
+            kolibri_ai_process_remote_formula(ai, &formula, &experience);
+        }
+    }
+
+    free(dataset_entries);
+    free(memory_facts);
+    json_object_put(root);
+    return 0;
+}
+
+int kolibri_ai_sync_with_neighbor(KolibriAI *ai, const char *neighbor_base_url) {
+    if (!ai || !neighbor_base_url) {
+        return -1;
+    }
+
+    char *snapshot = kolibri_ai_export_snapshot(ai);
+    if (!snapshot) {
+        return -1;
+    }
+
+    char url[512];
+    int needed = snprintf(url, sizeof(url), "%s/api/v1/ai/snapshot", neighbor_base_url);
+    if (needed < 0 || (size_t)needed >= sizeof(url)) {
+        free(snapshot);
+        return -1;
+    }
+
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        free(snapshot);
+        return -1;
+    }
+
+    CURLcode overall = CURLE_OK;
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, snapshot);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(snapshot));
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    overall = curl_easy_perform(curl);
+
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, NULL);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, 0L);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, NULL);
+    curl_slist_free_all(headers);
+    headers = NULL;
+
+    curl_buffer_t buffer = {0};
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, kolibri_ai_curl_write);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+    CURLcode get_res = curl_easy_perform(curl);
+    if (get_res == CURLE_OK && buffer.data) {
+        kolibri_ai_import_snapshot(ai, buffer.data);
+    }
+
+    curl_easy_cleanup(curl);
+    free(snapshot);
+    free(buffer.data);
+    return (overall == CURLE_OK || get_res == CURLE_OK) ? 0 : -1;
 }
