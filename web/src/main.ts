@@ -84,64 +84,7 @@ function digitsFromExpression(expr: string): number[] {
   return result;
 }
 
-type TraceEntry = {
-  step?: number;
-  ip?: number | string;
-  opcode?: string;
-  stack?: unknown;
-  gas?: number | string;
-  [key: string]: unknown;
-};
 
-function buildTraceTable(trace: TraceEntry[]): HTMLElement {
-  const table = createElement("table", "trace-table") as HTMLTableElement;
-  const thead = document.createElement("thead");
-  const headerRow = document.createElement("tr");
-  const headers: (keyof TraceEntry | "step")[] = [
-    "step",
-    "ip",
-    "opcode",
-    "stack",
-    "gas"
-  ];
-
-  headers.forEach((key) => {
-    const th = document.createElement("th");
-    th.textContent = key;
-    headerRow.appendChild(th);
-  });
-
-  thead.appendChild(headerRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
-  trace.forEach((entry, idx) => {
-    const tr = document.createElement("tr");
-    headers.forEach((key) => {
-      const td = document.createElement("td");
-      const record = entry as Record<string, unknown>;
-      const rawValue =
-        key === "step" ? record[key] ?? idx : record[key as string];
-      let value: string;
-      if (rawValue === undefined || rawValue === null) {
-        value = "";
-      } else if (Array.isArray(rawValue) || typeof rawValue === "object") {
-        try {
-          value = JSON.stringify(rawValue);
-        } catch (err) {
-          value = String(rawValue);
-        }
-      } else {
-        value = String(rawValue);
-      }
-      td.textContent = value;
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-
-  table.appendChild(tbody);
-  return table;
 }
 
 function renderDialog(container: HTMLElement) {
@@ -311,7 +254,86 @@ function renderPlaceholder(container: HTMLElement, text: string) {
 }
 
 function renderPrograms(container: HTMLElement) {
-  renderPlaceholder(container, "Список программ появится на этапе B.");
+  const form = createElement("form", "program-form") as HTMLFormElement;
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "Введите байты программы, например: 16, 0, 0, 2";
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = "Запустить";
+  form.appendChild(textarea);
+  form.appendChild(submit);
+
+  const output = createElement("div", "program-output");
+  const statusEl = createElement("div", "program-status", "Статус: —");
+  const resultEl = createElement("div", "program-result", "Результат: —");
+  const traceTitle = createElement("div", "program-trace-title", "Трасса:");
+  const tracePre = createElement("pre", "output program-trace", "[]");
+
+  output.appendChild(statusEl);
+  output.appendChild(resultEl);
+  output.appendChild(traceTitle);
+  output.appendChild(tracePre);
+
+  container.appendChild(form);
+  container.appendChild(output);
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const raw = textarea.value.trim();
+    if (!raw) {
+      statusEl.textContent = "Статус: введите программу";
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+      return;
+    }
+
+    let program: number[];
+    try {
+      program = parseProgramInput(raw);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      statusEl.textContent = `Статус: ${message}`;
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+      return;
+    }
+
+    statusEl.textContent = "Статус: выполнение...";
+    resultEl.textContent = "Результат: —";
+    tracePre.textContent = "[]";
+
+    try {
+      const res = await fetch("/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ program })
+      });
+      const data = await res.json();
+      if ("error" in data) {
+        statusEl.textContent = `Статус: ошибка — ${String(data.error)}`;
+        resultEl.textContent = "Результат: —";
+        tracePre.textContent = "[]";
+        return;
+      }
+      const statusText = typeof data.status !== "undefined" ? String(data.status) : "—";
+      const stepsText = typeof data.steps !== "undefined" ? `, шаги: ${String(data.steps)}` : "";
+      statusEl.textContent = `Статус: ${statusText}${stepsText}`;
+      const resultText = typeof data.result !== "undefined" ? String(data.result) : "—";
+      resultEl.textContent = `Результат: ${resultText}`;
+      const traceData = data.trace;
+      if (Array.isArray(traceData)) {
+        tracePre.textContent = JSON.stringify(traceData, null, 2);
+      } else if (typeof traceData !== "undefined") {
+        tracePre.textContent = JSON.stringify(traceData, null, 2);
+      } else {
+        tracePre.textContent = "[]";
+      }
+    } catch (err) {
+      statusEl.textContent = `Статус: ошибка запроса — ${String(err)}`;
+      resultEl.textContent = "Результат: —";
+      tracePre.textContent = "[]";
+    }
+  });
 }
 
 function renderSynth(container: HTMLElement) {
@@ -419,8 +441,5 @@ function mountApp() {
   content.setAttribute("data-view", "dialog");
 }
 
-
-
-<
 
 mountApp();
