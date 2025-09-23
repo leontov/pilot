@@ -14,6 +14,39 @@ function createElement(tag: string, className?: string, text?: string): HTMLElem
   return el;
 }
 
+function showError(message: string) {
+  let notification = document.querySelector<HTMLDivElement>(".notification");
+  if (!notification) {
+    notification = document.createElement("div");
+    notification.className = "notification";
+
+    const text = document.createElement("span");
+    text.className = "notification-text";
+    notification.appendChild(text);
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "notification-close";
+    close.setAttribute("aria-label", "Закрыть уведомление");
+    close.textContent = "×";
+    close.addEventListener("click", () => {
+      notification?.remove();
+    });
+    notification.appendChild(close);
+
+    document.body.appendChild(notification);
+  }
+
+  const textElement = notification.querySelector<HTMLSpanElement>(".notification-text");
+  if (textElement) {
+    textElement.textContent = message;
+  } else {
+    notification.textContent = message;
+  }
+
+  notification.classList.add("visible");
+}
+
 function digitsFromExpression(expr: string): number[] {
   const result: number[] = [];
   for (const ch of expr.replace(/\s+/g, "")) {
@@ -62,7 +95,7 @@ function renderDialog(container: HTMLElement) {
       const data = await res.json();
       output.textContent = JSON.stringify(data, null, 2);
     } catch (err) {
-      output.textContent = `Ошибка: ${String(err)}`;
+      showError(`Ошибка: ${String(err)}`);
     }
   });
 }
@@ -108,7 +141,7 @@ function renderMemory(container: HTMLElement) {
       const json = await res.json();
       pre.textContent = JSON.stringify(json, null, 2);
     } catch (err) {
-      pre.textContent = `Ошибка: ${String(err)}`;
+      showError(`Ошибка: ${String(err)}`);
     }
   });
 }
@@ -184,6 +217,37 @@ function injectStyles() {
     button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
     pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
     .placeholder { opacity: 0.7; }
+    .notification {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: #b00020;
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      max-width: 320px;
+      z-index: 1000;
+    }
+    .notification:not(.visible) {
+      display: none;
+    }
+    .notification-text {
+      flex: 1;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .notification-close {
+      background: transparent;
+      border: none;
+      color: inherit;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 0 4px;
+    }
   `;
   document.head.appendChild(style);
 }
