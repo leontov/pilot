@@ -94,6 +94,8 @@ add_executable(test_rule_engine tests/test_rule_engine.c src/rule_engine.c src/e
 target_link_libraries(test_rule_engine PRIVATE ${JSONC_LIBRARIES} m)
 add_executable(test_formula tests/test_formula.c src/formula.c src/formula_advanced.c src/decimal_cell.c)
 target_link_libraries(test_formula PRIVATE ${JSONC_LIBRARIES} uuid m)
+add_executable(test_decimal_cell tests/test_decimal_cell.c src/kolibri_decimal_cell.c)
+target_link_libraries(test_decimal_cell PRIVATE m)
 target_include_directories(test_formula PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/include
