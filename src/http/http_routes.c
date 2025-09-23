@@ -3,6 +3,7 @@
 #include "blockchain.h"
 #include "fkv/fkv.h"
 #include "kolibri_ai.h"
+#include "synthesis/formula_vm_eval.h"
 #include "util/log.h"
 #include "vm/vm.h"
 
@@ -184,135 +185,6 @@ static int build_digits_from_input(const char *input, uint8_t **out, size_t *out
     return PARSE_OK;
 }
 
-struct byte_buffer {
-    uint8_t *data;
-    size_t len;
-    size_t cap;
-};
-
-static int bb_reserve(struct byte_buffer *bb, size_t extra) {
-    if (bb->len + extra <= bb->cap) {
-        return 0;
-    }
-    size_t new_cap = bb->cap ? bb->cap : 32;
-    while (new_cap < bb->len + extra) {
-        new_cap *= 2;
-    }
-    uint8_t *tmp = realloc(bb->data, new_cap);
-    if (!tmp) {
-        return -1;
-    }
-    bb->data = tmp;
-    bb->cap = new_cap;
-    return 0;
-}
-
-static int bb_push(struct byte_buffer *bb, uint8_t byte) {
-    if (bb_reserve(bb, 1) != 0) {
-        return -1;
-    }
-    bb->data[bb->len++] = byte;
-    return 0;
-}
-
-static int emit_push_number(struct byte_buffer *bb, uint64_t value) {
-    if (bb_push(bb, 0x01) != 0 || bb_push(bb, 0x00) != 0) {
-        return -1;
-    }
-    char digits[32];
-    snprintf(digits, sizeof(digits), "%llu", (unsigned long long)value);
-    for (size_t i = 0; digits[i]; ++i) {
-        if (bb_push(bb, 0x01) != 0 || bb_push(bb, 0x02) != 0) {
-            return -1;
-        }
-        if (bb_push(bb, 0x01) != 0 || bb_push(bb, 0x05) != 0) {
-            return -1;
-        }
-        if (bb_push(bb, 0x04) != 0) {
-            return -1;
-        }
-        if (bb_push(bb, 0x04) != 0) {
-            return -1;
-        }
-        uint8_t digit = (uint8_t)(digits[i] - '0');
-        if (bb_push(bb, 0x01) != 0 || bb_push(bb, digit) != 0) {
-            return -1;
-        }
-        if (bb_push(bb, 0x02) != 0) {
-            return -1;
-        }
-    }
-    return 0;
-}
-
-static int compile_expression_program(const uint8_t *digits, size_t len, struct byte_buffer *bb) {
-    char expr[128];
-    size_t expr_len = 0;
-    for (size_t i = 0; i < len && expr_len + 1 < sizeof(expr); ++i) {
-        uint8_t v = digits[i];
-        if (v <= 9) {
-            expr[expr_len++] = (char)('0' + v);
-        } else if (v == 42 || v == 43 || v == 45 || v == 47) {
-            expr[expr_len++] = (char)v;
-        }
-    }
-    expr[expr_len] = '\0';
-    if (expr_len == 0) {
-        return -1;
-    }
-    char *op_ptr = NULL;
-    char *ops = "+-*/";
-    for (char *p = expr; *p; ++p) {
-        if (strchr(ops, *p)) {
-            op_ptr = p;
-            break;
-        }
-    }
-    if (!op_ptr) {
-        return -1;
-    }
-    char op = *op_ptr;
-    *op_ptr = '\0';
-    uint64_t lhs = strtoull(expr, NULL, 10);
-    uint64_t rhs = strtoull(op_ptr + 1, NULL, 10);
-
-    if (emit_push_number(bb, lhs) != 0) {
-        return -1;
-    }
-    if (emit_push_number(bb, rhs) != 0) {
-        return -1;
-    }
-
-    switch (op) {
-    case '+':
-        if (bb_push(bb, 0x02) != 0) {
-            return -1;
-        }
-        break;
-    case '-':
-        if (bb_push(bb, 0x03) != 0) {
-            return -1;
-        }
-        break;
-    case '*':
-        if (bb_push(bb, 0x04) != 0) {
-            return -1;
-        }
-        break;
-    case '/':
-        if (bb_push(bb, 0x05) != 0) {
-            return -1;
-        }
-        break;
-    default:
-        return -1;
-    }
-
-    if (bb_push(bb, 0x0B) != 0) {
-        return -1;
-    }
-    return 0;
-}
 
 
     }
@@ -725,13 +597,15 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
         }
         return;
     }
-    struct byte_buffer bb = {0};
-    if (compile_expression_program(digits, digits_len, &bb) != 0) {
+    uint8_t *program = NULL;
+    size_t program_len = 0;
+    if (formula_vm_compile_from_digits(digits, digits_len, &program, &program_len) != 0) {
         free(digits);
         set_response(resp, 400, "application/json", "{\"error\":\"unsupported expression\"}");
         return;
     }
     free(digits);
+    free(program);
 
 
     const char *query = strchr(path, '?');

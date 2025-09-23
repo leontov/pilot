@@ -75,6 +75,8 @@ static void test_training_pipeline_integration(void) {
     FormulaHypothesis* best = formula_training_pipeline_select_best(pipeline);
     assert(best);
     assert(best->experience.reward >= 0.0);
+    assert(best->experience.poe >= 0.0);
+    assert(best->experience.mdl >= 0.0);
     assert(formula_training_pipeline_record_experience(pipeline, &best->experience) == 0);
 
     formula_memory_snapshot_release(&snapshot);
