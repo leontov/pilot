@@ -21,9 +21,15 @@ typedef struct {
 } vm_config_t;
 
 typedef struct {
+    char snapshot_path[256];
+    uint32_t snapshot_limit;
+} ai_persistence_config_t;
+
+typedef struct {
     http_config_t http;
     vm_config_t vm;
     uint32_t seed;
+    ai_persistence_config_t ai;
 } kolibri_config_t;
 
 int config_load(const char *path, kolibri_config_t *cfg);

@@ -56,7 +56,8 @@ void fkv_shutdown(void) {
     root = NULL;
     pthread_mutex_unlock(&fkv_lock);
 }
-
+static int fkv_put_locked(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn, fkv_entry_type_t type) {
+    if (!key || !val || kn == 0 || vn == 0) {
         return -1;
     }
     fkv_node_t *node = root;
@@ -95,11 +96,12 @@ void fkv_shutdown(void) {
     node->value_len = vn;
     node->key = new_key;
     node->key_len = kn;
+    node->type = type;
 
     return 0;
 }
 
-int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn) {
+int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn, fkv_entry_type_t type) {
     if (!key || !val || kn == 0 || vn == 0) {
         return -1;
     }
@@ -109,7 +111,7 @@ int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn) {
         }
     }
     pthread_mutex_lock(&fkv_lock);
-    int rc = fkv_put_locked(key, kn, val, vn);
+    int rc = fkv_put_locked(key, kn, val, vn, type);
     pthread_mutex_unlock(&fkv_lock);
     return rc;
 }
@@ -319,7 +321,7 @@ int fkv_load(const char *path) {
                 break;
             }
         }
-        if (fkv_put_locked(key_buf, key_len, value_buf, value_len) != 0) {
+        if (fkv_put_locked(key_buf, key_len, value_buf, value_len, FKV_ENTRY_TYPE_VALUE) != 0) {
             free(key_buf);
             free(value_buf);
             rc = -1;

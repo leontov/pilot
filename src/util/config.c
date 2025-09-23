@@ -16,6 +16,9 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
     cfg->seed = 1337;
+    strncpy(cfg->ai.snapshot_path, "data/kolibri_ai_snapshot.json", sizeof(cfg->ai.snapshot_path) - 1);
+    cfg->ai.snapshot_path[sizeof(cfg->ai.snapshot_path) - 1] = '\0';
+    cfg->ai.snapshot_limit = 2048;
 }
 
 static void strip_comments(char *buf) {
@@ -93,6 +96,7 @@ int config_load(const char *path, kolibri_config_t *cfg) {
 
     struct json_object *http_obj = NULL;
     struct json_object *vm_obj = NULL;
+    struct json_object *ai_obj = NULL;
     struct json_object *value = NULL;
 
     if (!json_object_object_get_ex(root, "http", &http_obj) ||
@@ -109,15 +113,6 @@ int config_load(const char *path, kolibri_config_t *cfg) {
     const char *host = json_object_get_string(value);
     strncpy(cfg->http.host, host, sizeof(cfg->http.host) - 1);
     cfg->http.host[sizeof(cfg->http.host) - 1] = '\0';
-
-    parse_string(buf, "host", cfg->http.host, sizeof(cfg->http.host));
-    parse_uint(buf, "port", (uint32_t *)&cfg->http.port);
-    parse_uint(buf, "max_body_size", &cfg->http.max_body_size);
-    parse_uint(buf, "max_steps", &cfg->vm.max_steps);
-    parse_uint(buf, "max_stack", &cfg->vm.max_stack);
-    parse_uint(buf, "trace_depth", &cfg->vm.trace_depth);
-    parse_uint(buf, "seed", &cfg->seed);
-
 
     if (!json_object_object_get_ex(http_obj, "port", &value) ||
         !json_object_is_type(value, json_type_int)) {
@@ -184,6 +179,25 @@ int config_load(const char *path, kolibri_config_t *cfg) {
         goto cleanup;
     }
     cfg->seed = (uint32_t)seed;
+
+    if (json_object_object_get_ex(root, "ai", &ai_obj) &&
+        json_object_is_type(ai_obj, json_type_object)) {
+        if (json_object_object_get_ex(ai_obj, "snapshot_path", &value) &&
+            json_object_is_type(value, json_type_string)) {
+            const char *snapshot_path = json_object_get_string(value);
+            if (snapshot_path) {
+                strncpy(cfg->ai.snapshot_path, snapshot_path, sizeof(cfg->ai.snapshot_path) - 1);
+                cfg->ai.snapshot_path[sizeof(cfg->ai.snapshot_path) - 1] = '\0';
+            }
+        }
+        if (json_object_object_get_ex(ai_obj, "snapshot_limit", &value) &&
+            json_object_is_type(value, json_type_int)) {
+            int64_t limit = json_object_get_int64(value);
+            if (limit >= 0 && limit <= UINT32_MAX) {
+                cfg->ai.snapshot_limit = (uint32_t)limit;
+            }
+        }
+    }
 
     rc = 0;
 
