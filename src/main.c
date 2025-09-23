@@ -3,11 +3,14 @@
 #include "util/config.h"
 #include "util/log.h"
 
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 static volatile sig_atomic_t running = 1;
 
@@ -42,6 +45,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    const char *snapshot_path = "data/fkv.snapshot";
+    if (mkdir("data", 0755) != 0 && errno != EEXIST) {
+        log_warn("failed to create data directory: %s", strerror(errno));
+    }
+    if (fkv_load(snapshot_path) == 0) {
+        log_info("loaded F-KV snapshot from %s", snapshot_path);
+    } else {
+        log_info("starting without existing F-KV snapshot");
+    }
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
@@ -59,6 +72,11 @@ int main(int argc, char **argv) {
     }
 
     http_server_stop();
+    if (fkv_save(snapshot_path) != 0) {
+        log_error("failed to save F-KV snapshot to %s", snapshot_path);
+    } else {
+        log_info("saved F-KV snapshot to %s", snapshot_path);
+    }
     fkv_shutdown();
     if (log_fp) {
         fclose(log_fp);
