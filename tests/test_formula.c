@@ -120,6 +120,50 @@ static void test_formula_collection_copy(void) {
     formula_collection_destroy(collection);
 }
 
+static Formula* create_analytic_formula(const char* id, const char* expression) {
+    Formula* formula = formula_create(FORMULA_LINEAR, 2);
+    assert(formula);
+
+    if (id) {
+        strncpy(formula->id, id, sizeof(formula->id) - 1);
+        formula->id[sizeof(formula->id) - 1] = '\0';
+    }
+
+    formula->coefficients[0] = 1.0;
+    formula->coefficients[1] = 1.0;
+    if (expression) {
+        formula->expression = strdup(expression);
+        assert(formula->expression);
+    }
+
+    return formula;
+}
+
+static void test_formula_collection_remove_cleanup(void) {
+    FormulaCollection* collection = formula_collection_create(2);
+    assert(collection);
+
+    Formula* first = create_analytic_formula("first", "f(x) = x + 1");
+    Formula* second = create_analytic_formula("second", "f(x) = x + 2");
+
+    assert(formula_collection_add(collection, first) == 0);
+    assert(formula_collection_add(collection, second) == 0);
+    assert(collection->count == 2);
+
+    formula_destroy(first);
+    formula_destroy(second);
+
+    formula_collection_remove(collection, "first");
+    assert(collection->count == 1);
+    assert(formula_collection_find(collection, "second") != NULL);
+
+    formula_collection_remove(collection, "second");
+    assert(collection->count == 0);
+    assert(formula_collection_find(collection, "second") == NULL);
+
+    formula_collection_destroy(collection);
+}
+
 static void test_analytic_formula_flow(void) {
     Formula* analytic = formula_create(FORMULA_LINEAR, 2);
     assert(analytic);
@@ -178,6 +222,7 @@ static void test_analytic_formula_flow(void) {
 int main(void) {
     test_text_formula_roundtrip();
     test_formula_collection_copy();
+    test_formula_collection_remove_cleanup();
     test_analytic_formula_flow();
     test_training_pipeline_integration();
     return 0;
