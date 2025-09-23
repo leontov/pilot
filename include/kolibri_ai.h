@@ -6,6 +6,9 @@
 
 #include "formula_core.h"
 
+#define KOLIBRI_AI_LEARNING_DATA_ENV "KOLIBRI_LEARNING_DATA"
+#define KOLIBRI_AI_LEARNING_DATA_DEFAULT "learning_data.jsonl"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -24,6 +27,11 @@ Formula *kolibri_ai_get_best_formula(KolibriAI *ai);
 
 char *kolibri_ai_serialize_state(const KolibriAI *ai);
 char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results);
+
+void kolibri_ai_record_interaction(const char *task,
+                                   const char *response,
+                                   double effectiveness,
+                                   int rating);
 
 #ifdef __cplusplus
 }

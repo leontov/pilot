@@ -11,6 +11,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <json-c/json.h>
 
 struct KolibriAI {
     pthread_t worker;
@@ -260,6 +261,39 @@ static char *kolibri_ai_alloc_json(size_t initial) {
         buffer[0] = '\0';
     }
     return buffer;
+}
+
+void kolibri_ai_record_interaction(const char *task,
+                                   const char *response,
+                                   double effectiveness,
+                                   int rating) {
+    const char *path = getenv(KOLIBRI_AI_LEARNING_DATA_ENV);
+    if (!path || path[0] == '\0') {
+        path = KOLIBRI_AI_LEARNING_DATA_DEFAULT;
+    }
+
+    const char *safe_task = task ? task : "";
+    const char *safe_response = response ? response : "";
+
+    struct json_object *record = json_object_new_object();
+    if (!record) {
+        return;
+    }
+
+    json_object_object_add(record, "task", json_object_new_string(safe_task));
+    json_object_object_add(record, "response", json_object_new_string(safe_response));
+    json_object_object_add(record, "effectiveness", json_object_new_double(effectiveness));
+    json_object_object_add(record, "rating", json_object_new_int(rating));
+    json_object_object_add(record, "timestamp", json_object_new_int64((int64_t)time(NULL)));
+
+    const char *json_line = json_object_to_json_string_ext(record, JSON_C_TO_STRING_PLAIN);
+    FILE *fp = fopen(path, "a");
+    if (fp) {
+        fprintf(fp, "%s\n", json_line);
+        fclose(fp);
+    }
+
+    json_object_put(record);
 }
 
 char *kolibri_ai_serialize_state(const KolibriAI *ai) {

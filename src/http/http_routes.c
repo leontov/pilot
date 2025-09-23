@@ -680,6 +680,11 @@ static void respond_metrics(const kolibri_config_t *cfg, http_response_t *resp) 
         resp->status = (result.status == VM_OK) ? 200 : 400;
     }
     snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
+    if (rc == 0) {
+        double effectiveness = (result.status == VM_OK) ? 1.0 : 0.0;
+        int rating = effectiveness >= 0.75 ? 5 : 1;
+        kolibri_ai_record_interaction(NULL, json, effectiveness, rating);
+    }
     free(entries);
 }
 
@@ -839,6 +844,11 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
     resp->len = len;
     resp->status = 200;
     snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
+
+    double effectiveness = 1.0;
+    int rating = effectiveness >= 0.75 ? 5 : 1;
+    kolibri_ai_record_interaction(body ? body : "", json, effectiveness, rating);
+
     fkv_iter_free(&it);
     return 0;
 }

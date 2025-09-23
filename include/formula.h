@@ -94,6 +94,7 @@ typedef struct {
     FormulaMemorySnapshot memory_snapshot;
     unsigned char* weights;
     size_t weights_size;
+    char dataset_path[256];
 } FormulaTrainingPipeline;
 
 FormulaMemorySnapshot formula_memory_snapshot_clone(const FormulaMemoryFact* facts,
