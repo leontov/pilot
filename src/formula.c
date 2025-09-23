@@ -1,4 +1,5 @@
 #include "formula.h"
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,10 +13,6 @@ const int FORMULA_TYPE_SIMPLE = 0;
 const int FORMULA_TYPE_POLYNOMIAL = 1;
 const int FORMULA_TYPE_COMPOSITE = 2;
 const int FORMULA_TYPE_PERIODIC = 3;
-
-// Тестовые точки для оценки формулы
-static const double test_points[] = {-10.0, -5.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 5.0, 10.0};
-static const int num_test_points = sizeof(test_points) / sizeof(test_points[0]);
 
 void formula_clear(Formula* formula) {
     if (!formula) {
@@ -143,6 +140,7 @@ void formula_collection_remove(FormulaCollection* collection, const char* id) {
 
     for (size_t i = 0; i < collection->count; i++) {
         if (strcmp(collection->formulas[i].id, id) == 0) {
+            formula_clear(&collection->formulas[i]);
             if (i + 1 < collection->count) {
                 memmove(&collection->formulas[i],
                         &collection->formulas[i + 1],
@@ -150,6 +148,7 @@ void formula_collection_remove(FormulaCollection* collection, const char* id) {
             }
             if (collection->count > 0) {
                 collection->count--;
+                memset(&collection->formulas[collection->count], 0, sizeof(Formula));
             }
             return;
         }
@@ -170,45 +169,6 @@ int get_formula_type(const char* content) {
     return FORMULA_TYPE_SIMPLE;
 }
 
-// Вычисляет значение формулы для заданного x
-static double evaluate_formula(const char* content, double x) {
-    int type = get_formula_type(content);
-    double result = 0.0;
-    
-    switch(type) {
-        case FORMULA_TYPE_POLYNOMIAL: {
-            int coef, power, offset;
-            if (sscanf(content, "f(x) = %d * x^%d + %d", &coef, &power, &offset) == 3) {
-                result = coef * pow(x, power) + offset;
-            }
-            break;
-        }
-        case FORMULA_TYPE_COMPOSITE: {
-            int coef1, coef2;
-            if (sscanf(content, "f(x) = %d * x^2 + %d * x", &coef1, &coef2) == 2) {
-                result = coef1 * pow(x, 2) + coef2 * x;
-            }
-            break;
-        }
-        case FORMULA_TYPE_PERIODIC: {
-            int amp, freq;
-            if (sscanf(content, "f(x) = %d * sin(%d * x)", &amp, &freq) == 2) {
-                result = amp * sin(freq * x);
-            }
-            break;
-        }
-        default: { // FORMULA_TYPE_SIMPLE или неизвестный тип
-            int base, coef;
-            if (sscanf(content, "f(x) = %d * %d^x", &coef, &base) == 2) {
-                result = coef * pow(base, x);
-            }
-            break;
-        }
-    }
-    
-    return result;
-}
-
 // Валидация формулы
 int validate_formula(const Formula* formula) {
     if (!formula) return 0;
@@ -222,145 +182,464 @@ int validate_formula(const Formula* formula) {
     return 1;
 }
 
-// Генерация случайной формулы
-Formula* generate_random_formula(int complexity_level) {
-    Formula* formula = calloc(1, sizeof(Formula));
-    if (!formula) return NULL;
+// ----------- Новая обучающая подсистема формул -----------
 
-    // Генерация уникального ID
-    uuid_t uuid;
-    uuid_generate(uuid);
-    uuid_unparse(uuid, formula->id);
-    
-    // Более разнообразная генерация формул
-    int type = rand() % 4;  // Тип формулы
-    char formula_str[sizeof(formula->content)];
-    
-    switch(type) {
-        case 0: {  // Полиномиальная
-            int coef = (rand() % 19) - 9;
-            int power = (rand() % complexity_level) + 1;
-            int offset = (rand() % 21) - 10;
-            if (coef == 0) coef = 1;
-            snprintf(formula_str, sizeof(formula_str),
-                    "f(x) = %d * x^%d + %d", coef, power, offset);
-            break;
-        }
-        case 1: {  // Композитная
-            int coef1 = (rand() % 9) + 1;
-            int coef2 = (rand() % 9) + 1;
-            snprintf(formula_str, sizeof(formula_str),
-                    "f(x) = %d * x^2 + %d * x", coef1, coef2);
-            break;
-        }
-        case 2: {  // Периодическая
-            int amp = (rand() % 5) + 1;
-            int freq = (rand() % 3) + 1;
-            snprintf(formula_str, sizeof(formula_str),
-                    "f(x) = %d * sin(%d * x)", amp, freq);
-            break;
-        }
-        default: {  // Экспоненциальная
-            int base = (rand() % 3) + 2;
-            int coef = (rand() % 5) + 1;
-            snprintf(formula_str, sizeof(formula_str),
-                    "f(x) = %d * %d^x", coef, base);
-            break;
-        }
+static void formula_hypothesis_clear(FormulaHypothesis* hypothesis) {
+    if (!hypothesis) {
+        return;
     }
-    
-    strncpy(formula->content, formula_str, sizeof(formula->content) - 1);
-    formula->content[sizeof(formula->content) - 1] = '\0';
 
-    formula->effectiveness = 0.0;
-    formula->created_at = time(NULL);
-    formula->tests_passed = 0;
-    formula->confirmations = 0;
-    formula->representation = FORMULA_REPRESENTATION_TEXT;
-    formula->coefficients = NULL;
-    formula->coeff_count = 0;
-    formula->expression = NULL;
-    formula->type = FORMULA_LINEAR;
-
-    return formula;
+    formula_clear(&hypothesis->formula);
+    memset(&hypothesis->experience, 0, sizeof(hypothesis->experience));
 }
 
-// Оценка эффективности формулы
-double evaluate_effectiveness(const Formula* formula) {
-    if (!formula || formula->representation != FORMULA_REPRESENTATION_TEXT) return 0.0;
-    
-    // Веса для различных критериев
-    const double complexity_weight = 0.2;
-    const double novelty_weight = 0.2;
-    const double stability_weight = 0.2;
-    const double pattern_weight = 0.2;
-    const double efficiency_weight = 0.2;
-    
-    // 1. Вычисляем результаты для всех тестовых точек
-    double results[num_test_points];
-    clock_t eval_start = clock();
-    
-    for(int i = 0; i < num_test_points; i++) {
-        results[i] = evaluate_formula(formula->content, test_points[i]);
-        // Проверка на корректность результатов
-        if (isinf(results[i]) || isnan(results[i])) {
-            return 0.0;
+FormulaMemorySnapshot formula_memory_snapshot_clone(const FormulaMemoryFact* facts,
+                                                   size_t count) {
+    FormulaMemorySnapshot snapshot = {0};
+    if (!facts || count == 0) {
+        return snapshot;
+    }
+
+    snapshot.facts = calloc(count, sizeof(FormulaMemoryFact));
+    if (!snapshot.facts) {
+        return snapshot;
+    }
+
+    memcpy(snapshot.facts, facts, sizeof(FormulaMemoryFact) * count);
+    snapshot.count = count;
+    return snapshot;
+}
+
+void formula_memory_snapshot_release(FormulaMemorySnapshot* snapshot) {
+    if (!snapshot) {
+        return;
+    }
+
+    free(snapshot->facts);
+    snapshot->facts = NULL;
+    snapshot->count = 0;
+}
+
+static void formula_dataset_clear(FormulaDataset* dataset) {
+    if (!dataset) {
+        return;
+    }
+    free(dataset->entries);
+    dataset->entries = NULL;
+    dataset->count = 0;
+}
+
+static void formula_training_metrics_reset(FormulaTrainingMetrics* metrics) {
+    if (!metrics) {
+        return;
+    }
+    memset(metrics, 0, sizeof(*metrics));
+}
+
+FormulaTrainingPipeline* formula_training_pipeline_create(size_t capacity) {
+    FormulaTrainingPipeline* pipeline = calloc(1, sizeof(FormulaTrainingPipeline));
+    if (!pipeline) {
+        return NULL;
+    }
+
+    pipeline->candidates.hypotheses = calloc(capacity, sizeof(FormulaHypothesis));
+    if (!pipeline->candidates.hypotheses) {
+        free(pipeline);
+        return NULL;
+    }
+
+    pipeline->candidates.capacity = capacity;
+    pipeline->candidates.count = 0;
+    formula_training_metrics_reset(&pipeline->metrics);
+    return pipeline;
+}
+
+void formula_training_pipeline_destroy(FormulaTrainingPipeline* pipeline) {
+    if (!pipeline) {
+        return;
+    }
+
+    for (size_t i = 0; i < pipeline->candidates.capacity; ++i) {
+        formula_hypothesis_clear(&pipeline->candidates.hypotheses[i]);
+    }
+    free(pipeline->candidates.hypotheses);
+    pipeline->candidates.hypotheses = NULL;
+    pipeline->candidates.capacity = 0;
+    pipeline->candidates.count = 0;
+
+    formula_dataset_clear(&pipeline->dataset);
+    formula_memory_snapshot_release(&pipeline->memory_snapshot);
+
+    free(pipeline->weights);
+    pipeline->weights = NULL;
+    pipeline->weights_size = 0;
+
+    free(pipeline);
+}
+
+static int read_file_bytes(const char* path, unsigned char** buffer, size_t* size) {
+    if (!path || !buffer || !size) {
+        return -1;
+    }
+
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        return -1;
+    }
+
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return -1;
+    }
+    long file_size = ftell(file);
+    if (file_size < 0) {
+        fclose(file);
+        return -1;
+    }
+    rewind(file);
+
+    unsigned char* data = malloc((size_t)file_size);
+    if (!data) {
+        fclose(file);
+        return -1;
+    }
+
+    size_t read = fread(data, 1, (size_t)file_size, file);
+    fclose(file);
+    if (read != (size_t)file_size) {
+        free(data);
+        return -1;
+    }
+
+    *buffer = data;
+    *size = (size_t)file_size;
+    return 0;
+}
+
+int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
+                                          const char* path) {
+    if (!pipeline || !path) {
+        return -1;
+    }
+
+    formula_dataset_clear(&pipeline->dataset);
+
+    struct json_object* root = json_object_from_file(path);
+    if (!root) {
+        return -1;
+    }
+
+    if (!json_object_is_type(root, json_type_array)) {
+        json_object_put(root);
+        return -1;
+    }
+
+    size_t count = (size_t)json_object_array_length(root);
+    if (count == 0) {
+        json_object_put(root);
+        return 0;
+    }
+
+    pipeline->dataset.entries = calloc(count, sizeof(FormulaDatasetEntry));
+    if (!pipeline->dataset.entries) {
+        json_object_put(root);
+        return -1;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        struct json_object* entry = json_object_array_get_idx(root, (int)i);
+        if (!entry) {
+            continue;
         }
-    }
-    
-    double eval_time = ((double)(clock() - eval_start)) / CLOCKS_PER_SEC;
-    
-    // 2. Оценка сложности
-    int num_operators = 0;
-    for(const char* c = formula->content; *c; c++) {
-        if(*c == '+' || *c == '-' || *c == '*' || *c == '/' || *c == '^')
-            num_operators++;
-    }
-    double complexity_score = (num_operators > 0) ? fmin(num_operators / 5.0, 1.0) : 0.0;
-    
-    // 3. Анализ результатов
-    double min_val = results[0], max_val = results[0];
-    double prev_diff = results[1] - results[0];
-    int is_monotonic = 1;
-    int inflection_points = 0;
-    
-    for(int i = 1; i < num_test_points; i++) {
-        double curr_val = results[i];
-        min_val = fmin(min_val, curr_val);
-        max_val = fmax(max_val, curr_val);
-        
-        if(i > 1) {
-            double curr_diff = curr_val - results[i-1];
-            // Проверка монотонности
-            if((curr_diff > 0 && prev_diff < 0) || (curr_diff < 0 && prev_diff > 0)) {
-                is_monotonic = 0;
-                inflection_points++;
+
+        FormulaDatasetEntry* target = &pipeline->dataset.entries[i];
+        struct json_object* value = NULL;
+
+        if (json_object_object_get_ex(entry, "task", &value)) {
+            const char* task = json_object_get_string(value);
+            if (task) {
+                strncpy(target->task, task, sizeof(target->task) - 1);
             }
-            prev_diff = curr_diff;
+        }
+
+        if (json_object_object_get_ex(entry, "response", &value)) {
+            const char* response = json_object_get_string(value);
+            if (response) {
+                strncpy(target->response, response, sizeof(target->response) - 1);
+            }
+        }
+
+        if (json_object_object_get_ex(entry, "effectiveness", &value)) {
+            target->effectiveness = json_object_get_double(value);
+        }
+
+        if (json_object_object_get_ex(entry, "rating", &value)) {
+            target->rating = json_object_get_int(value);
+        }
+
+        if (json_object_object_get_ex(entry, "timestamp", &value)) {
+            target->timestamp = (time_t)json_object_get_int64(value);
         }
     }
-    
-    // 4. Вычисление оценок
-    double value_range = max_val - min_val;
-    
-    // Стабильность: учитываем диапазон значений и количество точек перегиба
-    double stability_score = (value_range < 1000.0 ? 1.0 : 0.5) * exp(-inflection_points / 5.0);
-    
-    // Новизна: пока все формулы считаем новыми
-    double novelty_score = 1.0;
-    
-    // Паттерны: учитываем монотонность и периодичность
-    double pattern_score = is_monotonic ? 1.0 : 0.5;
-    
-    // Эффективность: оцениваем время вычисления
-    double efficiency_score = eval_time < 0.001 ? 1.0 : 0.5;
-    
-    // Итоговая оценка
-    return complexity_weight * complexity_score +
-           novelty_weight * novelty_score +
-           stability_weight * stability_score +
-           pattern_weight * pattern_score +
-           efficiency_weight * efficiency_score;
+
+    pipeline->dataset.count = count;
+    json_object_put(root);
+    return 0;
+}
+
+int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,
+                                          const char* path) {
+    if (!pipeline || !path) {
+        return -1;
+    }
+
+    free(pipeline->weights);
+    pipeline->weights = NULL;
+    pipeline->weights_size = 0;
+
+    return read_file_bytes(path, &pipeline->weights, &pipeline->weights_size);
+}
+
+static void formula_training_pipeline_reset_candidates(FormulaTrainingPipeline* pipeline) {
+    if (!pipeline) {
+        return;
+    }
+
+    for (size_t i = 0; i < pipeline->candidates.count; ++i) {
+        formula_hypothesis_clear(&pipeline->candidates.hypotheses[i]);
+    }
+    pipeline->candidates.count = 0;
+}
+
+static void formula_training_pipeline_add_candidate(FormulaTrainingPipeline* pipeline,
+                                                    const Formula* formula,
+                                                    const char* source) {
+    if (!pipeline || !formula || pipeline->candidates.count >= pipeline->candidates.capacity) {
+        return;
+    }
+
+    FormulaHypothesis* target = &pipeline->candidates.hypotheses[pipeline->candidates.count++];
+    formula_hypothesis_clear(target);
+    formula_copy(&target->formula, formula);
+    strncpy(target->experience.source, source ? source : "unknown",
+            sizeof(target->experience.source) - 1);
+    target->experience.source[sizeof(target->experience.source) - 1] = '\0';
+}
+
+static void formula_training_pipeline_add_from_memory(FormulaTrainingPipeline* pipeline,
+                                                      const FormulaMemorySnapshot* snapshot,
+                                                      size_t max_candidates) {
+    if (!pipeline || !snapshot) {
+        return;
+    }
+
+    size_t limit = snapshot->count < max_candidates ? snapshot->count : max_candidates;
+    for (size_t i = 0; i < limit && pipeline->candidates.count < pipeline->candidates.capacity; ++i) {
+        const FormulaMemoryFact* fact = &snapshot->facts[i];
+        Formula synthetic = {0};
+        uuid_t uuid;
+        uuid_generate(uuid);
+        uuid_unparse(uuid, synthetic.id);
+        synthetic.representation = FORMULA_REPRESENTATION_TEXT;
+        snprintf(synthetic.content, sizeof(synthetic.content),
+                 "f(x) = context('%s') * %.2f",
+                 fact->description, fmax(0.1, fact->importance));
+        synthetic.created_at = fact->timestamp;
+        synthetic.effectiveness = fmax(0.0, fact->reward);
+        formula_training_pipeline_add_candidate(pipeline, &synthetic, "memory");
+        formula_clear(&synthetic);
+    }
+}
+
+int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
+                                      const FormulaCollection* library,
+                                      const FormulaMemorySnapshot* snapshot,
+                                      size_t max_candidates) {
+    if (!pipeline) {
+        return -1;
+    }
+
+    formula_training_pipeline_reset_candidates(pipeline);
+    formula_memory_snapshot_release(&pipeline->memory_snapshot);
+    if (snapshot && snapshot->count > 0) {
+        pipeline->memory_snapshot = formula_memory_snapshot_clone(snapshot->facts, snapshot->count);
+    }
+
+    if (library && library->count > 0) {
+        size_t limit = library->count < max_candidates ? library->count : max_candidates;
+        for (size_t i = 0; i < limit; ++i) {
+            const Formula* formula = &library->formulas[i];
+            formula_training_pipeline_add_candidate(pipeline, formula, "library");
+        }
+    }
+
+    size_t remaining = 0;
+    if (max_candidates > pipeline->candidates.count) {
+        remaining = max_candidates - pipeline->candidates.count;
+    }
+    if (remaining > 0) {
+        formula_training_pipeline_add_from_memory(pipeline, &pipeline->memory_snapshot, remaining);
+    }
+
+    if (pipeline->candidates.count == 0 && pipeline->candidates.capacity > 0) {
+        Formula bootstrap = {0};
+        uuid_t uuid;
+        uuid_generate(uuid);
+        uuid_unparse(uuid, bootstrap.id);
+        bootstrap.representation = FORMULA_REPRESENTATION_TEXT;
+        strncpy(bootstrap.content, "f(x) = x", sizeof(bootstrap.content) - 1);
+        bootstrap.created_at = time(NULL);
+        formula_training_pipeline_add_candidate(pipeline, &bootstrap, "bootstrap");
+        formula_clear(&bootstrap);
+    }
+
+    return 0;
+}
+
+static double compute_text_overlap(const char* a, const char* b) {
+    if (!a || !b) {
+        return 0.0;
+    }
+
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    if (len_a == 0 || len_b == 0) {
+        return 0.0;
+    }
+
+    size_t min_len = len_a < len_b ? len_a : len_b;
+    size_t max_len = len_a > len_b ? len_a : len_b;
+    size_t match = 0;
+    for (size_t i = 0; i < min_len; ++i) {
+        if (tolower((unsigned char)a[i]) == tolower((unsigned char)b[i])) {
+            match++;
+        }
+    }
+    return (double)match / (double)max_len;
+}
+
+static double compute_memory_alignment(const FormulaHypothesis* hypothesis,
+                                       const FormulaMemorySnapshot* snapshot) {
+    if (!hypothesis || !snapshot || snapshot->count == 0) {
+        return 0.0;
+    }
+
+    double total = 0.0;
+    for (size_t i = 0; i < snapshot->count; ++i) {
+        const FormulaMemoryFact* fact = &snapshot->facts[i];
+        double overlap = compute_text_overlap(hypothesis->formula.content, fact->description);
+        total += overlap * fmax(0.1, fact->importance);
+    }
+
+    return total / (double)snapshot->count;
+}
+
+int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
+                                       FormulaCollection* library) {
+    if (!pipeline) {
+        return -1;
+    }
+
+    formula_training_metrics_reset(&pipeline->metrics);
+    if (pipeline->candidates.count == 0) {
+        return 0;
+    }
+
+    double total_reward = 0.0;
+    double total_imitation = 0.0;
+    double total_success = 0.0;
+
+    for (size_t i = 0; i < pipeline->candidates.count; ++i) {
+        FormulaHypothesis* hypothesis = &pipeline->candidates.hypotheses[i];
+        double best_alignment = 0.0;
+        double accumulated_effectiveness = 0.0;
+        const FormulaDatasetEntry* best_entry = NULL;
+
+        for (size_t j = 0; j < pipeline->dataset.count; ++j) {
+            const FormulaDatasetEntry* entry = &pipeline->dataset.entries[j];
+            double overlap = compute_text_overlap(hypothesis->formula.content, entry->task);
+            double alignment = overlap * fabs(entry->effectiveness);
+            accumulated_effectiveness += alignment;
+            if (alignment > best_alignment) {
+                best_alignment = alignment;
+                best_entry = entry;
+            }
+        }
+
+        double reward = 0.0;
+        if (pipeline->dataset.count > 0) {
+            reward = accumulated_effectiveness / (double)pipeline->dataset.count;
+        }
+
+        double imitation = compute_memory_alignment(hypothesis, &pipeline->memory_snapshot);
+        double success = reward > 0.2 ? 1.0 : reward;
+
+        hypothesis->experience.reward = reward;
+        hypothesis->experience.imitation_score = imitation;
+        hypothesis->experience.accuracy = fmax(0.0, best_alignment);
+        hypothesis->experience.loss = fmax(0.0, 1.0 - reward);
+        if (best_entry) {
+            strncpy(hypothesis->experience.task_id, best_entry->task,
+                    sizeof(hypothesis->experience.task_id) - 1);
+        }
+
+        hypothesis->formula.effectiveness = reward;
+
+        if (library && reward > 0.35) {
+            formula_collection_add(library, &hypothesis->formula);
+        }
+
+        total_reward += reward;
+        total_imitation += imitation;
+        total_success += success;
+    }
+
+    pipeline->metrics.total_evaluated = pipeline->candidates.count;
+    pipeline->metrics.average_reward = total_reward / (double)pipeline->candidates.count;
+    pipeline->metrics.average_imitation = total_imitation / (double)pipeline->candidates.count;
+    pipeline->metrics.success_rate = total_success / (double)pipeline->candidates.count;
+    return 0;
+}
+
+FormulaHypothesis* formula_training_pipeline_select_best(FormulaTrainingPipeline* pipeline) {
+    if (!pipeline || pipeline->candidates.count == 0) {
+        return NULL;
+    }
+
+    size_t best_index = 0;
+    double best_score = -1.0;
+    for (size_t i = 0; i < pipeline->candidates.count; ++i) {
+        FormulaHypothesis* hypothesis = &pipeline->candidates.hypotheses[i];
+        double score = hypothesis->experience.reward + 0.2 * hypothesis->experience.imitation_score;
+        if (score > best_score) {
+            best_index = i;
+            best_score = score;
+        }
+    }
+
+    return &pipeline->candidates.hypotheses[best_index];
+}
+
+int formula_training_pipeline_record_experience(FormulaTrainingPipeline* pipeline,
+                                               const FormulaExperience* experience) {
+    if (!pipeline || !experience) {
+        return -1;
+    }
+
+    pipeline->metrics.total_evaluated++;
+    pipeline->metrics.average_reward =
+        (pipeline->metrics.average_reward * (pipeline->metrics.total_evaluated - 1) +
+         experience->reward) /
+        (double)pipeline->metrics.total_evaluated;
+    pipeline->metrics.average_imitation =
+        (pipeline->metrics.average_imitation * (pipeline->metrics.total_evaluated - 1) +
+         experience->imitation_score) /
+        (double)pipeline->metrics.total_evaluated;
+    pipeline->metrics.success_rate =
+        (pipeline->metrics.success_rate * (pipeline->metrics.total_evaluated - 1) +
+         (experience->reward > 0.2 ? 1.0 : experience->reward)) /
+        (double)pipeline->metrics.total_evaluated;
+    return 0;
 }
 
 // Сериализация формулы в JSON

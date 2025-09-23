@@ -1,45 +1,74 @@
 #ifndef KOLIBRI_DECIMAL_CELL_H
 #define KOLIBRI_DECIMAL_CELL_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#define MAX_NEIGHBORS 9  // максимум 9 соседей (цифры 0-9, кроме собственной)
+#define DECIMAL_CELL_FANOUT 10
 #define SYNC_INTERVAL 1000  // интервал синхронизации в мс
 
-typedef struct {
-    uint8_t node_digit;          // собственная цифра узла (0-9)
-    uint8_t neighbor_digits[9];  // цифры соседей
-    uint8_t n_neighbors;         // текущее количество соседей
-    uint64_t last_sync[9];      // время последней синхронизации с каждым соседом
-    bool is_active[9];          // активность соседей
+typedef struct decimal_cell_t {
+    uint8_t digit;                              // цифра узла на текущем уровне
+    uint8_t depth;                              // глубина в дереве (0 — корень)
+    bool is_active;                             // активен ли узел
+    uint64_t created_at;                        // время создания
+    uint64_t last_state_change;                 // последнее изменение активности
+    uint64_t last_sync_time;                    // последняя синхронизация узла
+    uint64_t sync_interval;                     // требуемый интервал синхронизации
+    struct decimal_cell_t* parent;              // родительский узел
+    struct decimal_cell_t* children[DECIMAL_CELL_FANOUT];
+    bool child_active[DECIMAL_CELL_FANOUT];     // активность дочерних узлов
+    uint64_t child_last_sync[DECIMAL_CELL_FANOUT];
+    uint64_t child_last_state_change[DECIMAL_CELL_FANOUT];
 } decimal_cell_t;
 
-// Инициализация узла с его цифрой
+// Инициализация корня десятичного дерева.
 void init_decimal_cell(decimal_cell_t* cell, uint8_t digit);
 
-// Очистка ресурсов узла
+// Полная очистка дерева (рекурсивное освобождение всех дочерних узлов).
 void cleanup_decimal_cell(decimal_cell_t* cell);
 
-// Добавление соседа
-int add_neighbor(decimal_cell_t* cell, uint8_t digit);
+// Добавление или активация ветки по массиву индексов.
+decimal_cell_t* decimal_cell_add_path(decimal_cell_t* root,
+                                      const uint8_t* path,
+                                      size_t path_len,
+                                      bool activate);
 
-// Удаление соседа
-void remove_neighbor(decimal_cell_t* cell, uint8_t digit);
+// Аналог decimal_cell_add_path, но путь задаётся строкой цифр.
+decimal_cell_t* decimal_cell_add_path_str(decimal_cell_t* root,
+                                          const char* path,
+                                          bool activate);
 
-// Проверка необходимости синхронизации с соседом
-bool needs_sync(decimal_cell_t* cell, uint8_t neighbor_idx);
+// Поиск узла по массиву индексов без модификации дерева.
+decimal_cell_t* decimal_cell_find_path(decimal_cell_t* root,
+                                       const uint8_t* path,
+                                       size_t path_len);
 
-// Маркировка успешной синхронизации
-void mark_sync(decimal_cell_t* cell, uint8_t neighbor_idx);
+// Поиск узла по строке цифр.
+decimal_cell_t* decimal_cell_find_path_str(decimal_cell_t* root, const char* path);
 
-// Проверка активности соседа
-bool is_neighbor_active(decimal_cell_t* cell, uint8_t neighbor_idx);
+// Пометка успешной синхронизации по заданному пути.
+void decimal_cell_mark_sync(decimal_cell_t* root,
+                            const uint8_t* path,
+                            size_t path_len,
+                            uint64_t timestamp);
 
-// Получение индекса соседа по его цифре
-int get_neighbor_index(decimal_cell_t* cell, uint8_t digit);
+// Деактивация и освобождение поддерева по пути.
+void decimal_cell_deactivate_path(decimal_cell_t* root,
+                                  const uint8_t* path,
+                                  size_t path_len,
+                                  uint64_t timestamp);
 
-// Обновление состояния ячейки
-void update_cell_state(decimal_cell_t* cell);
+// Обновление состояния узлов (рекурсивно) с учётом таймаутов синхронизации.
+void decimal_cell_update_state(decimal_cell_t* cell, uint64_t now);
+
+// Получение списка активных дочерних цифр первого уровня.
+size_t decimal_cell_collect_active_children(const decimal_cell_t* cell,
+                                            uint8_t* out_digits,
+                                            size_t max_digits);
+
+// Простая сериализация дерева в текстовом виде.
+size_t decimal_cell_serialize(const decimal_cell_t* cell, char* buffer, size_t buffer_size);
 
 #endif

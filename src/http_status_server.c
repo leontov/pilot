@@ -140,62 +140,7 @@ int http_status_server_init(int port, rules_t* rules, decimal_cell_t* cell,
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sock);
-        return -1;
-    }
 
-    if (listen(sock, 5) < 0) {
-        close(sock);
-        return -1;
-    }
-
-    status_sock = sock;
-    status_rules = rules;
-    status_cell = cell;
-    status_keep_running = keep_running;
-    return 0;
-}
-
-void http_status_server_run(void) {
-    if (status_sock < 0 || !status_keep_running) {
-        return;
-    }
-
-    while (*status_keep_running) {
-        if (status_sock < 0) {
-            break;
-        }
-
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(status_sock, &readfds);
-
-        struct timeval timeout = {
-            .tv_sec = 1,
-            .tv_usec = 0,
-        };
-
-        int ready = select(status_sock + 1, &readfds, NULL, NULL, &timeout);
-        if (ready < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            break;
-        }
-
-        if (ready == 0) {
-            continue;
-        }
-
-        if (!FD_ISSET(status_sock, &readfds)) {
-            continue;
-        }
-
-        int client = accept(status_sock, NULL, NULL);
-        if (client < 0) {
-            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-                continue;
             }
             break;
         }

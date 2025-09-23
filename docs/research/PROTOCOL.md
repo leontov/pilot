@@ -4,14 +4,15 @@
 
 ### 1.1 Генерация формул
 ```
-while (true) {
-    formula = generate_random_formula(complexity_level);
-    if (validate_formula(formula)) {
-        test_results = test_formula(formula);
-        if (evaluate_effectiveness(test_results) > threshold) {
-            store_formula(formula);
-            share_with_neighbors(formula);
-        }
+while (training_active) {
+    snapshot = collect_memory_snapshot();
+    pipeline = formula_training_pipeline_prepare(pipeline, library, snapshot, k);
+    formula_training_pipeline_evaluate(pipeline, library);
+    best = formula_training_pipeline_select_best(pipeline);
+    if (best.reward > reward_threshold) {
+        store_formula(best.formula);
+        reinforce_memory(best.experience);
+        broadcast(best.formula);
     }
 }
 ```
