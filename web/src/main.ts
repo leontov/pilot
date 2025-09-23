@@ -174,8 +174,7 @@ function renderDialog(container: HTMLElement) {
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+
 
     } catch (err) {
 
