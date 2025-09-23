@@ -18,6 +18,9 @@ FormulaCollection* formula_collection_create(size_t initial_capacity);
 void formula_collection_destroy(FormulaCollection* collection);
 int formula_collection_add(FormulaCollection* collection, const Formula* formula);
 Formula* formula_collection_find(FormulaCollection* collection, const char* id);
+size_t formula_collection_get_top(const FormulaCollection* collection,
+                                  const Formula** out_formulas,
+                                  size_t max_results);
 
 // Text-based formula utilities.
 int get_formula_type(const char* content);
