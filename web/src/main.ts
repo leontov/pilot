@@ -14,6 +14,13 @@ function createElement(tag: string, className?: string, text?: string): HTMLElem
   return el;
 }
 
+function createSpinner(): HTMLElement {
+  const spinner = document.createElement("span");
+  spinner.className = "spinner hidden";
+  spinner.setAttribute("aria-hidden", "true");
+  return spinner;
+}
+
 function digitsFromExpression(expr: string): number[] {
   const result: number[] = [];
   for (const ch of expr.replace(/\s+/g, "")) {
@@ -40,10 +47,12 @@ function renderDialog(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Выполнить";
+  const spinner = createSpinner();
   const output = createElement("pre", "output");
 
   form.appendChild(input);
   form.appendChild(submit);
+  form.appendChild(spinner);
   container.appendChild(form);
   container.appendChild(output);
 
@@ -52,6 +61,8 @@ function renderDialog(container: HTMLElement) {
     const expr = input.value.trim();
     if (!expr) return;
     const payload = { digits: digitsFromExpression(expr) };
+    submit.disabled = true;
+    spinner.classList.remove("hidden");
     output.textContent = "Загрузка...";
     try {
       const res = await fetch("/dialog", {
@@ -63,6 +74,9 @@ function renderDialog(container: HTMLElement) {
       output.textContent = JSON.stringify(data, null, 2);
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
+    } finally {
+      submit.disabled = false;
+      spinner.classList.add("hidden");
     }
   });
 }
@@ -91,10 +105,12 @@ function renderMemory(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Найти";
+  const spinner = createSpinner();
   const pre = createElement("pre", "output");
 
   form.appendChild(input);
   form.appendChild(submit);
+  form.appendChild(spinner);
   container.appendChild(form);
   container.appendChild(pre);
 
@@ -103,12 +119,17 @@ function renderMemory(container: HTMLElement) {
     const key = input.value.trim();
     if (!key) return;
     pre.textContent = "Загрузка...";
+    submit.disabled = true;
+    spinner.classList.remove("hidden");
     try {
       const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
       const json = await res.json();
       pre.textContent = JSON.stringify(json, null, 2);
     } catch (err) {
       pre.textContent = `Ошибка: ${String(err)}`;
+    } finally {
+      submit.disabled = false;
+      spinner.classList.add("hidden");
     }
   });
 }
@@ -179,11 +200,15 @@ function injectStyles() {
     .tab { background: #2c2c2c; border: none; color: #f5f5f5; padding: 8px 14px; cursor: pointer; border-radius: 4px; }
     .tab.active { background: #3f64ff; }
     .content { flex: 1; padding: 16px; overflow-y: auto; }
-    .panel { display: flex; gap: 12px; margin-bottom: 16px; }
+    .panel { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
     input { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #222; color: #f5f5f5; }
-    button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
+    button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; transition: background 0.2s ease, opacity 0.2s ease; }
+    button:disabled { cursor: not-allowed; opacity: 0.65; background: #2b47b5; }
     pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
     .placeholder { opacity: 0.7; }
+    .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(245, 245, 245, 0.25); border-top-color: #f5f5f5; animation: spin 0.8s linear infinite; }
+    .spinner.hidden { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
   `;
   document.head.appendChild(style);
 }
