@@ -70,6 +70,18 @@ static int run_program(struct byte_buffer *bb, uint64_t *result, vm_status_t *st
     return rc;
 }
 
+static void test_random_deterministic(void) {
+    struct byte_buffer bb = {0};
+    vm_set_seed(42);
+    assert(bb_push(&bb, 0x0F) == 0);
+    uint64_t result = 0;
+    vm_status_t status;
+    assert(run_program(&bb, &result, &status) == 0);
+    assert(status == VM_OK);
+    assert(result == 1083814273ull);
+    free(bb.data);
+}
+
 static void test_add(void) {
     struct byte_buffer bb = {0};
     assert(emit_push_number(&bb, 2) == 0);
@@ -125,6 +137,7 @@ static void test_halt(void) {
 }
 
 int main(void) {
+    test_random_deterministic();
     test_add();
     test_mul();
     test_div_zero();
