@@ -99,6 +99,13 @@ target_include_directories(test_formula PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${JSONC_INCLUDE_DIRS})
 
+add_executable(test_blockchain tests/test_blockchain.c src/kovian_blockchain.c src/formula.c)
+target_link_libraries(test_blockchain PRIVATE ${JSONC_LIBRARIES} OpenSSL::Crypto m)
+target_include_directories(test_blockchain PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/include
+        ${JSONC_INCLUDE_DIRS})
+
 # Добавляем пути к заголовочным файлам для веб-интерфейса
 target_include_directories(web_interface PRIVATE
     ${CMAKE_SOURCE_DIR}/src
