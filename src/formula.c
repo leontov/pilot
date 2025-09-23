@@ -212,6 +212,7 @@ void formula_collection_remove(FormulaCollection* collection, const char* id) {
                         (collection->count - i - 1) * sizeof(Formula));
             }
             if (collection->count > 0) {
+                memset(&collection->formulas[collection->count - 1], 0, sizeof(Formula));
                 collection->count--;
                 memset(&collection->formulas[collection->count], 0, sizeof(Formula));
             }
