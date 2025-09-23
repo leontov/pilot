@@ -11,11 +11,13 @@
 
 #include "kolibri_rules.h"
 #include "kolibri_decimal_cell.h"
+#include "kolibri_ai.h"
 
 static int status_sock = -1;
 static rules_t* status_rules = NULL;
 static decimal_cell_t* status_cell = NULL;
 static volatile sig_atomic_t* status_keep_running = NULL;
+static KolibriAI* status_ai = NULL;
 
 static void send_buffer(int client, const char* data, size_t len) {
     const char* ptr = data;
@@ -153,6 +155,53 @@ static void handle_client(int client) {
 
         size_t len = off >= sizeof(resp) ? sizeof(resp) - 1 : off;
         send_buffer(client, resp, len);
+    } else if (strstr(req, "GET /api/v1/ai/snapshot")) {
+        if (!status_ai) {
+            const char resp[] =
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nAI unavailable\n";
+            send_buffer(client, resp, strlen(resp));
+        } else {
+            char *json = kolibri_ai_export_snapshot(status_ai);
+            if (!json) {
+                const char resp[] =
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nFailed to export snapshot\n";
+                send_buffer(client, resp, strlen(resp));
+            } else {
+                size_t len = strlen(json);
+                char header[256];
+                int header_len = snprintf(header, sizeof(header),
+                                          "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n",
+                                          len);
+                if (header_len > 0) {
+                    send_buffer(client, header, (size_t)header_len);
+                }
+                send_buffer(client, json, len);
+                free(json);
+            }
+        }
+    } else if (strstr(req, "POST /api/v1/ai/snapshot")) {
+        if (!status_ai) {
+            const char resp[] =
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nAI unavailable\n";
+            send_buffer(client, resp, strlen(resp));
+        } else {
+            char *body = strstr(req, "\r\n\r\n");
+            if (body) {
+                body += 4;
+            } else {
+                body = req + r;
+            }
+            int rc = kolibri_ai_import_snapshot(status_ai, body);
+            if (rc != 0) {
+                const char resp[] =
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid snapshot\n";
+                send_buffer(client, resp, strlen(resp));
+            } else {
+                const char resp[] =
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}\n";
+                send_buffer(client, resp, strlen(resp));
+            }
+        }
     } else {
         const char resp[] =
             "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot found\n";
@@ -162,8 +211,11 @@ static void handle_client(int client) {
     close(client);
 }
 
-int http_status_server_init(int port, rules_t* rules, decimal_cell_t* cell,
-                            volatile sig_atomic_t* keep_running) {
+int http_status_server_init(int port,
+                            rules_t* rules,
+                            decimal_cell_t* cell,
+                            volatile sig_atomic_t* keep_running,
+                            KolibriAI* ai) {
     if (!rules || !cell || !keep_running) {
         errno = EINVAL;
         return -1;
@@ -208,6 +260,7 @@ int http_status_server_init(int port, rules_t* rules, decimal_cell_t* cell,
     status_rules = rules;
     status_cell = cell;
     status_keep_running = keep_running;
+    status_ai = ai;
 
     return 0;
 }
