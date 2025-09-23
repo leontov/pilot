@@ -11,6 +11,7 @@ typedef struct fkv_node {
     size_t value_len;
     uint8_t *key;
     size_t key_len;
+    fkv_entry_type_t type;
 } fkv_node_t;
 
 static fkv_node_t *root = NULL;
@@ -53,7 +54,7 @@ void fkv_shutdown(void) {
     pthread_mutex_unlock(&fkv_lock);
 }
 
-int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn) {
+int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn, fkv_entry_type_t type) {
     if (!key || !val) {
         return -1;
     }
@@ -95,6 +96,7 @@ int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn) {
     node->value_len = vn;
     memcpy(node->key, key, kn);
     node->key_len = kn;
+    node->type = type;
     pthread_mutex_unlock(&fkv_lock);
     return 0;
 }
@@ -108,6 +110,7 @@ static void collect_entries(const fkv_node_t *node, fkv_entry_t *entries, size_t
         entries[*count].key_len = node->key_len;
         entries[*count].value = node->value;
         entries[*count].value_len = node->value_len;
+        entries[*count].type = node->type;
         (*count)++;
     }
     for (int i = 0; i < 10 && *count < limit; ++i) {

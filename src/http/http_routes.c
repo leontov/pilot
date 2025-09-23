@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -413,6 +414,50 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
     free(bb.data);
 }
 
+static int append_json(char **buf, size_t *cap, size_t *len, const char *fmt, ...) {
+    while (1) {
+        va_list ap;
+        va_start(ap, fmt);
+        int written = vsnprintf(*buf + *len, *cap - *len, fmt, ap);
+        va_end(ap);
+        if (written < 0) {
+            return -1;
+        }
+        size_t required = *len + (size_t)written;
+        if ((size_t)written < *cap - *len) {
+            *len = required;
+            return 0;
+        }
+        size_t new_cap = (*cap == 0) ? (required + 1) : *cap;
+        while (new_cap <= required) {
+            new_cap *= 2;
+        }
+        char *tmp = realloc(*buf, new_cap);
+        if (!tmp) {
+            return -1;
+        }
+        *buf = tmp;
+        *cap = new_cap;
+    }
+}
+
+static char *digits_to_string_dup(const uint8_t *digits, size_t len) {
+    char *buf = malloc(len + 1);
+    if (!buf) {
+        return NULL;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        uint8_t d = digits[i];
+        if (d <= 9) {
+            buf[i] = (char)('0' + d);
+        } else {
+            buf[i] = '?';
+        }
+    }
+    buf[len] = '\0';
+    return buf;
+}
+
 static int respond_fkv_prefix(const char *path, http_response_t *resp) {
     const char *query = strchr(path, '?');
     if (!query) {
@@ -473,48 +518,87 @@ static int respond_fkv_prefix(const char *path, http_response_t *resp) {
         return -1;
     }
     size_t len = 0;
-    len += snprintf(json + len, cap - len, "{\"entries\":[");
+    if (append_json(&json, &cap, &len, "{\"values\":[") != 0) {
+        free(json);
+        fkv_iter_free(&it);
+        set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+        return -1;
+    }
+    size_t values_written = 0;
+    size_t programs_written = 0;
     for (size_t i = 0; i < it.count; ++i) {
         const fkv_entry_t *e = &it.entries[i];
-        char key_buf[256];
-        char val_buf[256];
-        size_t key_written = 0;
-        for (size_t j = 0; j < e->key_len && key_written + 1 < sizeof(key_buf); ++j) {
-            key_buf[key_written++] = (char)('0' + e->key[j]);
+        if (e->type != FKV_ENTRY_TYPE_VALUE) {
+            continue;
         }
-        key_buf[key_written] = '\0';
-        size_t val_written = 0;
-        for (size_t j = 0; j < e->value_len && val_written + 1 < sizeof(val_buf); ++j) {
-            val_buf[val_written++] = (char)('0' + e->value[j]);
+        char *key_str = digits_to_string_dup(e->key, e->key_len);
+        char *val_str = digits_to_string_dup(e->value, e->value_len);
+        if (!key_str || !val_str) {
+            free(key_str);
+            free(val_str);
+            free(json);
+            fkv_iter_free(&it);
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+            return -1;
         }
-        val_buf[val_written] = '\0';
-        int needed = snprintf(NULL, 0, "%s{\"key\":\"%s\",\"value\":\"%s\"}",
-                              (i == 0) ? "" : ",",
-                              key_buf,
-                              val_buf);
-        if (len + (size_t)needed + 3 > cap) {
-            size_t new_cap = cap * 2;
-            while (new_cap < len + (size_t)needed + 3) {
-                new_cap *= 2;
-            }
-            char *tmp = realloc(json, new_cap);
-            if (!tmp) {
-                free(json);
-                fkv_iter_free(&it);
-                set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
-                return -1;
-            }
-            json = tmp;
-            cap = new_cap;
+        int rc = append_json(&json, &cap, &len, "%s{\\\"key\\\":\\\"%s\\\",\\\"value\\\":\\\"%s\\\"}",
+                             (values_written == 0) ? "" : ",",
+                             key_str,
+                             val_str);
+        free(key_str);
+        free(val_str);
+        if (rc != 0) {
+            free(json);
+            fkv_iter_free(&it);
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+            return -1;
         }
-        len += snprintf(json + len, cap - len, "%s{\"key\":\"%s\",\"value\":\"%s\"}",
-                        (i == 0) ? "" : ",",
-                        key_buf,
-                        val_buf);
+        values_written++;
     }
-    len += snprintf(json + len, cap - len, "]}");
+    if (append_json(&json, &cap, &len, "],\"programs\":[") != 0) {
+        free(json);
+        fkv_iter_free(&it);
+        set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+        return -1;
+    }
+    for (size_t i = 0; i < it.count; ++i) {
+        const fkv_entry_t *e = &it.entries[i];
+        if (e->type != FKV_ENTRY_TYPE_PROGRAM) {
+            continue;
+        }
+        char *key_str = digits_to_string_dup(e->key, e->key_len);
+        char *prog_str = digits_to_string_dup(e->value, e->value_len);
+        if (!key_str || !prog_str) {
+            free(key_str);
+            free(prog_str);
+            free(json);
+            fkv_iter_free(&it);
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+            return -1;
+        }
+        int rc = append_json(&json, &cap, &len, "%s{\\\"key\\\":\\\"%s\\\",\\\"program\\\":\\\"%s\\\"}",
+                             (programs_written == 0) ? "" : ",",
+                             key_str,
+                             prog_str);
+        free(key_str);
+        free(prog_str);
+        if (rc != 0) {
+            free(json);
+            fkv_iter_free(&it);
+            set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+            return -1;
+        }
+        programs_written++;
+    }
+    if (append_json(&json, &cap, &len, "]}") != 0) {
+        free(json);
+        fkv_iter_free(&it);
+        set_response(resp, 500, "application/json", "{\"error\":\"oom\"}");
+        return -1;
+    }
+
     resp->data = json;
-    resp->len = strlen(json);
+    resp->len = len;
     resp->status = 200;
     snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
     fkv_iter_free(&it);
