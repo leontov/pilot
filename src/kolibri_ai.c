@@ -110,6 +110,7 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
         } else {
             LOG_ERROR("Formula validation failed");
         }
+        formula_clear(formula);
         free(formula);
     }
     
@@ -128,6 +129,7 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
                 // TODO: Отправить json соседям
                 free(json);
             }
+            formula_clear(best);
             free(best);
         }
     }
@@ -139,7 +141,7 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
         Formula* best2 = &ai->formulas->formulas[1];
         
         // Создаем новую композитную формулу
-        Formula* combined = malloc(sizeof(Formula));
+        Formula* combined = calloc(1, sizeof(Formula));
         if (combined) {
             uuid_t uuid;
             uuid_generate(uuid);
@@ -162,7 +164,12 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
             combined->created_at = time(NULL);
             combined->tests_passed = 0;
             combined->confirmations = 0;
-            
+            combined->representation = FORMULA_REPRESENTATION_TEXT;
+            combined->coefficients = NULL;
+            combined->coeff_count = 0;
+            combined->expression = NULL;
+            combined->type = FORMULA_LINEAR;
+
             // Оцениваем и возможно добавляем
             if (validate_formula(combined)) {
                 combined->effectiveness = evaluate_effectiveness(combined);
@@ -172,6 +179,7 @@ void kolibri_ai_process_iteration(KolibriAI* ai) {
                            combined->content, combined->effectiveness);
                 }
             }
+            formula_clear(combined);
             free(combined);
         }
     }
@@ -223,9 +231,10 @@ Formula* kolibri_ai_get_best_formula(KolibriAI* ai) {
     
     Formula* result = NULL;
     if (best) {
-        result = malloc(sizeof(Formula));
-        if (result) {
-            memcpy(result, best, sizeof(Formula));
+        result = calloc(1, sizeof(Formula));
+        if (result && formula_copy(result, best) != 0) {
+            free(result);
+            result = NULL;
         }
     }
     
@@ -270,7 +279,7 @@ int kolibri_ai_process_remote_formula(KolibriAI* ai, const char* json) {
     int result = -1;
     
     // Проверяем формулу
-    if (validate_formula(formula)) {
+    if (formula->representation == FORMULA_REPRESENTATION_TEXT && validate_formula(formula)) {
         // Переоцениваем эффективность локально
         formula->effectiveness = evaluate_effectiveness(formula);
         
@@ -300,6 +309,7 @@ int kolibri_ai_process_remote_formula(KolibriAI* ai, const char* json) {
         }
     }
     
+    formula_clear(formula);
     free(formula);
     return result;
 }
@@ -321,6 +331,7 @@ void kolibri_ai_sync_with_neighbor(KolibriAI* ai, const char* neighbor_url) {
     // Сериализуем формулу
     char* json = serialize_formula(best);
     if (!json) {
+        formula_clear(best);
         free(best);
         curl_easy_cleanup(curl);
         return;
@@ -333,6 +344,7 @@ void kolibri_ai_sync_with_neighbor(KolibriAI* ai, const char* neighbor_url) {
     curl_easy_perform(curl);
     
     free(json);
+    formula_clear(best);
     free(best);
     curl_easy_cleanup(curl);
 }

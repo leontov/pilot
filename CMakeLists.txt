@@ -51,10 +51,11 @@ set(SOURCES
 add_executable(kolibri_node ${SOURCES})
 
 # Подключение заголовочных файлов
-target_include_directories(kolibri_node PRIVATE 
-	${CMAKE_SOURCE_DIR}/src
-	${CURL_INCLUDE_DIRS}
-	${JSONC_INCLUDE_DIRS}
+target_include_directories(kolibri_node PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/include
+        ${CURL_INCLUDE_DIRS}
+        ${JSONC_INCLUDE_DIRS}
 )
 
 # Подключение библиотек
@@ -91,10 +92,17 @@ add_executable(test_arithmetic tests/test_arithmetic.c src/arithmetic.c)
 target_link_libraries(test_arithmetic PRIVATE m)
 add_executable(test_rule_engine tests/test_rule_engine.c src/rule_engine.c src/embed.c)
 target_link_libraries(test_rule_engine PRIVATE ${JSONC_LIBRARIES} m)
+add_executable(test_formula tests/test_formula.c src/formula.c src/formula_advanced.c src/decimal_cell.c)
+target_link_libraries(test_formula PRIVATE ${JSONC_LIBRARIES} uuid m)
+target_include_directories(test_formula PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/include
+        ${JSONC_INCLUDE_DIRS})
 
 # Добавляем пути к заголовочным файлам для веб-интерфейса
-target_include_directories(web_interface PRIVATE 
+target_include_directories(web_interface PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
     ${JSONC_INCLUDE_DIRS}
 )
 

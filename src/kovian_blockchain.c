@@ -28,7 +28,12 @@ void kovian_chain_destroy(KovianChain* chain) {
     Block* current = chain->genesis;
     while (current) {
         Block* next = current->next;
-        free(current->formulas);
+        if (current->formulas) {
+            for (size_t i = 0; i < current->formula_count; i++) {
+                formula_clear(&current->formulas[i]);
+            }
+            free(current->formulas);
+        }
         free(current->validations);
         free(current);
         current = next;
@@ -51,7 +56,30 @@ static void calculate_block_hash(Block* block) {
     
     // Хешируем формулы
     for (size_t i = 0; i < block->formula_count; i++) {
-        EVP_DigestUpdate(mdctx, &block->formulas[i], sizeof(Formula));
+        Formula* formula = &block->formulas[i];
+
+        EVP_DigestUpdate(mdctx, formula->id,
+                         strnlen(formula->id, sizeof(formula->id)));
+        EVP_DigestUpdate(mdctx, &formula->effectiveness, sizeof(formula->effectiveness));
+        EVP_DigestUpdate(mdctx, &formula->created_at, sizeof(formula->created_at));
+        EVP_DigestUpdate(mdctx, &formula->tests_passed, sizeof(formula->tests_passed));
+        EVP_DigestUpdate(mdctx, &formula->confirmations, sizeof(formula->confirmations));
+        EVP_DigestUpdate(mdctx, &formula->representation, sizeof(formula->representation));
+
+        if (formula->representation == FORMULA_REPRESENTATION_ANALYTIC) {
+            EVP_DigestUpdate(mdctx, &formula->type, sizeof(formula->type));
+            if (formula->coeff_count > 0 && formula->coefficients) {
+                EVP_DigestUpdate(mdctx, formula->coefficients,
+                                 sizeof(double) * formula->coeff_count);
+            }
+            if (formula->expression) {
+                EVP_DigestUpdate(mdctx, formula->expression,
+                                 strlen(formula->expression));
+            }
+        } else {
+            EVP_DigestUpdate(mdctx, formula->content,
+                             strnlen(formula->content, sizeof(formula->content)));
+        }
     }
     
     // Хешируем валидации
@@ -87,13 +115,23 @@ Block* kovian_chain_add_block(KovianChain* chain, Formula* formulas, size_t coun
     }
     
     // Копируем формулы
-    block->formulas = malloc(sizeof(Formula) * count);
+    block->formulas = calloc(count, sizeof(Formula));
     if (!block->formulas) {
         free(block);
         return NULL;
     }
-    memcpy(block->formulas, formulas, sizeof(Formula) * count);
     block->formula_count = count;
+
+    for (size_t i = 0; i < count; i++) {
+        if (formula_copy(&block->formulas[i], &formulas[i]) != 0) {
+            for (size_t j = 0; j < i; j++) {
+                formula_clear(&block->formulas[j]);
+            }
+            free(block->formulas);
+            free(block);
+            return NULL;
+        }
+    }
     
     // Инициализируем валидации
     block->validations = NULL;
