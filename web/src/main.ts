@@ -91,24 +91,68 @@ function renderMemory(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Найти";
-  const pre = createElement("pre", "output");
+  const message = createElement(
+    "p",
+    "memory-message",
+    "Введите префикс и нажмите «Найти»."
+  );
+  const table = document.createElement("table");
+  table.className = "memory-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const prefixHeader = document.createElement("th");
+  prefixHeader.textContent = "Префикс";
+  const valueHeader = document.createElement("th");
+  valueHeader.textContent = "Значение";
+  headRow.appendChild(prefixHeader);
+  headRow.appendChild(valueHeader);
+  thead.appendChild(headRow);
+  const tbody = document.createElement("tbody");
+  table.appendChild(thead);
+  table.appendChild(tbody);
+
+  table.style.display = "none";
 
   form.appendChild(input);
   form.appendChild(submit);
   container.appendChild(form);
-  container.appendChild(pre);
+  container.appendChild(message);
+  container.appendChild(table);
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const key = input.value.trim();
     if (!key) return;
-    pre.textContent = "Загрузка...";
+    message.textContent = "Загрузка...";
+    table.style.display = "none";
     try {
       const res = await fetch(`/fkv/prefix?key=${encodeURIComponent(key)}&k=5`);
       const json = await res.json();
-      pre.textContent = JSON.stringify(json, null, 2);
+      const entries = Array.isArray(json?.entries) ? json.entries : [];
+
+      tbody.innerHTML = "";
+
+      if (entries.length === 0) {
+        message.textContent = "Ничего не найдено для указанного префикса.";
+        return;
+      }
+
+      for (const item of entries) {
+        const row = document.createElement("tr");
+        const prefixCell = document.createElement("td");
+        prefixCell.textContent = String(item.prefix ?? "");
+        const valueCell = document.createElement("td");
+        valueCell.className = "value";
+        valueCell.textContent = String(item.value ?? "");
+        row.appendChild(prefixCell);
+        row.appendChild(valueCell);
+        tbody.appendChild(row);
+      }
+
+      message.textContent = "";
+      table.style.display = "table";
     } catch (err) {
-      pre.textContent = `Ошибка: ${String(err)}`;
+      message.textContent = `Ошибка: ${String(err)}`;
     }
   });
 }
@@ -184,6 +228,11 @@ function injectStyles() {
     button { padding: 8px 14px; border-radius: 4px; border: none; background: #3f64ff; color: white; cursor: pointer; }
     pre.output { background: #000; padding: 12px; border-radius: 4px; min-height: 160px; overflow-x: auto; }
     .placeholder { opacity: 0.7; }
+    .memory-message { margin: 0 0 12px; opacity: 0.85; }
+    .memory-table { width: 100%; border-collapse: collapse; background: #181818; }
+    .memory-table th, .memory-table td { border: 1px solid #333; padding: 8px 12px; }
+    .memory-table th { text-align: left; background: #1f1f1f; }
+    .memory-table td.value { text-align: right; font-variant-numeric: tabular-nums; }
   `;
   document.head.appendChild(style);
 }
