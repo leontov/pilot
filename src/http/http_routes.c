@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -326,20 +327,68 @@ static void append_trace_json(char **out, size_t *out_len, size_t *out_cap, cons
     }
 }
 
-static void respond_status(const kolibri_config_t *cfg, http_response_t *resp) {
+static size_t read_memory_usage_bytes(void) {
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+#if defined(__APPLE__) && defined(__MACH__)
+        return (size_t)usage.ru_maxrss;
+#else
+        return (size_t)usage.ru_maxrss * 1024u;
+#endif
+    }
+    FILE *fp = fopen("/proc/self/statm", "r");
+    if (!fp) {
+        return 0;
+    }
+    long pages = 0;
+    if (fscanf(fp, "%ld", &pages) != 1) {
+        fclose(fp);
+        return 0;
+    }
+    fclose(fp);
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) {
+        return 0;
+    }
+    return (size_t)pages * (size_t)page_size;
+}
+
+static void respond_health(const kolibri_config_t *cfg, http_response_t *resp) {
+    (void)cfg;
     uint64_t now = now_ms();
     uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
+    size_t memory_bytes = read_memory_usage_bytes();
     char buf[256];
-    snprintf(buf, sizeof(buf),
-             "{\"uptime_ms\":%llu,\"vm_max_steps\":%u,\"vm_max_stack\":%u,\"seed\":%u}",
+    snprintf(buf,
+             sizeof(buf),
+             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":0}",
              (unsigned long long)uptime,
-             cfg->vm.max_steps,
-             cfg->vm.max_stack,
-             cfg->seed);
+             memory_bytes);
     set_response(resp, 200, "application/json", buf);
 }
 
-static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, size_t prog_len, http_response_t *resp) {
+static void respond_metrics(const kolibri_config_t *cfg, http_response_t *resp) {
+    uint64_t now = now_ms();
+    uint64_t uptime = server_start_ms ? (now - server_start_ms) : 0;
+    size_t memory_bytes = read_memory_usage_bytes();
+    char buf[256];
+    snprintf(buf,
+             sizeof(buf),
+             "{\"uptime_ms\":%llu,\"memory_bytes\":%zu,\"peers\":0,\"blocks\":0,"
+             "\"vm\":{\"max_steps\":%u,\"max_stack\":%u,\"trace_depth\":%u}}",
+             (unsigned long long)uptime,
+             memory_bytes,
+             cfg->vm.max_steps,
+             cfg->vm.max_stack,
+             cfg->vm.trace_depth);
+    set_response(resp, 200, "application/json", buf);
+}
+
+static void respond_vm_execution(const kolibri_config_t *cfg,
+                                 const uint8_t *prog_bytes,
+                                 size_t prog_len,
+                                 const char *result_key,
+                                 http_response_t *resp) {
     prog_t prog = {prog_bytes, prog_len};
     vm_limits_t limits = {cfg->vm.max_steps, cfg->vm.max_stack};
     vm_trace_entry_t *entries = calloc(cfg->vm.trace_depth, sizeof(vm_trace_entry_t));
@@ -356,8 +405,10 @@ static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, 
         free(entries);
         return;
     }
-    int written = snprintf(json, cap,
-                           "{\"status\":%d,\"steps\":%u,\"result\":%llu,\"trace\":[",
+    int written = snprintf(json,
+                           cap,
+                           "{\"%s\":{\"status\":%d,\"steps\":%u,\"value\":%llu},\"trace\":[",
+                           result_key,
                            result.status,
                            result.steps,
                            (unsigned long long)result.result);
@@ -394,6 +445,13 @@ static void respond_run(const kolibri_config_t *cfg, const uint8_t *prog_bytes, 
     free(entries);
 }
 
+static void respond_vm_run(const kolibri_config_t *cfg,
+                           const uint8_t *prog_bytes,
+                           size_t prog_len,
+                           http_response_t *resp) {
+    respond_vm_execution(cfg, prog_bytes, prog_len, "result", resp);
+}
+
 static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t body_len, http_response_t *resp) {
     uint8_t *digits = NULL;
     size_t digits_len = 0;
@@ -409,32 +467,38 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
     }
     free(digits);
 
-    respond_run(cfg, bb.data, bb.len, resp);
+    respond_vm_execution(cfg, bb.data, bb.len, "answer", resp);
     free(bb.data);
 }
 
-static int respond_fkv_prefix(const char *path, http_response_t *resp) {
+static int respond_fkv_get(const char *path, http_response_t *resp) {
     const char *query = strchr(path, '?');
     if (!query) {
         set_response(resp, 400, "application/json", "{\"error\":\"missing query\"}");
         return -1;
     }
     query++;
-    char key[128] = {0};
-    size_t klen = 0;
+    char prefix[128] = {0};
+    size_t prefix_len = 0;
     int topk = 10;
     const char *p = query;
     while (*p) {
-        if (strncmp(p, "key=", 4) == 0) {
-            p += 4;
+        if (strncmp(p, "prefix=", 7) == 0) {
+            p += 7;
             size_t idx = 0;
-            while (*p && *p != '&' && idx + 1 < sizeof(key)) {
-                key[idx++] = *p++;
+            while (*p && *p != '&' && idx + 1 < sizeof(prefix)) {
+                prefix[idx++] = *p++;
             }
-            key[idx] = '\0';
-            klen = idx;
+            prefix[idx] = '\0';
+            prefix_len = idx;
         } else if (strncmp(p, "k=", 2) == 0) {
             p += 2;
+            topk = atoi(p);
+            while (*p && *p != '&') {
+                p++;
+            }
+        } else if (strncmp(p, "limit=", 6) == 0) {
+            p += 6;
             topk = atoi(p);
             while (*p && *p != '&') {
                 p++;
@@ -448,20 +512,23 @@ static int respond_fkv_prefix(const char *path, http_response_t *resp) {
             p++;
         }
     }
-    if (klen == 0) {
-        set_response(resp, 400, "application/json", "{\"error\":\"missing key\"}");
+    if (prefix_len == 0) {
+        set_response(resp, 400, "application/json", "{\"error\":\"missing prefix\"}");
         return -1;
     }
+    if (topk <= 0) {
+        topk = 10;
+    }
     uint8_t digits[128];
-    for (size_t i = 0; i < klen && i < sizeof(digits); ++i) {
-        if (!isdigit((unsigned char)key[i])) {
-            set_response(resp, 400, "application/json", "{\"error\":\"invalid key\"}");
+    for (size_t i = 0; i < prefix_len && i < sizeof(digits); ++i) {
+        if (!isdigit((unsigned char)prefix[i])) {
+            set_response(resp, 400, "application/json", "{\"error\":\"invalid prefix\"}");
             return -1;
         }
-        digits[i] = (uint8_t)(key[i] - '0');
+        digits[i] = (uint8_t)(prefix[i] - '0');
     }
     fkv_iter_t it = {0};
-    if (fkv_get_prefix(digits, klen, &it, (size_t)topk) != 0) {
+    if (fkv_get_prefix(digits, prefix_len, &it, (size_t)topk) != 0) {
         set_response(resp, 500, "application/json", "{\"error\":\"lookup failed\"}");
         return -1;
     }
@@ -473,7 +540,8 @@ static int respond_fkv_prefix(const char *path, http_response_t *resp) {
         return -1;
     }
     size_t len = 0;
-    len += snprintf(json + len, cap - len, "{\"entries\":[");
+    len += snprintf(json + len, cap - len, "{\"prefix\":\"%s\",\"values\":[",
+                    prefix);
     for (size_t i = 0; i < it.count; ++i) {
         const fkv_entry_t *e = &it.entries[i];
         char key_buf[256];
@@ -488,7 +556,9 @@ static int respond_fkv_prefix(const char *path, http_response_t *resp) {
             val_buf[val_written++] = (char)('0' + e->value[j]);
         }
         val_buf[val_written] = '\0';
-        int needed = snprintf(NULL, 0, "%s{\"key\":\"%s\",\"value\":\"%s\"}",
+        int needed = snprintf(NULL,
+                              0,
+                              "%s{\"key\":\"%s\",\"value\":\"%s\"}",
                               (i == 0) ? "" : ",",
                               key_buf,
                               val_buf);
@@ -512,7 +582,7 @@ static int respond_fkv_prefix(const char *path, http_response_t *resp) {
                         key_buf,
                         val_buf);
     }
-    len += snprintf(json + len, cap - len, "]}");
+    len += snprintf(json + len, cap - len, "],\"programs\":[]}");
     resp->data = json;
     resp->len = strlen(json);
     resp->status = 200;
@@ -599,28 +669,33 @@ int http_handle_request(const kolibri_config_t *cfg,
         return -1;
     }
 
-    if (strcmp(method, "GET") == 0 && strcmp(path, "/status") == 0) {
-        respond_status(cfg, resp);
+    if (strcmp(method, "GET") == 0 && strcmp(path, "/api/v1/health") == 0) {
+        respond_health(cfg, resp);
         return 0;
     }
 
-    if (strcmp(method, "GET") == 0 && strncmp(path, "/fkv/prefix", 12) == 0) {
-        return respond_fkv_prefix(path, resp);
+    if (strcmp(method, "GET") == 0 && strcmp(path, "/api/v1/metrics") == 0) {
+        respond_metrics(cfg, resp);
+        return 0;
     }
 
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/dialog") == 0) {
+    if (strcmp(method, "GET") == 0 && strncmp(path, "/api/v1/fkv/get", 15) == 0) {
+        return respond_fkv_get(path, resp);
+    }
+
+    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/dialog") == 0) {
         respond_dialog(cfg, body ? body : "", body_len, resp);
         return 0;
     }
 
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/run") == 0) {
+    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/vm/run") == 0) {
         uint8_t *prog_bytes = NULL;
         size_t prog_len = 0;
         if (parse_program_array(body, body_len, &prog_bytes, &prog_len) != 0) {
             set_response(resp, 400, "application/json", "{\"error\":\"invalid program\"}");
             return -1;
         }
-        respond_run(cfg, prog_bytes, prog_len, resp);
+        respond_vm_run(cfg, prog_bytes, prog_len, resp);
         free(prog_bytes);
         return 0;
     }
