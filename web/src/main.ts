@@ -70,6 +70,66 @@ function digitsFromExpression(expr: string): number[] {
   return result;
 }
 
+type TraceEntry = {
+  step?: number;
+  ip?: number | string;
+  opcode?: string;
+  stack?: unknown;
+  gas?: number | string;
+  [key: string]: unknown;
+};
+
+function buildTraceTable(trace: TraceEntry[]): HTMLElement {
+  const table = createElement("table", "trace-table") as HTMLTableElement;
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  const headers: (keyof TraceEntry | "step")[] = [
+    "step",
+    "ip",
+    "opcode",
+    "stack",
+    "gas"
+  ];
+
+  headers.forEach((key) => {
+    const th = document.createElement("th");
+    th.textContent = key;
+    headerRow.appendChild(th);
+  });
+
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  trace.forEach((entry, idx) => {
+    const tr = document.createElement("tr");
+    headers.forEach((key) => {
+      const td = document.createElement("td");
+      const record = entry as Record<string, unknown>;
+      const rawValue =
+        key === "step" ? record[key] ?? idx : record[key as string];
+      let value: string;
+      if (rawValue === undefined || rawValue === null) {
+        value = "";
+      } else if (Array.isArray(rawValue) || typeof rawValue === "object") {
+        try {
+          value = JSON.stringify(rawValue);
+        } catch (err) {
+          value = String(rawValue);
+        }
+      } else {
+        value = String(rawValue);
+      }
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  return table;
+}
+
 function renderDialog(container: HTMLElement) {
   const historyEntries: { input: string; answer: unknown; timestamp: string }[] = [];
 
@@ -81,6 +141,7 @@ function renderDialog(container: HTMLElement) {
   submit.type = "submit";
   submit.textContent = "Выполнить";
   const output = createElement("pre", "output");
+  const traceContainer = createElement("div", "trace-container");
 
   const historyContainer = createElement("div", "history-container");
   const historyTitle = createElement("h3", "history-title", "История");
@@ -137,7 +198,7 @@ function renderDialog(container: HTMLElement) {
   form.appendChild(input);
   form.appendChild(submit);
   container.appendChild(form);
-  container.appendChild(resultWrapper);
+
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -145,6 +206,7 @@ function renderDialog(container: HTMLElement) {
     if (!expr) return;
     const payload = { digits: digitsFromExpression(expr) };
     output.textContent = "Загрузка...";
+    traceContainer.innerHTML = "";
     try {
       const res = await fetch("/dialog", {
         method: "POST",
@@ -155,13 +217,9 @@ function renderDialog(container: HTMLElement) {
         throw new Error(`HTTP ${res.status}`);
       }
       const data = await res.json();
+      const trace = Array.isArray(data.trace) ? data.trace : null;
       output.textContent = JSON.stringify(data, null, 2);
-      historyEntries.unshift({
-        input: expr,
-        answer: data,
-        timestamp: new Date().toLocaleString()
-      });
-      renderHistory();
+
     } catch (err) {
       output.textContent = `Ошибка: ${String(err)}`;
     }
