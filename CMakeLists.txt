@@ -100,6 +100,11 @@ target_include_directories(test_formula PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/include
         ${JSONC_INCLUDE_DIRS})
+add_executable(test_kolibri_ai_iterations tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c)
+target_link_libraries(test_kolibri_ai_iterations PRIVATE m pthread)
+target_include_directories(test_kolibri_ai_iterations PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/include)
 add_executable(test_network tests/test_network.c src/network.c)
 target_link_libraries(test_network PRIVATE pthread)
 target_include_directories(test_network PRIVATE
