@@ -7,6 +7,10 @@
 #include "util/log.h"
 
 
+#include <errno.h>
+#include <json-c/json.h>
+#include <limits.h>
+#include <stdint.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -14,6 +18,14 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+typedef struct {
+    FormulaMemoryFact *facts;
+    size_t count;
+    size_t capacity;
+} KolibriMemoryModule;
 
 typedef struct {
 
@@ -24,7 +36,6 @@ struct KolibriAI {
     pthread_mutex_t mutex;
 
     FormulaCollection *library;
-    FormulaTrainingPipeline *pipeline;
 
 
     double average_reward;
@@ -229,7 +240,6 @@ KolibriAI *kolibri_ai_create(void) {
 
 
 
-    ai->planning_score = 0.0;
     kolibri_ai_seed_library(ai);
     return ai;
 }
@@ -241,6 +251,8 @@ void kolibri_ai_destroy(KolibriAI *ai) {
 
     kolibri_ai_stop(ai);
     pthread_mutex_destroy(&ai->mutex);
+    kolibri_ai_dataset_clear(&ai->dataset);
+    kolibri_memory_module_clear(&ai->memory);
     if (ai->library) {
         formula_collection_destroy(ai->library);
     }
@@ -291,14 +303,17 @@ void kolibri_ai_stop(KolibriAI *ai) {
     }
 
     pthread_mutex_lock(&ai->mutex);
-    if (!ai->running) {
-        pthread_mutex_unlock(&ai->mutex);
-        return;
-    }
+    int was_running = ai->running;
     ai->running = 0;
     pthread_mutex_unlock(&ai->mutex);
 
-    pthread_join(ai->worker, NULL);
+    if (was_running) {
+        pthread_join(ai->worker, NULL);
+    }
+
+    if (kolibri_ai_persist(ai) != 0) {
+        log_warn("kolibri_ai: failed to persist snapshot to %s", ai->snapshot_path);
+    }
 }
 
 void kolibri_ai_set_selfplay_config(KolibriAI *ai, const KolibriAISelfplayConfig *config) {

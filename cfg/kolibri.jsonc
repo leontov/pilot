@@ -16,5 +16,10 @@
     "max_difficulty": 3
   },
   // PRNG seed for RANDOM10 opcode
-  "seed": 1337
+  "seed": 1337,
+  // Kolibri AI persistence
+  "ai": {
+    "snapshot_path": "data/kolibri_ai_snapshot.json",
+    "snapshot_limit": 2048
+  }
 }

@@ -20,6 +20,9 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->selfplay.tasks_per_iteration = 2;
     cfg->selfplay.max_difficulty = 3;
     cfg->seed = 1337;
+    strncpy(cfg->ai.snapshot_path, "data/kolibri_ai_snapshot.json", sizeof(cfg->ai.snapshot_path) - 1);
+    cfg->ai.snapshot_path[sizeof(cfg->ai.snapshot_path) - 1] = '\0';
+    cfg->ai.snapshot_limit = 2048;
 }
 
 static void strip_comments(char *buf) {
@@ -458,7 +461,7 @@ int config_load(const char *path, kolibri_config_t *cfg) {
 
     struct json_object *http_obj = NULL;
     struct json_object *vm_obj = NULL;
-    struct json_object *selfplay_obj = NULL;
+
     struct json_object *value = NULL;
 
     if (!json_object_object_get_ex(root, "http", &http_obj) ||
@@ -470,10 +473,6 @@ int config_load(const char *path, kolibri_config_t *cfg) {
     if (!json_object_object_get_ex(http_obj, "host", &value) ||
         !json_object_is_type(value, json_type_string)) {
 
-    const char *p = buf;
-    skip_ws(&p);
-    if (*p != '{') {
-        free(buf);
 
         errno = EINVAL;
         return -1;
@@ -576,8 +575,7 @@ int config_load(const char *path, kolibri_config_t *cfg) {
     if (!json_object_object_get_ex(root, "seed", &value) ||
         !json_object_is_type(value, json_type_int)) {
 
-    skip_ws(&p);
-    if (*p != '\0' || !seen_http || !seen_vm || !seen_seed) {
+
 
         errno = EINVAL;
         free(buf);

@@ -59,13 +59,6 @@ void fkv_shutdown(void) {
     pthread_mutex_unlock(&fkv_lock);
 }
 
-static int fkv_put_locked(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn,
-                          fkv_entry_type_t type) {
-    if (!root) {
-        root = node_create();
-        if (!root) {
-            return -1;
-        }
     }
 
     fkv_node_t *node = root;
@@ -325,21 +318,7 @@ int fkv_load(const char *path) {
                 break;
             }
         }
-        uint8_t type_raw = 0;
-        if (fread(&type_raw, sizeof(type_raw), 1, fp) != 1) {
-            free(key_buf);
-            free(value_buf);
-            rc = -1;
-            break;
-        }
-        if (type_raw > (uint8_t)FKV_ENTRY_TYPE_PROGRAM) {
-            free(key_buf);
-            free(value_buf);
-            rc = -1;
-            break;
-        }
 
-        if (fkv_put_locked(key_buf, key_len, value_buf, value_len, (fkv_entry_type_t)type_raw) != 0) {
             free(key_buf);
             free(value_buf);
             rc = -1;

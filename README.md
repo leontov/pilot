@@ -48,6 +48,22 @@ Other CLI commands:
 ./kolibri.sh clean  # remove build artifacts, logs, and data
 ```
 
+## AI state persistence
+
+The Kolibri AI subsystem snapshots its working memory (`KolibriMemoryModule`) and training dataset to a JSON file whenever the
+node is stopped or destroyed. Snapshots are automatically reloaded on startup so the node can resume from the last session. The
+location and retention policy live under the `ai` section of [`cfg/kolibri.jsonc`](cfg/kolibri.jsonc):
+
+```jsonc
+  "ai": {
+    "snapshot_path": "data/kolibri_ai_snapshot.json", // JSON file with memory + dataset
+    "snapshot_limit": 2048                              // maximum entries persisted (0 = unlimited)
+  }
+```
+
+The snapshot file is created on demand (directories are created automatically). Setting `snapshot_limit` to zero disables
+trimming and keeps the entire history.
+
 ## Testing
 
 ```
