@@ -6,6 +6,7 @@
 
 typedef struct {
     Formula** formulas;
+    Formula* owned_formulas;
     size_t formula_count;
     char prev_hash[65];
     time_t timestamp;

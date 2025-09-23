@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <time.h>
 #include <math.h>
+#include <json-c/json.h>
 
 #include "decimal_cell.h"
 #include "rules_engine.h"
@@ -52,10 +53,52 @@ void init_system(void) {
     printf("[INFO] System initialized with %zu cells\n", learning_system->cell_count);
 }
 
+static void process_incoming_network_events(void) {
+    for (;;) {
+        char* message = network_receive_data();
+        if (!message) {
+            break;
+        }
+
+        struct json_object* root = json_tokener_parse(message);
+        if (!root) {
+            fprintf(stderr, "[NETWORK] Failed to parse incoming message: %s\n", message);
+            free(message);
+            continue;
+        }
+
+        const char* type = NULL;
+        struct json_object* type_obj = NULL;
+        if (json_object_object_get_ex(root, "type", &type_obj)) {
+            type = json_object_get_string(type_obj);
+        }
+
+        if (type && strcmp(type, "federated_update") == 0) {
+            struct json_object* payload = NULL;
+            if (json_object_object_get_ex(root, "payload", &payload)) {
+                if (json_object_is_type(payload, json_type_object)) {
+                    fprintf(stdout, "[NETWORK] Received federated update with %zu keys\n",
+                            (size_t)json_object_object_length(payload));
+                } else if (json_object_is_type(payload, json_type_array)) {
+                    fprintf(stdout, "[NETWORK] Received federated update with %zu entries\n",
+                            (size_t)json_object_array_length(payload));
+                }
+            }
+        } else {
+            fprintf(stdout, "[NETWORK] Received message of type %s\n", type ? type : "unknown");
+        }
+
+        json_object_put(root);
+        free(message);
+    }
+}
+
 // Основной цикл обработки
 void process_cycle(void) {
     static int complexity_level = 1;
-    
+
+    process_incoming_network_events();
+
     // Генерация новой формулы
     Formula* formula = formula_generate_from_cells(learning_system->cells,
                                                  learning_system->cell_count);
@@ -109,10 +152,7 @@ void process_cycle(void) {
                         
     // Федеративное обучение с другими узлами
     if (learning_system->formula_count > 0 && learning_system->formula_count % 20 == 0) {
-        char remote_url[256];
-        snprintf(remote_url, sizeof(remote_url),
-                "http://localhost:%d/federated", node_port + 1);
-        learning_system_federated_update(learning_system, remote_url);
+        learning_system_federated_update(learning_system, "127.0.0.1", node_port + 1);
     }
     
     usleep(100000); // Небольшая задержка для стабильности
@@ -140,6 +180,11 @@ int main(int argc, char* argv[]) {
     // Инициализация системы
     init_system();
     
+    if (!network_init(node_port)) {
+        fprintf(stderr, "Failed to initialize network on port %d\n", node_port);
+        exit(1);
+    }
+
     printf("[SUCCESS] Server started on port %d\n", node_port);
     
     // Основной цикл
@@ -154,9 +199,11 @@ int main(int argc, char* argv[]) {
         snprintf(knowledge_file, sizeof(knowledge_file),
                 "knowledge_node_%d.dat", node_port);
         learning_system_export_knowledge(learning_system, knowledge_file);
-        
+
         learning_system_destroy(learning_system);
     }
-    
+
+    network_cleanup();
+
     return 0;
 }

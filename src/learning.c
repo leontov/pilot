@@ -2,9 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <curl/curl.h>
+#include <stdio.h>
 #include <json-c/json.h>
 #include <time.h>
+#include "network.h"
 
 LearningSystem* learning_system_create(size_t initial_cell_count, double learning_rate) {
     LearningSystem* system = (LearningSystem*)malloc(sizeof(LearningSystem));
@@ -107,11 +108,10 @@ void learning_system_optimize_formulas(LearningSystem* system) {
     }
 }
 
-bool learning_system_federated_update(LearningSystem* system, const char* remote_node_address) {
-    if (!system || !remote_node_address) return false;
-    
-    CURL* curl = curl_easy_init();
-    if (!curl) return false;
+bool learning_system_federated_update(LearningSystem* system,
+                                     const char* remote_host,
+                                     int remote_port) {
+    if (!system || !remote_host || remote_port <= 0) return false;
     
     // Подготовка данных для обмена
     struct json_object* root = json_object_new_object();
@@ -128,16 +128,20 @@ bool learning_system_federated_update(LearningSystem* system, const char* remote
     }
     json_object_object_add(root, "formulas", formulas_array);
     
-    // Отправка данных
-    curl_easy_setopt(curl, CURLOPT_URL, remote_node_address);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_object_to_json_string(root));
-    
-    CURLcode res = curl_easy_perform(curl);
-    
-    json_object_put(root);
-    curl_easy_cleanup(curl);
-    
-    return res == CURLE_OK;
+    struct json_object* envelope = json_object_new_object();
+    json_object_object_add(envelope, "type", json_object_new_string("federated_update"));
+    json_object_object_add(envelope, "payload", root);
+
+    const char* payload = json_object_to_json_string(envelope);
+    bool sent = network_send_data(remote_host, remote_port, payload);
+    if (sent) {
+        fprintf(stdout, "[NETWORK] Federated update delivered to %s:%d\n", remote_host, remote_port);
+    } else {
+        fprintf(stderr, "[NETWORK] Failed to deliver federated update to %s:%d\n", remote_host, remote_port);
+    }
+
+    json_object_put(envelope);
+    return sent;
 }
 
 bool learning_system_export_knowledge(LearningSystem* system, const char* filename) {

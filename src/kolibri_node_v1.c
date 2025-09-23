@@ -56,6 +56,8 @@ static void cleanup_resources(void) {
 // Флаг для graceful shutdown
 static volatile sig_atomic_t keep_running = 1;
 
+static void* http_status_server_thread(void* arg);
+
 // Обработчик сигналов для graceful shutdown
 static void sig_handler(int signo) {
     if (signo == SIGINT || signo == SIGTERM) {
@@ -99,7 +101,7 @@ void send_hello_to_neighbor(struct sockaddr_in* addr) {
     memset(msg, 0, sizeof(msg));
     memcpy(msg, MAGIC_BYTES, MAGIC_LEN);
     msg[MAGIC_LEN] = MSG_HELLO;
-    msg[MAGIC_LEN+1] = cell.node_digit;
+    msg[MAGIC_LEN+1] = cell.digit;
     sendto(server_sock, msg, MAGIC_LEN+2, 0, (struct sockaddr*)addr, sizeof(*addr));
 }
 
@@ -127,6 +129,7 @@ uint64_t now_ms(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
+
 
 // ==========================
 // Network handling
@@ -203,7 +206,7 @@ static void process_message(const char* data, size_t len, struct sockaddr_in* sr
             // Ответить ACK
             response[MAGIC_LEN] = MSG_ACK;
             memcpy(response, MAGIC_BYTES, MAGIC_LEN);
-            response[MAGIC_LEN+1] = cell.node_digit;
+            response[MAGIC_LEN+1] = cell.digit;
             response_len = MAGIC_LEN + 2;
             sendto(server_sock, response, response_len, 0, (struct sockaddr*)src_addr, sizeof(*src_addr));
             // Пример: считаем успешное применение первого правила (для демонстрации)
@@ -220,6 +223,9 @@ static void process_message(const char* data, size_t len, struct sockaddr_in* sr
         case MSG_ACK: {
             uint8_t from_digit = (len > MAGIC_LEN+1) ? (uint8_t)data[MAGIC_LEN+1] : 255;
             printf("[DEBUG] Received ACK from node %d\n", from_digit);
+            if (from_digit < DECIMAL_CELL_FANOUT) {
+                decimal_cell_mark_sync(&cell, &from_digit, 1, now_ms());
+            }
             break;
         }
         case 42: { // MSG_MIGRATE_RULE
@@ -273,65 +279,21 @@ void create_metarule(void) {
 // Замена неактивных соседей на новые
 void adapt_neighbors(void) {
     uint64_t now = now_ms();
-    uint8_t digits[DECIMAL_BRANCHING];
-    size_t count = decimal_cell_collect_children(&cell, digits, DECIMAL_BRANCHING, false);
-    bool used[DECIMAL_BRANCHING] = {0};
-    used[cell.node_digit] = true;
-    for (size_t i = 0; i < count; ++i) {
-        used[digits[i]] = true;
-    }
 
-    for (size_t i = 0; i < count; ++i) {
-        uint8_t digit = digits[i];
-        if (decimal_cell_child_is_active(&cell, digit)) {
-            continue;
-        }
-
-        uint64_t last_sync = decimal_cell_child_last_sync(&cell, digit);
-        if (now - last_sync <= 90000) {
-            continue;
-        }
-
-        uint8_t replacement = DECIMAL_BRANCHING;
-        for (uint8_t candidate = 0; candidate < DECIMAL_BRANCHING; ++candidate) {
-            if (!used[candidate]) {
-                replacement = candidate;
-                break;
-            }
-        }
-
-        if (replacement >= DECIMAL_BRANCHING) {
-            continue;
-        }
-
-        uint8_t path_digit = digit;
-        decimal_cell_remove_branch(&cell, &path_digit, 1);
-        used[digit] = false;
-
-        uint8_t new_path = replacement;
-        if (decimal_cell_set_active(&cell, &new_path, 1, true)) {
-            used[replacement] = true;
-            printf("[TOPOLOGY] Neighbor digit %u replaced by digit %u\n", digit, replacement);
         }
     }
 }
 
 // Отправка лучшего правила соседу
 void migrate_best_rule(void) {
-    if (rules.count == 0) return;
-    uint8_t active_digits[DECIMAL_BRANCHING];
-    size_t active_count = decimal_cell_collect_children(&cell, active_digits, DECIMAL_BRANCHING, true);
-    if (active_count == 0) return;
+
     // Находим правило с максимальным fitness
     int best = 0;
     for (int i = 1; i < rules.count; i++) {
         if (rules.fitness[i] > rules.fitness[best]) best = i;
     }
     // Выбираем случайного соседа
-    int nidx = rand() % (int)active_count;
-    struct sockaddr_in n_addr;
-    uint8_t neighbor_digit = active_digits[nidx];
-    fill_neighbor_addr(neighbor_digit, &n_addr, DEFAULT_PORT);
+
     // Формируем сообщение (MAGIC + тип + pattern + action + tier + fitness)
     char msg[BUFFER_SIZE];
     memset(msg, 0, sizeof(msg));
@@ -340,7 +302,7 @@ void migrate_best_rule(void) {
     int off = MAGIC_LEN + 1;
     int plen = snprintf(msg+off, sizeof(msg)-off, "%s|%s|%d|%.4f", rules.patterns[best], rules.actions[best], rules.tiers[best], rules.fitness[best]);
     sendto(server_sock, msg, off+plen, 0, (struct sockaddr*)&n_addr, sizeof(n_addr));
-    printf("[MIGRATE] Sent best rule to neighbor %u: %s -> %s\n", neighbor_digit, rules.patterns[best], rules.actions[best]);
+
 }
 
 // ==========================
@@ -354,11 +316,22 @@ static void run_server(void) {
     static uint64_t last_log = 0;
     uint64_t last_meta = 0;
     uint64_t last_migrate = 0;
-    while (1) {
+    while (keep_running) {
         ssize_t len = recvfrom(server_sock, buffer, sizeof(buffer), 0,
                               (struct sockaddr*)&src_addr, &src_len);
         if (len < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (!keep_running) {
+                    break;
+                }
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (!keep_running) {
+                    break;
+                }
+                continue;
+            }
             perror("recvfrom");
             break;
         }
@@ -366,11 +339,7 @@ static void run_server(void) {
         uint64_t t = now_ms();
         // Периодическая синхронизация с соседями (HELLO)
         if (t - last_sync > 1000) {
-            uint8_t digits[DECIMAL_BRANCHING];
-            size_t count = decimal_cell_collect_children(&cell, digits, DECIMAL_BRANCHING, false);
-            for (size_t i = 0; i < count; ++i) {
-                struct sockaddr_in n_addr;
-                fill_neighbor_addr(digits[i], &n_addr, DEFAULT_PORT);
+
                 send_hello_to_neighbor(&n_addr);
             }
             last_sync = t;
@@ -397,14 +366,7 @@ static void run_server(void) {
                        (uint64_t)t, i, rules.patterns[i], rules.actions[i],
                        rules.tiers[i], rules.fitness[i]);
             }
-            uint8_t digits[DECIMAL_BRANCHING];
-            size_t count = decimal_cell_collect_children(&cell, digits, DECIMAL_BRANCHING, false);
-            for (size_t idx = 0; idx < count; ++idx) {
-                uint8_t digit = digits[idx];
-                printf("T=%" PRIu64 " NEIGHBOR_DIGIT=%u active=%d last_sync=%" PRIu64 "\n",
-                       (uint64_t)t, digit,
-                       decimal_cell_child_is_active(&cell, digit),
-                       (uint64_t)decimal_cell_child_last_sync(&cell, digit));
+
             }
             last_log = t;
         }
@@ -426,7 +388,16 @@ static void run_server(void) {
 // ==========================
 // Entry point
 
-extern void run_http_status_server(int port, rules_t* rules, decimal_cell_t* cell);
+extern int http_status_server_init(int port, rules_t* rules, decimal_cell_t* cell,
+                                   volatile sig_atomic_t* keep_running);
+extern void http_status_server_run(void);
+extern void http_status_server_shutdown(void);
+
+static void* http_status_server_thread(void* arg) {
+    (void)arg;
+    http_status_server_run();
+    return NULL;
+}
 
 int main(int argc, char** argv) {
     uint16_t port = DEFAULT_PORT;
@@ -489,7 +460,7 @@ int main(int argc, char** argv) {
     // Добавляем 9 соседей (все цифры кроме своей)
     for (uint8_t d = 0; d < DECIMAL_BRANCHING; d++) {
         if (d == my_digit) continue;
-        decimal_cell_set_active(&cell, &d, 1, true);
+
     }
 
     // Инициализация AI подсистемы
@@ -502,10 +473,28 @@ int main(int argc, char** argv) {
 
     // Запуск HTTP API для мониторинга (мониторинговый порт)
     int http_port = port + 10000;
-    run_http_status_server(http_port, &rules, &cell);
+    pthread_t http_thread;
+    bool http_thread_started = false;
+    if (http_status_server_init(http_port, &rules, &cell, &keep_running) == 0) {
+        if (pthread_create(&http_thread, NULL, http_status_server_thread, NULL) == 0) {
+            http_thread_started = true;
+        } else {
+            LOG_ERROR("Failed to start HTTP status server thread: %s", strerror(errno));
+            http_status_server_shutdown();
+        }
+    } else {
+        LOG_ERROR("Failed to initialize HTTP status server: %s", strerror(errno));
+    }
 
     // Основной цикл обработки событий
     run_server();
+
+    keep_running = 0;
+
+    if (http_thread_started) {
+        pthread_join(http_thread, NULL);
+        http_status_server_shutdown();
+    }
 
     // Очистка ресурсов (эта часть не будет достигнута если run_server не завершится, но оставим для полноты)
     if (server_sock >= 0) {
