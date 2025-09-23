@@ -11,6 +11,7 @@ extern "C" {
 typedef struct {
     char host[64];
     uint16_t port;
+    uint32_t max_body_size;
 } http_config_t;
 
 typedef struct {
