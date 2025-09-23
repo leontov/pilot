@@ -253,7 +253,7 @@ int rule_engine_sync(RuleEngine *re, const char *cluster_path) {
     size_t n = json_object_array_length(cluster);
     for (size_t i = 0; i < n; ++i) {
         json_object *r = json_object_array_get_idx(cluster, i);
-        json_object *jexpr = NULL, *jid = NULL;
+        json_object *jexpr = NULL;
         if (!json_object_object_get_ex(r, "expr", &jexpr)) continue;
         const char *expr = json_object_get_string(jexpr);
         // check if expr exists in local rules

@@ -35,5 +35,6 @@ double evaluate_formula(const char* formula, double x);
 double evaluate_effectiveness(const Formula* formula);
 int validate_formula(const Formula* formula);
 int get_formula_type(const char* content);
+void formula_collection_remove(FormulaCollection* collection, const char* id);
 
 #endif // FORMULA_H
