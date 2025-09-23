@@ -23,9 +23,23 @@ static void calculate_hash(const Block* block, char* output) {
 
     // Хэшируем формулы
     for (size_t i = 0; i < block->formula_count; i++) {
-        if (block->formulas[i]->expression) {
-            EVP_DigestUpdate(ctx, block->formulas[i]->expression,
-                             strlen(block->formulas[i]->expression));
+        Formula* formula = block->formulas[i];
+        if (!formula) {
+            continue;
+        }
+
+        if (formula->representation == FORMULA_REPRESENTATION_ANALYTIC) {
+            if (formula->expression) {
+                EVP_DigestUpdate(ctx, formula->expression,
+                                 strlen(formula->expression));
+            }
+            if (formula->coeff_count > 0 && formula->coefficients) {
+                EVP_DigestUpdate(ctx, formula->coefficients,
+                                 sizeof(double) * formula->coeff_count);
+            }
+        } else {
+            EVP_DigestUpdate(ctx, formula->content,
+                             strnlen(formula->content, sizeof(formula->content)));
         }
     }
 

@@ -4,22 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "decimal_cell.h"
-
-typedef enum {
-    FORMULA_LINEAR,
-    FORMULA_POLYNOMIAL,
-    FORMULA_EXPONENTIAL,
-    FORMULA_TRIGONOMETRIC,
-    FORMULA_COMPOSITE
-} FormulaType;
-
-typedef struct {
-    FormulaType type;
-    double* coefficients;
-    size_t coeff_count;
-    double effectiveness;
-    char* expression;
-} Formula;
+#include "formula_core.h"
 
 // Создание новой формулы
 Formula* formula_create(FormulaType type, size_t coeff_count);

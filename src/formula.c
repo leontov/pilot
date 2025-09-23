@@ -1,9 +1,9 @@
 #include "formula.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <math.h>
 #include <uuid/uuid.h>
 #include <json-c/json.h>
 
@@ -17,17 +17,72 @@ const int FORMULA_TYPE_PERIODIC = 3;
 static const double test_points[] = {-10.0, -5.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 5.0, 10.0};
 static const int num_test_points = sizeof(test_points) / sizeof(test_points[0]);
 
+void formula_clear(Formula* formula) {
+    if (!formula) {
+        return;
+    }
+
+    free(formula->coefficients);
+    formula->coefficients = NULL;
+    formula->coeff_count = 0;
+
+    free(formula->expression);
+    formula->expression = NULL;
+}
+
+int formula_copy(Formula* dest, const Formula* src) {
+    if (!dest || !src) {
+        return -1;
+    }
+
+    formula_clear(dest);
+    memset(dest, 0, sizeof(*dest));
+
+    memcpy(dest->id, src->id, sizeof(dest->id));
+    dest->effectiveness = src->effectiveness;
+    dest->created_at = src->created_at;
+    dest->tests_passed = src->tests_passed;
+    dest->confirmations = src->confirmations;
+    dest->representation = src->representation;
+    dest->type = src->type;
+
+    if (src->representation == FORMULA_REPRESENTATION_TEXT) {
+        strncpy(dest->content, src->content, sizeof(dest->content) - 1);
+        dest->content[sizeof(dest->content) - 1] = '\0';
+    } else if (src->representation == FORMULA_REPRESENTATION_ANALYTIC) {
+        dest->coeff_count = src->coeff_count;
+        if (src->coeff_count > 0 && src->coefficients) {
+            dest->coefficients = malloc(sizeof(double) * src->coeff_count);
+            if (!dest->coefficients) {
+                formula_clear(dest);
+                return -1;
+            }
+            memcpy(dest->coefficients, src->coefficients, sizeof(double) * src->coeff_count);
+        }
+
+        if (src->expression) {
+            dest->expression = strdup(src->expression);
+            if (!dest->expression) {
+                formula_clear(dest);
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
 // Создание коллекции формул
 FormulaCollection* formula_collection_create(size_t initial_capacity) {
     FormulaCollection* collection = malloc(sizeof(FormulaCollection));
     if (!collection) return NULL;
-    
-    collection->formulas = malloc(sizeof(Formula) * initial_capacity);
+
+    collection->formulas = calloc(initial_capacity, sizeof(Formula));
     if (!collection->formulas) {
         free(collection);
         return NULL;
     }
-    
+
     collection->count = 0;
     collection->capacity = initial_capacity;
     return collection;
@@ -36,6 +91,9 @@ FormulaCollection* formula_collection_create(size_t initial_capacity) {
 // Уничтожение коллекции
 void formula_collection_destroy(FormulaCollection* collection) {
     if (collection) {
+        for (size_t i = 0; i < collection->count; i++) {
+            formula_clear(&collection->formulas[i]);
+        }
         free(collection->formulas);
         free(collection);
     }
@@ -44,17 +102,26 @@ void formula_collection_destroy(FormulaCollection* collection) {
 // Добавление формулы в коллекцию
 int formula_collection_add(FormulaCollection* collection, const Formula* formula) {
     if (!collection || !formula) return -1;
-    
+
     if (collection->count >= collection->capacity) {
         size_t new_capacity = collection->capacity * 2;
         Formula* new_formulas = realloc(collection->formulas, sizeof(Formula) * new_capacity);
         if (!new_formulas) return -1;
-        
+
+        // Zero initialise the new capacity to avoid stale pointers.
+        memset(new_formulas + collection->capacity, 0,
+               sizeof(Formula) * (new_capacity - collection->capacity));
+
         collection->formulas = new_formulas;
         collection->capacity = new_capacity;
     }
-    
-    memcpy(&collection->formulas[collection->count], formula, sizeof(Formula));
+
+    Formula* dest = &collection->formulas[collection->count];
+    if (formula_copy(dest, formula) != 0) {
+        memset(dest, 0, sizeof(*dest));
+        return -1;
+    }
+
     collection->count++;
     return 0;
 }
@@ -145,6 +212,11 @@ static double evaluate_formula(const char* content, double x) {
 // Валидация формулы
 int validate_formula(const Formula* formula) {
     if (!formula) return 0;
+
+    if (formula->representation != FORMULA_REPRESENTATION_TEXT) {
+        return 0;
+    }
+
     if (strlen(formula->content) == 0) return 0;
     if (formula->effectiveness < 0.0 || formula->effectiveness > 1.0) return 0;
     return 1;
@@ -152,9 +224,9 @@ int validate_formula(const Formula* formula) {
 
 // Генерация случайной формулы
 Formula* generate_random_formula(int complexity_level) {
-    Formula* formula = malloc(sizeof(Formula));
+    Formula* formula = calloc(1, sizeof(Formula));
     if (!formula) return NULL;
-    
+
     // Генерация уникального ID
     uuid_t uuid;
     uuid_generate(uuid);
@@ -199,18 +271,23 @@ Formula* generate_random_formula(int complexity_level) {
     
     strncpy(formula->content, formula_str, sizeof(formula->content) - 1);
     formula->content[sizeof(formula->content) - 1] = '\0';
-    
+
     formula->effectiveness = 0.0;
     formula->created_at = time(NULL);
     formula->tests_passed = 0;
     formula->confirmations = 0;
-    
+    formula->representation = FORMULA_REPRESENTATION_TEXT;
+    formula->coefficients = NULL;
+    formula->coeff_count = 0;
+    formula->expression = NULL;
+    formula->type = FORMULA_LINEAR;
+
     return formula;
 }
 
 // Оценка эффективности формулы
 double evaluate_effectiveness(const Formula* formula) {
-    if (!formula) return 0.0;
+    if (!formula || formula->representation != FORMULA_REPRESENTATION_TEXT) return 0.0;
     
     // Веса для различных критериев
     const double complexity_weight = 0.2;
@@ -289,19 +366,34 @@ double evaluate_effectiveness(const Formula* formula) {
 // Сериализация формулы в JSON
 char* serialize_formula(const Formula* formula) {
     if (!formula) return NULL;
-    
+
     struct json_object *jobj = json_object_new_object();
     json_object_object_add(jobj, "id", json_object_new_string(formula->id));
-    json_object_object_add(jobj, "content", json_object_new_string(formula->content));
     json_object_object_add(jobj, "effectiveness", json_object_new_double(formula->effectiveness));
     json_object_object_add(jobj, "created_at", json_object_new_int64(formula->created_at));
     json_object_object_add(jobj, "tests_passed", json_object_new_int(formula->tests_passed));
     json_object_object_add(jobj, "confirmations", json_object_new_int(formula->confirmations));
-    
+    json_object_object_add(jobj, "representation", json_object_new_int(formula->representation));
+
+    if (formula->representation == FORMULA_REPRESENTATION_TEXT) {
+        json_object_object_add(jobj, "content", json_object_new_string(formula->content));
+    } else if (formula->representation == FORMULA_REPRESENTATION_ANALYTIC) {
+        json_object_object_add(jobj, "type", json_object_new_int(formula->type));
+        struct json_object* coeffs = json_object_new_array();
+        for (size_t i = 0; i < formula->coeff_count; i++) {
+            json_object_array_add(coeffs, json_object_new_double(formula->coefficients[i]));
+        }
+        json_object_object_add(jobj, "coefficients", coeffs);
+
+        if (formula->expression) {
+            json_object_object_add(jobj, "expression", json_object_new_string(formula->expression));
+        }
+    }
+
     const char* json_str = json_object_to_json_string(jobj);
     char* result = strdup(json_str);
     json_object_put(jobj);
-    
+
     return result;
 }
 
@@ -312,38 +404,84 @@ Formula* deserialize_formula(const char* json_str) {
     struct json_object *jobj = json_tokener_parse(json_str);
     if (!jobj) return NULL;
     
-    Formula* formula = malloc(sizeof(Formula));
+    Formula* formula = calloc(1, sizeof(Formula));
     if (!formula) {
         json_object_put(jobj);
         return NULL;
     }
-    
-    struct json_object *id_obj, *content_obj, *effectiveness_obj,
-                      *created_at_obj, *tests_passed_obj, *confirmations_obj;
-                      
+
+    struct json_object *id_obj, *effectiveness_obj, *created_at_obj,
+                      *tests_passed_obj, *confirmations_obj, *representation_obj;
+
     if (!json_object_object_get_ex(jobj, "id", &id_obj) ||
-        !json_object_object_get_ex(jobj, "content", &content_obj) ||
         !json_object_object_get_ex(jobj, "effectiveness", &effectiveness_obj) ||
         !json_object_object_get_ex(jobj, "created_at", &created_at_obj) ||
         !json_object_object_get_ex(jobj, "tests_passed", &tests_passed_obj) ||
-        !json_object_object_get_ex(jobj, "confirmations", &confirmations_obj)) {
-        
+        !json_object_object_get_ex(jobj, "confirmations", &confirmations_obj) ||
+        !json_object_object_get_ex(jobj, "representation", &representation_obj)) {
+
         free(formula);
         json_object_put(jobj);
         return NULL;
     }
-    
+
     strncpy(formula->id, json_object_get_string(id_obj), sizeof(formula->id) - 1);
     formula->id[sizeof(formula->id) - 1] = '\0';
-    
-    strncpy(formula->content, json_object_get_string(content_obj), sizeof(formula->content) - 1);
-    formula->content[sizeof(formula->content) - 1] = '\0';
-    
     formula->effectiveness = json_object_get_double(effectiveness_obj);
     formula->created_at = json_object_get_int64(created_at_obj);
     formula->tests_passed = json_object_get_int(tests_passed_obj);
     formula->confirmations = json_object_get_int(confirmations_obj);
-    
+    formula->representation = json_object_get_int(representation_obj);
+
+    if (formula->representation == FORMULA_REPRESENTATION_TEXT) {
+        struct json_object* content_obj;
+        if (!json_object_object_get_ex(jobj, "content", &content_obj)) {
+            free(formula);
+            json_object_put(jobj);
+            return NULL;
+        }
+        strncpy(formula->content, json_object_get_string(content_obj), sizeof(formula->content) - 1);
+        formula->content[sizeof(formula->content) - 1] = '\0';
+    } else if (formula->representation == FORMULA_REPRESENTATION_ANALYTIC) {
+        struct json_object* type_obj;
+        if (!json_object_object_get_ex(jobj, "type", &type_obj)) {
+            free(formula);
+            json_object_put(jobj);
+            return NULL;
+        }
+        formula->type = json_object_get_int(type_obj);
+
+        struct json_object* coeffs_obj;
+        if (json_object_object_get_ex(jobj, "coefficients", &coeffs_obj) &&
+            json_object_is_type(coeffs_obj, json_type_array)) {
+            size_t coeff_count = json_object_array_length(coeffs_obj);
+            if (coeff_count > 0) {
+                formula->coefficients = malloc(sizeof(double) * coeff_count);
+                if (!formula->coefficients) {
+                    free(formula);
+                    json_object_put(jobj);
+                    return NULL;
+                }
+                formula->coeff_count = coeff_count;
+                for (size_t i = 0; i < coeff_count; i++) {
+                    struct json_object* value = json_object_array_get_idx(coeffs_obj, i);
+                    formula->coefficients[i] = json_object_get_double(value);
+                }
+            }
+        }
+
+        struct json_object* expression_obj;
+        if (json_object_object_get_ex(jobj, "expression", &expression_obj)) {
+            formula->expression = strdup(json_object_get_string(expression_obj));
+            if (!formula->expression) {
+                formula_clear(formula);
+                free(formula);
+                json_object_put(jobj);
+                return NULL;
+            }
+        }
+    }
+
     json_object_put(jobj);
     return formula;
 }

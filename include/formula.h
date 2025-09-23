@@ -1,40 +1,34 @@
 #ifndef FORMULA_H
 #define FORMULA_H
 
-#include <stddef.h>
-#include <time.h>
+#include "formula_core.h"
 
-// Типы формул
+// High level categories used by legacy evaluators.
 extern const int FORMULA_TYPE_SIMPLE;
 extern const int FORMULA_TYPE_POLYNOMIAL;
 extern const int FORMULA_TYPE_COMPOSITE;
 extern const int FORMULA_TYPE_PERIODIC;
 
-// Структура формулы
-typedef struct {
-    char id[37];                    // UUID формулы
-    char content[1024];             // Текст формулы
-    double effectiveness;           // Оценка эффективности
-    time_t created_at;             // Время создания
-    int tests_passed;              // Количество успешных тестов
-    int confirmations;             // Количество подтверждений от других нод
-} Formula;
+// Lifecycle helpers for working with the unified structure.
+void formula_clear(Formula* formula);
+int formula_copy(Formula* dest, const Formula* src);
 
-// Коллекция формул
-typedef struct {
-    Formula* formulas;             // Массив формул
-    size_t count;                  // Текущее количество
-    size_t capacity;               // Максимальная емкость
-} FormulaCollection;
-
-// Функции
+// Collection helpers used by the Kolibri AI subsystem.
 FormulaCollection* formula_collection_create(size_t initial_capacity);
 void formula_collection_destroy(FormulaCollection* collection);
 int formula_collection_add(FormulaCollection* collection, const Formula* formula);
-double evaluate_formula(const char* formula, double x);
-double evaluate_effectiveness(const Formula* formula);
-int validate_formula(const Formula* formula);
+Formula* formula_collection_find(FormulaCollection* collection, const char* id);
+
+// Text-based formula utilities.
 int get_formula_type(const char* content);
+
+int validate_formula(const Formula* formula);
+double evaluate_effectiveness(const Formula* formula);
+Formula* generate_random_formula(int complexity_level);
+char* serialize_formula(const Formula* formula);
+Formula* deserialize_formula(const char* json);
+
 void formula_collection_remove(FormulaCollection* collection, const char* id);
+
 
 #endif // FORMULA_H

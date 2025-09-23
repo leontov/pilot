@@ -1,23 +1,30 @@
 #include "formula_advanced.h"
+#include "formula.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
+#include <time.h>
 
 Formula* formula_create(FormulaType type, size_t coeff_count) {
-    Formula* formula = (Formula*)malloc(sizeof(Formula));
+    Formula* formula = (Formula*)calloc(1, sizeof(Formula));
     if (!formula) return NULL;
-    
+
     formula->coefficients = (double*)calloc(coeff_count, sizeof(double));
     if (!formula->coefficients) {
         free(formula);
         return NULL;
     }
-    
+
     formula->type = type;
     formula->coeff_count = coeff_count;
     formula->effectiveness = 0.0;
     formula->expression = NULL;
-    
+    formula->representation = FORMULA_REPRESENTATION_ANALYTIC;
+    formula->created_at = time(NULL);
+    formula->tests_passed = 0;
+    formula->confirmations = 0;
+    formula->content[0] = '\0';
+
     return formula;
 }
 
@@ -142,7 +149,19 @@ Formula* formula_mutate(Formula* formula, double mutation_rate) {
     
     Formula* mutated = formula_create(formula->type, formula->coeff_count);
     if (!mutated) return NULL;
-    
+
+    mutated->effectiveness = formula->effectiveness;
+    mutated->created_at = formula->created_at;
+    mutated->tests_passed = formula->tests_passed;
+    mutated->confirmations = formula->confirmations;
+    if (formula->expression) {
+        mutated->expression = strdup(formula->expression);
+        if (!mutated->expression) {
+            formula_destroy(mutated);
+            return NULL;
+        }
+    }
+
     // Копируем коэффициенты с возможными мутациями
     for (size_t i = 0; i < formula->coeff_count; i++) {
         if ((double)rand() / RAND_MAX < mutation_rate) {
@@ -161,10 +180,22 @@ Formula* formula_crossover(Formula* formula1, Formula* formula2) {
     
     Formula* child = formula_create(formula1->type, formula1->coeff_count);
     if (!child) return NULL;
-    
+
+    child->effectiveness = (formula1->effectiveness + formula2->effectiveness) / 2.0;
+    child->created_at = time(NULL);
+    child->tests_passed = 0;
+    child->confirmations = 0;
+    if (formula1->expression) {
+        child->expression = strdup(formula1->expression);
+        if (!child->expression) {
+            formula_destroy(child);
+            return NULL;
+        }
+    }
+
     // Одноточечное скрещивание
     size_t crossover_point = rand() % formula1->coeff_count;
-    
+
     for (size_t i = 0; i < formula1->coeff_count; i++) {
         if (i < crossover_point) {
             child->coefficients[i] = formula1->coefficients[i];
@@ -178,8 +209,7 @@ Formula* formula_crossover(Formula* formula1, Formula* formula2) {
 
 void formula_destroy(Formula* formula) {
     if (!formula) return;
-    
-    free(formula->coefficients);
-    free(formula->expression);
+
+    formula_clear(formula);
     free(formula);
 }
