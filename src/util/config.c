@@ -17,6 +17,8 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->vm.max_steps = 2048;
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
+    cfg->selfplay.tasks_per_iteration = 2;
+    cfg->selfplay.max_difficulty = 3;
     cfg->seed = 1337;
 }
 
@@ -445,10 +447,34 @@ int config_load(const char *path, kolibri_config_t *cfg) {
 
     strip_comments(buf);
 
+
+
+    int rc = -1;
+    struct json_object *root = json_tokener_parse(buf);
+    if (!root || !json_object_is_type(root, json_type_object)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+
+    struct json_object *http_obj = NULL;
+    struct json_object *vm_obj = NULL;
+    struct json_object *selfplay_obj = NULL;
+    struct json_object *value = NULL;
+
+    if (!json_object_object_get_ex(root, "http", &http_obj) ||
+        !json_object_is_type(http_obj, json_type_object)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+
+    if (!json_object_object_get_ex(http_obj, "host", &value) ||
+        !json_object_is_type(value, json_type_string)) {
+
     const char *p = buf;
     skip_ws(&p);
     if (*p != '{') {
         free(buf);
+
         errno = EINVAL;
         return -1;
     }
@@ -524,8 +550,35 @@ int config_load(const char *path, kolibri_config_t *cfg) {
         return -1;
     }
 
+
+    if (json_object_object_get_ex(root, "selfplay", &selfplay_obj) &&
+        json_object_is_type(selfplay_obj, json_type_object)) {
+        if (json_object_object_get_ex(selfplay_obj, "tasks_per_iteration", &value) &&
+            json_object_is_type(value, json_type_int)) {
+            int64_t tasks = json_object_get_int64(value);
+            if (tasks >= 0 && tasks <= UINT32_MAX) {
+                cfg->selfplay.tasks_per_iteration = (uint32_t)tasks;
+            }
+        }
+        if (json_object_object_get_ex(selfplay_obj, "max_difficulty", &value) &&
+            json_object_is_type(value, json_type_int)) {
+            int64_t diff = json_object_get_int64(value);
+            if (diff < 0) {
+                diff = 0;
+            }
+            if (diff > UINT32_MAX) {
+                diff = UINT32_MAX;
+            }
+            cfg->selfplay.max_difficulty = (uint32_t)diff;
+        }
+    }
+
+    if (!json_object_object_get_ex(root, "seed", &value) ||
+        !json_object_is_type(value, json_type_int)) {
+
     skip_ws(&p);
     if (*p != '\0' || !seen_http || !seen_vm || !seen_seed) {
+
         errno = EINVAL;
         free(buf);
         return -1;
