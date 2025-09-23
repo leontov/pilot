@@ -97,6 +97,7 @@ function renderDialog(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Выполнить";
+  const spinner = createSpinner();
   const output = createElement("pre", "output");
   const traceContainer = createElement("div", "trace-container");
 
@@ -154,6 +155,7 @@ function renderDialog(container: HTMLElement) {
 
   form.appendChild(input);
   form.appendChild(submit);
+  form.appendChild(spinner);
   container.appendChild(form);
 
 
@@ -162,6 +164,8 @@ function renderDialog(container: HTMLElement) {
     const expr = input.value.trim();
     if (!expr) return;
     const payload = { digits: digitsFromExpression(expr) };
+    submit.disabled = true;
+    spinner.classList.remove("hidden");
     output.textContent = "Загрузка...";
     traceContainer.innerHTML = "";
     try {
@@ -175,7 +179,7 @@ function renderDialog(container: HTMLElement) {
       }
 
     } catch (err) {
-      showError(`Ошибка: ${String(err)}`);
+
     }
   });
 }
@@ -207,10 +211,12 @@ function renderMemory(container: HTMLElement) {
   const submit = document.createElement("button");
   submit.type = "submit";
   submit.textContent = "Найти";
+  const spinner = createSpinner();
   const pre = createElement("pre", "output");
 
   form.appendChild(input);
   form.appendChild(submit);
+  form.appendChild(spinner);
   container.appendChild(form);
   container.appendChild(pre);
 
@@ -219,10 +225,12 @@ function renderMemory(container: HTMLElement) {
     const key = input.value.trim();
     if (!key) return;
     pre.textContent = "Загрузка...";
+    submit.disabled = true;
+    spinner.classList.remove("hidden");
     try {
 
     } catch (err) {
-      showError(`Ошибка: ${String(err)}`);
+
     }
   });
 }
