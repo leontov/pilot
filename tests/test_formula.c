@@ -125,9 +125,44 @@ static void test_formula_collection_copy(void) {
     formula_collection_destroy(collection);
 }
 
+static void test_formula_collection_remove_and_top(void) {
+    FormulaCollection* collection = formula_collection_create(2);
+    assert(collection);
 
+    Formula* low = create_text_formula("low_effectiveness(x)");
+    Formula* high = create_text_formula("high_effectiveness(x)");
+    Formula* mid = create_text_formula("mid_effectiveness(x)");
+    assert(low && high && mid);
+
+    low->effectiveness = 0.2;
+    mid->effectiveness = 0.9;
+    high->effectiveness = 0.7;
+
+    assert(formula_collection_add(collection, low) == 0);
+    assert(formula_collection_add(collection, mid) == 0);
+    assert(formula_collection_add(collection, high) == 0);
+
+    assert(collection->count == 3);
+    assert(collection->capacity >= 3);
+
+    formula_collection_remove(collection, mid->id);
+    assert(collection->count == 2);
+    assert(formula_collection_find(collection, mid->id) == NULL);
+
+    const Formula* top[2] = {0};
+    size_t retrieved = formula_collection_get_top(collection, top, 2);
+    assert(retrieved == 2);
+    assert(fabs(top[0]->effectiveness - 0.7) < 1e-9);
+    assert(fabs(top[1]->effectiveness - 0.2) < 1e-9);
 
     formula_collection_destroy(collection);
+
+    formula_clear(low);
+    free(low);
+    formula_clear(high);
+    free(high);
+    formula_clear(mid);
+    free(mid);
 }
 
 static void test_analytic_formula_flow(void) {
@@ -188,6 +223,7 @@ static void test_analytic_formula_flow(void) {
 int main(void) {
     test_text_formula_roundtrip();
     test_formula_collection_copy();
+    test_formula_collection_remove_and_top();
 
     test_analytic_formula_flow();
     test_training_pipeline_integration();
