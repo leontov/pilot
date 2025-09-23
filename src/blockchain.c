@@ -5,6 +5,17 @@
 #include <openssl/evp.h>
 #include <stdio.h>
 
+static size_t safe_strnlen(const char *s, size_t max_len) {
+    size_t len = 0;
+    if (!s) {
+        return 0;
+    }
+    while (len < max_len && s[len] != '\0') {
+        len++;
+    }
+    return len;
+}
+
 #define INITIAL_CAPACITY 16
 #define DIFFICULTY_TARGET "000" // Первые три символа должны быть нулями
 #define MAX_BLOCKCHAIN_SIZE 1000 // Максимальный размер блокчейна
@@ -43,7 +54,7 @@ static void calculate_hash(const Block* block, char* output) {
             }
         } else {
             EVP_DigestUpdate(ctx, formula->content,
-                             strnlen(formula->content, sizeof(formula->content)));
+                             safe_strnlen(formula->content, sizeof(formula->content)));
         }
     }
 
@@ -229,10 +240,16 @@ const char* blockchain_get_last_hash(const Blockchain* chain) {
 
 void blockchain_destroy(Blockchain* chain) {
     if (!chain) return;
-    
+
     for (size_t i = 0; i < chain->block_count; i++) {
         Block* block = chain->blocks[i];
+        if (!block) {
+            continue;
+        }
 
+        if (block->owned_formulas) {
+            for (size_t j = 0; j < block->formula_count; ++j) {
+                formula_clear(&block->owned_formulas[j]);
             }
             free(block->owned_formulas);
         }
@@ -240,7 +257,7 @@ void blockchain_destroy(Blockchain* chain) {
         free(block->formulas);
         free(block);
     }
-    
+
     free(chain->blocks);
     free(chain);
 }
