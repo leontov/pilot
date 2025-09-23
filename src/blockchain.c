@@ -7,6 +7,7 @@
 
 #define INITIAL_CAPACITY 16
 #define DIFFICULTY_TARGET "000" // Первые три символа должны быть нулями
+#define GENESIS_PREV_HASH "0000000000000000000000000000000000000000000000000000000000000000"
 #define MAX_BLOCKCHAIN_SIZE 1000 // Максимальный размер блокчейна
 
 // Обновление функции calculate_hash для использования EVP API
@@ -146,7 +147,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     if (chain->block_count > 0) {
         strcpy(block->prev_hash, blockchain_get_last_hash(chain));
     } else {
-        strcpy(block->prev_hash, "0000000000000000000000000000000000000000000000000000000000000000");
+        strcpy(block->prev_hash, GENESIS_PREV_HASH);
     }
     
     // Майнинг блока (поиск подходящего nonce)
@@ -171,28 +172,44 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 
 bool blockchain_verify(const Blockchain* chain) {
     if (!chain) return false;
-    
-    for (size_t i = 1; i < chain->block_count; i++) {
-        char hash[65];
-        calculate_hash(chain->blocks[i-1], hash);
-        
-        // Проверка связи с предыдущим блоком
-        if (strcmp(hash, chain->blocks[i]->prev_hash) != 0) {
+
+    char previous_hash[65] = {0};
+
+    for (size_t i = 0; i < chain->block_count; i++) {
+        Block* block = chain->blocks[i];
+        if (!block) {
             return false;
         }
-        
-        // Проверка сложности
-        if (strncmp(hash, DIFFICULTY_TARGET, strlen(DIFFICULTY_TARGET)) != 0) {
+
+        char current_hash[65];
+        calculate_hash(block, current_hash);
+
+        // Проверка сложности текущего блока
+        if (strncmp(current_hash, DIFFICULTY_TARGET, strlen(DIFFICULTY_TARGET)) != 0) {
             return false;
         }
+
+        if (i == 0) {
+            // Генезис-блок должен ссылаться на фиксированный предыдущий хэш
+            if (strcmp(block->prev_hash, GENESIS_PREV_HASH) != 0) {
+                return false;
+            }
+        } else {
+            // Для остальных блоков проверяем соответствие хэшу предыдущего блока
+            if (strcmp(block->prev_hash, previous_hash) != 0) {
+                return false;
+            }
+        }
+
+        strcpy(previous_hash, current_hash);
     }
-    
+
     return true;
 }
 
 const char* blockchain_get_last_hash(const Blockchain* chain) {
     if (!chain || chain->block_count == 0) {
-        return "0000000000000000000000000000000000000000000000000000000000000000";
+        return GENESIS_PREV_HASH;
     }
     
     static char hash[65];
