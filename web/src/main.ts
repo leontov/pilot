@@ -1,5 +1,4 @@
 
-import "./main.css";
 
 const tabs = [
   { id: "dialog", label: "Диалог" },
@@ -169,7 +168,7 @@ function renderDialog(container: HTMLElement) {
     output.textContent = "Загрузка...";
     traceContainer.innerHTML = "";
     try {
-      const res = await fetch("/api/v1/dialog", {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)

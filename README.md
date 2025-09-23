@@ -38,6 +38,8 @@ Prerequisites: GCC (C11), Make, Node.js 18+, and npm.
 
 The command builds the native node, installs web dependencies, produces the static bundle, and launches the backend on `http://localhost:9000`. Logs are written to `logs/kolibri.log`.
 
+> **Note:** The web client expects the backend base URL to be provided through the `VITE_API_BASE` environment variable during the Vite build. For local development this is typically `http://localhost:9000`, e.g. `VITE_API_BASE=http://localhost:9000 npm run build`.
+
 Other CLI commands:
 
 ```
