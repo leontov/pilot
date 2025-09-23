@@ -18,16 +18,6 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-
-typedef struct {
-    FormulaMemoryFact *facts;
-    size_t count;
-    size_t capacity;
-} KolibriMemoryModule;
-
-typedef struct {
 
 
 struct KolibriAI {
@@ -536,37 +526,7 @@ static char *kolibri_ai_alloc_json(size_t initial) {
     return buffer;
 }
 
-static int kolibri_format_double_array(const double *values, size_t count, char *buffer, size_t size) {
-    if (!values || !buffer || size == 0) {
-        return -1;
-    }
 
-    size_t offset = 0;
-    for (size_t i = 0; i < count; ++i) {
-        int written = snprintf(buffer + offset, size - offset, "%s%.3f", (i == 0) ? "" : ",", values[i]);
-        if (written < 0 || (size_t)written >= size - offset) {
-            return -1;
-        }
-        offset += (size_t)written;
-    }
-    return 0;
-}
-
-static int kolibri_format_uint64_array(const uint64_t *values, size_t count, char *buffer, size_t size) {
-    if (!values || !buffer || size == 0) {
-        return -1;
-    }
-
-    size_t offset = 0;
-    for (size_t i = 0; i < count; ++i) {
-        int written = snprintf(buffer + offset, size - offset, "%s%llu", (i == 0) ? "" : ",",
-                               (unsigned long long)values[i]);
-        if (written < 0 || (size_t)written >= size - offset) {
-            return -1;
-        }
-        offset += (size_t)written;
-    }
-    return 0;
 }
 
 char *kolibri_ai_serialize_state(const KolibriAI *ai) {

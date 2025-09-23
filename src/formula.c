@@ -1,10 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "formula.h"
-#include "synthesis/formula_vm_eval.h"
+
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <time.h>
 #include <uuid/uuid.h>
 #include <json-c/json.h>
@@ -648,33 +651,6 @@ FormulaTrainingPipeline* formula_training_pipeline_create(size_t capacity) {
     pipeline->candidates.count = 0;
     formula_training_metrics_reset(&pipeline->metrics);
 
-    if (formula_mlp_model_configure(&pipeline->mlp_model,
-                                    k_default_feature_dim,
-                                    k_default_hidden_dim,
-                                    1) != 0) {
-        free(pipeline->candidates.hypotheses);
-        free(pipeline);
-        return NULL;
-    }
-
-    if (formula_transformer_model_configure(&pipeline->transformer_model,
-                                            k_default_feature_dim,
-                                            k_default_transformer_dim) != 0) {
-        formula_mlp_model_release(&pipeline->mlp_model);
-        free(pipeline->candidates.hypotheses);
-        free(pipeline);
-        return NULL;
-    }
-
-    formula_training_pipeline_randomize_models(pipeline);
-    if (formula_training_pipeline_sync_weights_buffer(pipeline) != 0) {
-        formula_transformer_model_release(&pipeline->transformer_model);
-        formula_mlp_model_release(&pipeline->mlp_model);
-        free(pipeline->candidates.hypotheses);
-        free(pipeline);
-        return NULL;
-    }
-
     return pipeline;
 }
 
@@ -702,6 +678,44 @@ void formula_training_pipeline_destroy(FormulaTrainingPipeline* pipeline) {
     pipeline->weights_size = 0;
 
     free(pipeline);
+}
+
+static void formula_dataset_entry_from_json(struct json_object* entry,
+                                            FormulaDatasetEntry* target) {
+    if (!entry || !target) {
+        return;
+    }
+
+    memset(target, 0, sizeof(*target));
+
+    struct json_object* value = NULL;
+    if (json_object_object_get_ex(entry, "task", &value)) {
+        const char* task = json_object_get_string(value);
+        if (task) {
+            strncpy(target->task, task, sizeof(target->task) - 1);
+        }
+    }
+
+    if (json_object_object_get_ex(entry, "response", &value)) {
+        const char* response = json_object_get_string(value);
+        if (response) {
+            strncpy(target->response, response, sizeof(target->response) - 1);
+        }
+    }
+
+    if (json_object_object_get_ex(entry, "effectiveness", &value)) {
+        target->effectiveness = json_object_get_double(value);
+    }
+
+    if (json_object_object_get_ex(entry, "rating", &value)) {
+        target->rating = json_object_get_int(value);
+    }
+
+    if (json_object_object_get_ex(entry, "timestamp", &value)) {
+        target->timestamp = (time_t)json_object_get_int64(value);
+    } else {
+        target->timestamp = time(NULL);
+    }
 }
 
 static int read_file_bytes(const char* path, unsigned char** buffer, size_t* size) {
@@ -743,14 +757,8 @@ static int read_file_bytes(const char* path, unsigned char** buffer, size_t* siz
     return 0;
 }
 
-int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
-                                          const char* path) {
-    if (!pipeline || !path) {
-        return -1;
-    }
-
-    formula_dataset_clear(&pipeline->dataset);
-
+static int formula_training_pipeline_load_dataset_json_array(FormulaTrainingPipeline* pipeline,
+                                                            const char* path) {
     struct json_object* root = json_object_from_file(path);
     if (!root) {
         return -1;
@@ -764,6 +772,8 @@ int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
     size_t count = (size_t)json_object_array_length(root);
     if (count == 0) {
         json_object_put(root);
+        pipeline->dataset.count = 0;
+        pipeline->dataset.entries = NULL;
         return 0;
     }
 
@@ -778,40 +788,108 @@ int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
         if (!entry) {
             continue;
         }
-
-        FormulaDatasetEntry* target = &pipeline->dataset.entries[i];
-        struct json_object* value = NULL;
-
-        if (json_object_object_get_ex(entry, "task", &value)) {
-            const char* task = json_object_get_string(value);
-            if (task) {
-                strncpy(target->task, task, sizeof(target->task) - 1);
-            }
-        }
-
-        if (json_object_object_get_ex(entry, "response", &value)) {
-            const char* response = json_object_get_string(value);
-            if (response) {
-                strncpy(target->response, response, sizeof(target->response) - 1);
-            }
-        }
-
-        if (json_object_object_get_ex(entry, "effectiveness", &value)) {
-            target->effectiveness = json_object_get_double(value);
-        }
-
-        if (json_object_object_get_ex(entry, "rating", &value)) {
-            target->rating = json_object_get_int(value);
-        }
-
-        if (json_object_object_get_ex(entry, "timestamp", &value)) {
-            target->timestamp = (time_t)json_object_get_int64(value);
-        }
+        formula_dataset_entry_from_json(entry, &pipeline->dataset.entries[i]);
     }
 
     pipeline->dataset.count = count;
     json_object_put(root);
     return 0;
+}
+
+static int formula_training_pipeline_load_dataset_jsonl(FormulaTrainingPipeline* pipeline,
+                                                        const char* path) {
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        return -1;
+    }
+
+    FormulaDatasetEntry* entries = NULL;
+    size_t capacity = 0;
+    size_t count = 0;
+    char* line = NULL;
+    size_t linecap = 0;
+    struct json_tokener* tok = json_tokener_new();
+    if (!tok) {
+        fclose(file);
+        return -1;
+    }
+
+    ssize_t linelen = 0;
+    while ((linelen = getline(&line, &linecap, file)) != -1) {
+        size_t start = 0;
+        size_t end = (size_t)linelen;
+        while (start < (size_t)linelen && isspace((unsigned char)line[start])) {
+            start++;
+        }
+        while (end > start && isspace((unsigned char)line[end - 1])) {
+            end--;
+        }
+        if (end <= start) {
+            continue;
+        }
+
+        struct json_object* entry = json_tokener_parse_ex(tok, line + start, (int)(end - start));
+        enum json_tokener_error err = json_tokener_get_error(tok);
+        json_tokener_reset(tok);
+        if (err != json_tokener_success || !entry) {
+            continue;
+        }
+        if (!json_object_is_type(entry, json_type_object)) {
+            json_object_put(entry);
+            continue;
+        }
+
+        if (count == capacity) {
+            size_t new_cap = capacity ? capacity * 2 : 8;
+            FormulaDatasetEntry* tmp = realloc(entries, new_cap * sizeof(*tmp));
+            if (!tmp) {
+                json_object_put(entry);
+                free(entries);
+                free(line);
+                json_tokener_free(tok);
+                fclose(file);
+                return -1;
+            }
+            entries = tmp;
+            capacity = new_cap;
+        }
+
+        formula_dataset_entry_from_json(entry, &entries[count]);
+        count++;
+        json_object_put(entry);
+    }
+
+    free(line);
+    json_tokener_free(tok);
+    fclose(file);
+
+    pipeline->dataset.entries = entries;
+    pipeline->dataset.count = count;
+    return 0;
+}
+
+int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
+                                          const char* path) {
+    if (!pipeline || !path) {
+        return -1;
+    }
+
+    formula_dataset_clear(&pipeline->dataset);
+
+    int rc = -1;
+    const char* ext = strrchr(path, '.');
+    if (ext && strcmp(ext, ".jsonl") == 0) {
+        rc = formula_training_pipeline_load_dataset_jsonl(pipeline, path);
+    } else {
+        rc = formula_training_pipeline_load_dataset_json_array(pipeline, path);
+    }
+
+    if (rc == 0) {
+        strncpy(pipeline->dataset_path, path, sizeof(pipeline->dataset_path) - 1);
+        pipeline->dataset_path[sizeof(pipeline->dataset_path) - 1] = '\0';
+    }
+
+    return rc;
 }
 
 int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,
@@ -896,6 +974,20 @@ int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
                                       size_t max_candidates) {
     if (!pipeline) {
         return -1;
+    }
+
+    const char* reload_path = NULL;
+    if (pipeline->dataset_path[0] != '\0') {
+        reload_path = pipeline->dataset_path;
+    } else {
+        const char* env_path = getenv(KOLIBRI_AI_LEARNING_DATA_ENV);
+        if (!env_path || env_path[0] == '\0') {
+            env_path = KOLIBRI_AI_LEARNING_DATA_DEFAULT;
+        }
+        reload_path = env_path;
+    }
+    if (reload_path && reload_path[0]) {
+        (void)formula_training_pipeline_load_dataset(pipeline, reload_path);
     }
 
     formula_training_pipeline_reset_candidates(pipeline);

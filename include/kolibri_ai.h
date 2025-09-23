@@ -6,6 +6,9 @@
 
 
 
+#define KOLIBRI_AI_LEARNING_DATA_ENV "KOLIBRI_LEARNING_DATA"
+#define KOLIBRI_AI_LEARNING_DATA_DEFAULT "learning_data.jsonl"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

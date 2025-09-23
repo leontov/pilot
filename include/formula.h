@@ -122,6 +122,7 @@ typedef struct {
     FormulaTransformerModel transformer_model;
     unsigned char* weights;
     size_t weights_size;
+    char dataset_path[256];
 } FormulaTrainingPipeline;
 
 FormulaMemorySnapshot formula_memory_snapshot_clone(const FormulaMemoryFact* facts,
