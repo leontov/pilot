@@ -1,3 +1,15 @@
+// Copyright (c) 2025 Кочуров Владислав Евгеньевич
+
+function resolveBasePath(): string {
+  if (typeof window === "undefined") {
+    return "/";
+  }
+
+  const resolved = new URL(import.meta.env.BASE_URL ?? "/", window.location.href);
+  const pathname = resolved.pathname.endsWith("/") ? resolved.pathname : `${resolved.pathname}/`;
+  return pathname;
+}
+
 export function registerServiceWorker(): void {
   if (import.meta.env.DEV) {
     return;
@@ -7,9 +19,12 @@ export function registerServiceWorker(): void {
     return;
   }
 
+  const basePath = resolveBasePath();
+  const serviceWorkerPath = `${basePath}service-worker.js`;
+
   const register = () => {
     navigator.serviceWorker
-      .register("/service-worker.js")
+      .register(serviceWorkerPath, { scope: basePath })
       .catch((error) => {
         console.error("Service worker registration failed", error);
       });

@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Copyright (c) 2024 Кочуров Владислав Евгеньевич -->
+<!-- Copyright (c) 2025 Кочуров Владислав Евгеньевич -->
 
 <html lang="ru">
   <head>
@@ -12,14 +12,13 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="format-detection" content="telephone=no" />
     <meta name="color-scheme" content="dark light" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%icons/kolibri-orbit.svg" />
+    <link rel="apple-touch-icon" href="%BASE_URL%icons/kolibri-orbit.svg" />
     <title>Kolibri Ω Studio</title>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="%BASE_URL%src/main.tsx"></script>
   </body>
 </html>

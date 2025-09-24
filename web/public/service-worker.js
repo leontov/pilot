@@ -1,12 +1,25 @@
+/* Copyright (c) 2025 Кочуров Владислав Евгеньевич */
+
 const CACHE_NAME = "kolibri-pwa-v1";
-const OFFLINE_URL = "/offline.html";
-const PRECACHE_URLS = ["/", OFFLINE_URL, "/manifest.webmanifest"];
+const scopeUrl = self.registration ? new URL(self.registration.scope) : new URL(self.location.href);
+const basePath = scopeUrl.pathname.endsWith("/") ? scopeUrl.pathname : `${scopeUrl.pathname}/`;
+const origin = scopeUrl.origin;
+const BASE_URL = `${origin}${basePath}`;
+const OFFLINE_URL = `${BASE_URL}offline.html`;
+const MANIFEST_URL = `${BASE_URL}manifest.webmanifest`;
+const PRECACHE_URLS = [BASE_URL, OFFLINE_URL, MANIFEST_URL];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .then((cache) =>
+        Promise.all(
+          PRECACHE_URLS.map((url) =>
+            cache.add(new Request(url, { cache: "reload" })).catch(() => undefined)
+          )
+        )
+      )
       .then(() => self.skipWaiting())
   );
 });
@@ -36,7 +49,7 @@ self.addEventListener("fetch", (event) => {
 
   const requestURL = new URL(event.request.url);
 
-  if (requestURL.origin !== self.location.origin) {
+  if (requestURL.origin !== origin) {
     return;
   }
 
@@ -64,7 +77,12 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           return response;
         })
-        .catch(() => caches.match(OFFLINE_URL));
+        .catch(() => {
+          if (event.request.destination === "document") {
+            return caches.match(OFFLINE_URL);
+          }
+          return Response.error();
+        });
     })
   );
 });

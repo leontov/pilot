@@ -1,0 +1,37 @@
+# Copyright (c) 2025 Кочуров Владислав Евгеньевич
+
+stages:
+  - build
+  - deploy
+
+default:
+  image: node:20
+  cache:
+    paths:
+      - web/node_modules/
+
+build_web:
+  stage: build
+  script:
+    - npm ci --prefix web
+    - npm run build --prefix web
+  artifacts:
+    paths:
+      - web/dist
+  only:
+    - main
+    - merge_requests
+
+pages:
+  stage: deploy
+  dependencies:
+    - build_web
+  script:
+    - rm -rf public
+    - mkdir -p public
+    - cp -r web/dist/. public/
+  artifacts:
+    paths:
+      - public
+  only:
+    - main
