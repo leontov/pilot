@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Kolibri Orbit Icon</title>
+  <desc id="desc">Stylized kolibri orbit icon with concentric gradients representing Kolibri Ω intelligence.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="48%" r="60%">
+      <stop offset="0%" stop-color="#4c6ef5" />
+      <stop offset="45%" stop-color="#315efb" />
+      <stop offset="100%" stop-color="#070b14" />
+    </radialGradient>
+    <linearGradient id="wing" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#67d9f4" />
+      <stop offset="50%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#ff7ab6" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)" />
+  <g transform="translate(256 256)">
+    <path d="M-110 -40c54-70 162-72 216 6 30 44 20 108-20 146-40 38-104 44-152 10-8-6-16-14-22-22 46 12 96-10 118-54 18-36 8-78-22-104-40-32-102-28-140 18-4 4-12 4-16 0-4-4-4-10-2-14z" fill="url(#wing)" />
+    <circle r="72" fill="none" stroke="#c3dafe" stroke-width="18" stroke-linecap="round" stroke-dasharray="60 24" opacity="0.6" />
+    <circle r="132" fill="none" stroke="#00c2ff" stroke-width="12" stroke-linecap="round" stroke-dasharray="36 30" opacity="0.45" />
+    <circle r="180" fill="none" stroke="#14f195" stroke-width="8" stroke-linecap="round" stroke-dasharray="32 32" opacity="0.35" />
+    <circle cx="108" cy="-28" r="22" fill="#fef3c7" />
+    <circle cx="118" cy="-38" r="10" fill="#0f172a" />
+  </g>
+</svg>
