@@ -30,6 +30,7 @@ Key subsystems delivered in this milestone:
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/dialog`, `/api/v1/vm/run`, `/api/v1/fkv/get`, `/api/v1/program/submit`, and `/api/v1/chain/submit`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/metrics`, `/api/v1/vm/run`, `/api/v1/dialog`, and `/api/v1/fkv/get`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **Web Studio** – Lightweight Vite + TypeScript SPA that connects to the HTTP API and renders console-style panels for dialog, VM trace, and memory previews.
+* **Runtime entrypoint** – `src/main.c` is the only native launcher; it wires VM execution, F-KV storage, Kolibri AI orchestration, and HTTP routing. The legacy UDP prototype from `src/kolibri_node_v1.c` has been removed to keep the build aligned with the current subsystems.【F:src/main.c†L1-L118】【F:CMakeLists.txt†L24-L41】
 
 ## Building and running
 
