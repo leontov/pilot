@@ -52,6 +52,13 @@ static void formula_copy_string(char *dest, size_t dest_size, const char *src) {
         return;
     }
 
+    size_t len = 0;
+    while (len + 1 < dest_size && src[len]) {
+        dest[len] = src[len];
+        len++;
+    }
+
+
     size_t len = stub_strnlen(src, dest_size - 1);
 
 
@@ -65,6 +72,7 @@ static void formula_copy_string(char *dest, size_t dest_size, const char *src) {
 
 
     memcpy(dest, src, len);
+
     dest[len] = '\0';
 }
 

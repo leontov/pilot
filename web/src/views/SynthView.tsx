@@ -79,6 +79,55 @@ export function SynthView() {
     } as const;
   }, [submissions]);
 
+  const chart = useMemo(() => {
+    if (!submissions.length) {
+      return { hasData: false, width: 320, height: 160, poePolyline: "", mdlPolyline: "" } as const;
+    }
+    const history = [...submissions].reverse();
+    const width = 320;
+    const height = 160;
+    const pad = 18;
+
+    const buildPolyline = (values: (number | undefined)[], invert: boolean) => {
+      const filtered = values.filter((value): value is number => typeof value === "number");
+      if (!filtered.length) {
+        return "";
+      }
+      const min = Math.min(...filtered);
+      const max = Math.max(...filtered);
+      const span = max - min || 1;
+      const step = values.length > 1 ? (width - 2 * pad) / (values.length - 1) : 0;
+      return values
+        .map((value, index) => {
+          if (typeof value !== "number") {
+            return null;
+          }
+          const x = pad + step * index;
+          const ratio = (value - min) / span;
+          const y = invert
+            ? pad + (height - 2 * pad) * ratio
+            : height - pad - (height - 2 * pad) * ratio;
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        })
+        .filter(Boolean)
+        .join(" ");
+    };
+
+    const poeValues = history.map((entry) => (typeof entry.response.poe === "number" ? entry.response.poe : undefined));
+    const mdlValues = history.map((entry) => (typeof entry.response.mdl === "number" ? entry.response.mdl : undefined));
+
+    const poePolyline = buildPolyline(poeValues, false);
+    const mdlPolyline = buildPolyline(mdlValues, true);
+
+    return {
+      hasData: Boolean(poePolyline || mdlPolyline),
+      width,
+      height,
+      poePolyline,
+      mdlPolyline
+    } as const;
+  }, [submissions]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     let program: number[];
@@ -169,6 +218,42 @@ export function SynthView() {
               </strong>
             </div>
           </div>
+        )}
+      </article>
+      <article className="panel">
+        <header>
+          <h3>Динамика PoE/MDL</h3>
+          <p>Графики помогают отследить тренды качества программ.</p>
+        </header>
+        {chart.hasData ? (
+          <div className="chart" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <svg
+              viewBox={`0 0 ${chart.width} ${chart.height}`}
+              role="img"
+              aria-label="История метрик PoE и MDL"
+              style={{ width: "100%", maxWidth: "360px", height: "auto" }}
+            >
+              <rect x={0.5} y={0.5} width={chart.width - 1} height={chart.height - 1} fill="none" stroke="#ccc" strokeWidth={1} />
+              {chart.mdlPolyline ? (
+                <polyline points={chart.mdlPolyline} fill="none" stroke="#c92a2a" strokeWidth={2} strokeLinecap="round" />
+              ) : null}
+              {chart.poePolyline ? (
+                <polyline points={chart.poePolyline} fill="none" stroke="#2b8a3e" strokeWidth={2} strokeLinecap="round" />
+              ) : null}
+            </svg>
+            <div style={{ display: "flex", gap: "1.5rem", fontSize: "0.875rem" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                <span style={{ width: "0.75rem", height: "0.75rem", backgroundColor: "#2b8a3e", borderRadius: "9999px" }} />
+                PoE
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                <span style={{ width: "0.75rem", height: "0.75rem", backgroundColor: "#c92a2a", borderRadius: "9999px" }} />
+                MDL
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="empty-state">Недостаточно данных для построения графиков.</div>
         )}
       </article>
       <article className="panel">
