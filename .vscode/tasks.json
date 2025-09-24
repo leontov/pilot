@@ -23,7 +23,7 @@
     {
       "label": "Run Single Kolibri Node",
       "type": "shell",
-      "command": "./bin/kolibri_node_v1 --id nodeA --port 9000 --data chainA.db --root-key root.key",
+      "command": "./bin/kolibri_node --id nodeA --port 9000 --data chainA.db --root-key root.key",
       "group": "test",
       "dependsOn": [
         "Build Kolibri Node"
@@ -33,7 +33,7 @@
     {
       "label": "Run Two Kolibri Nodes",
       "type": "shell",
-      "command": "bash -c \"./bin/kolibri_node_v1 --id nodeA --port 9000 --data chainA.db --root-key root.key & \\\n./bin/kolibri_node_v1 --id nodeB --port 9001 --data chainB.db --root-key root.key --peer 127.0.0.1:9000\"",
+      "command": "bash -c \"./bin/kolibri_node --id nodeA --port 9000 --data chainA.db --root-key root.key & \\\n./bin/kolibri_node --id nodeB --port 9001 --data chainB.db --root-key root.key --peer 127.0.0.1:9000\"",
       "group": "test",
       "dependsOn": [
         "Build Kolibri Node"

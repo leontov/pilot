@@ -18,8 +18,11 @@ BUILD_DIR := build/obj
 BIN_DIR := bin
 TARGET := $(BIN_DIR)/kolibri_node
 
+# Сборка использует новый узел из `src/main.c`; устаревший `kolibri_node_v1.c`
+# удалён, поэтому список исходников соответствует актуальным модулям.
 SRC := \
     src/main.c \
+
     src/util/log.c \
     src/util/bench.c \
     src/util/config.c \
@@ -29,12 +32,27 @@ SRC := \
     src/kolibri_ai.c \
     src/http/http_server.c \
     src/http/http_routes.c \
+
     src/blockchain.c \
+    src/formula.c \
     src/formula_runtime.c \
-    src/synthesis/search.c \
-    src/synthesis/formula_vm_eval.c \
     src/formula_stub.c \
+
+    src/fkv/fkv.c \
+    src/http/http_routes.c \
+    src/http/http_server.c \
+    src/kolibri_ai.c \
+    src/protocol/swarm.c \
+    src/synthesis/formula_vm_eval.c \
+    src/synthesis/search.c \
+    src/synthesis/selfplay.c \
+    src/util/bench.c \
+    src/util/config.c \
+    src/util/json_compat.c \
+    src/util/log.c \
+    src/vm/vm.c
     src/protocol/swarm.c
+
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
 
