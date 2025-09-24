@@ -35,12 +35,17 @@ typedef struct {
 } KolibriAISelfplayConfig;
 
 typedef struct {
+    uint32_t top_k;
+} fkv_config_t;
+
+typedef struct {
     http_config_t http;
     vm_config_t vm;
     FormulaSearchConfig search;
     uint32_t seed;
     ai_persistence_config_t ai;
     KolibriAISelfplayConfig selfplay;
+    fkv_config_t fkv;
 } kolibri_config_t;
 
 int config_load(const char *path, kolibri_config_t *cfg);

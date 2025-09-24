@@ -21,6 +21,7 @@ typedef struct {
     const uint8_t *value;
     size_t value_len;
     fkv_entry_type_t type;
+    double score;
 } fkv_entry_t;
 
 typedef struct {
@@ -28,9 +29,15 @@ typedef struct {
     size_t count;
 } fkv_iter_t;
 
-int fkv_init(void);
+int fkv_init(size_t top_k_limit);
 void fkv_shutdown(void);
-int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn, fkv_entry_type_t type);
+size_t fkv_get_top_k_limit(void);
+int fkv_put(const uint8_t *key,
+            size_t kn,
+            const uint8_t *val,
+            size_t vn,
+            fkv_entry_type_t type,
+            double score);
 int fkv_get_prefix(const uint8_t *key, size_t kn, fkv_iter_t *it, size_t k);
 void fkv_iter_free(fkv_iter_t *it);
 int fkv_save(const char *path);

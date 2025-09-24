@@ -43,6 +43,9 @@ static void test_config_valid(void) {
         "    \"max_stack\": 256,\n"
         "    \"trace_depth\": 32\n"
         "  },\n"
+        "  \"fkv\": {\n"
+        "    \"top_k\": 12\n"
+        "  },\n"
         "  \"seed\": 777\n"
         "}\n";
 
@@ -55,6 +58,7 @@ static void test_config_valid(void) {
     assert(cfg.vm.max_steps == 4096);
     assert(cfg.vm.max_stack == 256);
     assert(cfg.vm.trace_depth == 32);
+    assert(cfg.fkv.top_k == 12);
     assert(cfg.seed == 777);
     remove_temp_file(path);
 }

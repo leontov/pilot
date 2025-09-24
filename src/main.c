@@ -278,7 +278,12 @@ static int run_chat(const kolibri_config_t *cfg) {
             int stored = 0;
             if (digits_from_number(exchange_id, key_digits, sizeof(key_digits), &key_len) == 0 &&
                 digits_from_number(value, val_digits, sizeof(val_digits), &val_len) == 0) {
-                if (fkv_put(key_digits, key_len, val_digits, val_len, FKV_ENTRY_TYPE_VALUE) == 0) {
+                if (fkv_put(key_digits,
+                            key_len,
+                            val_digits,
+                            val_len,
+                            FKV_ENTRY_TYPE_VALUE,
+                            (double)exchange_id) == 0) {
                     stored = 1;
                 }
             }
@@ -332,7 +337,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc > 1 && strcmp(argv[1], "--chat") == 0) {
-        if (fkv_init() != 0) {
+        if (fkv_init(cfg.fkv.top_k) != 0) {
             log_error("failed to initialize F-KV");
             if (log_fp) {
                 fclose(log_fp);
@@ -347,7 +352,7 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-    if (fkv_init() != 0) {
+    if (fkv_init(cfg.fkv.top_k) != 0) {
         log_error("failed to initialize F-KV");
         if (log_fp) {
             fclose(log_fp);

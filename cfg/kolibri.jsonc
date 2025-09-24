@@ -1,5 +1,4 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
-
 {
   // HTTP configuration
   "http": {
@@ -13,7 +12,9 @@
     "max_stack": 128,
     "trace_depth": 64
   },
-
+  // F-KV storage defaults
+  "fkv": {
+    "top_k": 8
   },
   // PRNG seed for RANDOM10 opcode
   "seed": 1337,

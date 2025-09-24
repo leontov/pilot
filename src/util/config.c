@@ -38,6 +38,8 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->search.max_coefficient = 9;
     cfg->search.max_formula_length = 32;
     cfg->search.base_effectiveness = 0.5;
+
+    cfg->fkv.top_k = 8;
 }
 
 static void skip_ws(json_cursor_t *cur) {
@@ -383,6 +385,48 @@ static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen)
     return 0;
 }
 
+static int parse_fkv_object(json_cursor_t *cur, kolibri_config_t *cfg) {
+    if (consume_char(cur, '{') != 0) {
+        return -1;
+    }
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
+            break;
+        }
+        char key[32];
+        if (parse_string(cur, key, sizeof(key)) != 0) {
+            return -1;
+        }
+        if (consume_char(cur, ':') != 0) {
+            return -1;
+        }
+        if (strcmp(key, "top_k") == 0) {
+            uint64_t value = 0;
+            if (parse_uint(cur, &value) != 0 || value == 0 || value > 1024) {
+                return -1;
+            }
+            cfg->fkv.top_k = (uint32_t)value;
+        } else {
+            if (skip_value(cur) != 0) {
+                return -1;
+            }
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == '}') {
+            cur->cur++;
+            break;
+        }
+        return -1;
+    }
+    return 0;
+}
+
 static int parse_ai_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
@@ -657,6 +701,12 @@ int config_load(const char *path, kolibri_config_t *cfg) {
             saw_seed = 1;
         } else if (strcmp(key, "ai") == 0) {
             if (parse_ai_object(&cur, &tmp) != 0) {
+                free(buffer);
+                errno = EINVAL;
+                return -1;
+            }
+        } else if (strcmp(key, "fkv") == 0) {
+            if (parse_fkv_object(&cur, &tmp) != 0) {
                 free(buffer);
                 errno = EINVAL;
                 return -1;
