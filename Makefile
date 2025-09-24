@@ -21,28 +21,32 @@ TARGET := $(BIN_DIR)/kolibri_node
 
 SRC := \
 
-	src/main.c \
-	src/util/log.c \
-	src/util/config.c \
-	src/util/json_compat.c \
-	src/util/bench.c \
-	src/vm/vm.c \
-	src/fkv/fkv.c \
-	src/kolibri_ai.c \
-	src/kolibri_decimal_cell.c \
-	src/formula.c \
-	src/formula_runtime.c \
-	src/formula_stub.c \
-	src/http/http_server.c \
-	src/http/http_routes.c \
-	src/http_status_server.c \
-	src/blockchain.c \
-	src/protocol/swarm.c \
-	src/protocol/swarm_node.c \
-	src/protocol/gossip.c \
-	src/synthesis/search.c \
-	src/synthesis/formula_vm_eval.c \
-	src/synthesis/selfplay.c
+  src/main.c \
+  src/util/log.c \
+  src/util/config.c \
+  src/util/json_compat.c \
+  src/util/bench.c \
+  src/vm/vm.c \
+  src/fkv/fkv.c \
+  src/kolibri_ai.c \
+  src/http/http_server.c \
+  src/http/http_routes.c \
+  src/http_status_server.c \
+  src/blockchain.c \
+  src/formula_runtime.c \
+  src/formula_stub.c \
+  src/protocol/swarm.c \
+  src/protocol/swarm_node.c \
+  src/protocol/gossip.c \
+  src/synthesis/formula_vm_eval.c \
+  src/synthesis/search.c \
+  src/synthesis/selfplay.c
+
+
+
+
+
+
 
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
@@ -52,18 +56,22 @@ TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/conf
 TEST_CONFIG_SRC := tests/unit/test_config.c src/util/config.c src/util/log.c
 TEST_KOLIBRI_ITER_SRC := \
 
-	tests/test_kolibri_ai_iterations.c \
-	src/kolibri_ai.c \
-	src/formula_runtime.c \
-	src/formula_stub.c \
-	src/synthesis/search.c \
-	src/synthesis/formula_vm_eval.c \
-	src/vm/vm.c \
-	src/fkv/fkv.c \
-	src/util/log.c \
-	src/util/config.c \
-	src/util/json_compat.c
-TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c src/util/log.c src/util/config.c
+  tests/test_kolibri_ai_iterations.c \
+  src/kolibri_ai.c \
+  src/formula_runtime.c \
+  src/formula_stub.c \
+  src/synthesis/search.c \
+  src/synthesis/formula_vm_eval.c \
+  src/vm/vm.c \
+  src/fkv/fkv.c \
+  src/util/log.c \
+  src/util/config.c \
+  src/util/json_compat.c
+TEST_SWARM_PROTOCOL_SRC := \
+  tests/unit/test_swarm_protocol.c \
+  src/protocol/swarm.c \
+  src/util/log.c \
+  src/util/config.c
 
 TEST_HTTP_ROUTES_SRC := \
 	tests/unit/test_http_routes.c \
@@ -104,21 +112,19 @@ TEST_BLOCKCHAIN_STORAGE_SRC := \
 	src/util/log.c
 TEST_GOSSIP_CLUSTER_SRC := \
 
-	tests/test_gossip_cluster.c \
-	src/protocol/gossip.c \
-	src/protocol/swarm_node.c \
-	src/protocol/swarm.c \
-	src/blockchain.c \
-	src/formula_runtime.c \
-	src/formula_stub.c \
-	src/fkv/fkv.c \
-	src/util/log.c
+  tests/test_gossip_cluster.c \
+  src/protocol/gossip.c \
+  src/protocol/swarm_node.c \
+  src/protocol/swarm.c \
+  src/blockchain.c \
+  src/formula_runtime.c \
+  src/formula_stub.c \
+  src/fkv/fkv.c \
+  src/util/log.c
 
-.PHONY: all build clean run test \
-	test-vm test-fkv test-config test-kolibri-ai \
-	test-swarm-protocol test-http-routes test-regress \
-	test-synthesis-search bench test-swarm-exchange \
-	test-blockchain-storage test-gossip-cluster
+
+.PHONY: all build clean run test test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-synthesis-search test-swarm-exchange test-blockchain-storage test-gossip-cluster bench
+
 
 
 all: build
@@ -224,6 +230,12 @@ test-gossip-cluster: $(BUILD_DIR)/tests/test_gossip_cluster
 test: test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-synthesis-search
 
 bench: build
+
+	$(TARGET) --bench $(BENCH_ARGS)
+
+
+test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-swarm-exchange test-blockchain-storage test-gossip-cluster
+
 
 	$(TARGET) --bench
 

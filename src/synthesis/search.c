@@ -21,7 +21,9 @@
 #endif
 
 
+
 static double clamp01(double value);
+
 
 FormulaSearchConfig formula_search_config_default(void) {
     FormulaSearchConfig config;
@@ -31,6 +33,91 @@ FormulaSearchConfig formula_search_config_default(void) {
     config.max_formula_length = 96;
     config.base_effectiveness = 0.45;
     return config;
+
+}
+
+static double clamp01(double value) {
+    if (value < 0.0) {
+        return 0.0;
+    }
+    if (value > 1.0) {
+        return 1.0;
+    }
+    return value;
+}
+
+static void to_lower_copy(const char *src, char *dst, size_t dst_size) {
+    if (!dst || dst_size == 0) {
+        return;
+    }
+    size_t i = 0;
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+    for (; src[i] != '\0' && i + 1 < dst_size; ++i) {
+        dst[i] = (char)tolower((unsigned char)src[i]);
+    }
+    dst[i] = '\0';
+}
+
+static double compute_token_overlap(const char *content_lower, const char *description) {
+    if (!content_lower || !description || description[0] == '\0') {
+        return 0.0;
+    }
+
+    char buffer[256];
+    to_lower_copy(description, buffer, sizeof(buffer));
+
+    const char *delim = " ,.;:-_";
+    char *saveptr = NULL;
+    char *token = strtok_r(buffer, delim, &saveptr);
+    size_t tokens = 0;
+    size_t matches = 0;
+
+    while (token) {
+        tokens++;
+        if (strstr(content_lower, token)) {
+            matches++;
+        }
+        token = strtok_r(NULL, delim, &saveptr);
+    }
+
+    if (tokens == 0) {
+        return 0.0;
+    }
+    return (double)matches / (double)tokens;
+}
+
+static double compute_alignment(const char *content,
+                                const FormulaMemorySnapshot *memory) {
+    if (!content || !memory || memory->count == 0) {
+        return 0.0;
+    }
+
+    char normalized[sizeof(((Formula *)0)->content)];
+    to_lower_copy(content, normalized, sizeof(normalized));
+
+    double weighted_sum = 0.0;
+    double weight_total = 0.0;
+
+    for (size_t i = 0; i < memory->count; ++i) {
+        const FormulaMemoryFact *fact = &memory->facts[i];
+        double weight = fact->importance > 0.0 ? fact->importance : 0.1;
+        double overlap = compute_token_overlap(normalized, fact->description);
+        double reward_bias = fact->reward > 0.0 ? fact->reward : 0.0;
+        weighted_sum += weight * (0.6 * overlap + 0.4 * clamp01(reward_bias));
+        weight_total += weight;
+    }
+
+    if (weight_total <= 0.0) {
+        return 0.0;
+    }
+
+    return clamp01(weighted_sum / weight_total);
+}
+
+
 
 }
 
@@ -640,9 +727,11 @@ static int emit_formula(search_context_t *ctx,
         return 0;
     }
 
+
     char expression[256];
     size_t len = 0;
     int first_term_written = 0;
+
 
     len = snprintf(expression, sizeof(expression), "f(x) = ");
     if (len >= sizeof(expression)) {
@@ -700,7 +789,6 @@ static int emit_formula(search_context_t *ctx,
     }
 
 
-
     if (!first_term_written) {
         snprintf(expression, sizeof(expression), "f(x) = 0");
         len = strlen(expression);
@@ -752,6 +840,7 @@ static int generate_terms(search_context_t *ctx,
         coeffs[depth] = coeff;
         if (ctx->limit > 0 && ctx->produced >= ctx->limit) {
             return 1;
+
         }
         if (generate_terms(ctx, term_count, depth + 1, coeffs, min_coeff, max_coeff)) {
             return 1;
@@ -766,6 +855,7 @@ static int generate_terms(search_context_t *ctx,
         coeffs[depth] = coeff;
         if (ctx->limit > 0 && ctx->produced >= ctx->limit) {
             return 1;
+
         }
         if (generate_terms(ctx, term_count, depth + 1, coeffs, min_coeff, max_coeff)) {
             return 1;
@@ -782,16 +872,19 @@ size_t formula_search_enumerate(const FormulaCollection *library,
     FormulaSearchConfig local_config = config ? *config : formula_search_config_default();
     if (local_config.max_terms == 0) {
         local_config.max_terms = formula_search_config_default().max_terms;
+
     }
     if (local_config.max_coefficient == 0) {
         local_config.max_coefficient = formula_search_config_default().max_coefficient;
     }
+
     if (local_config.max_formula_length == 0) {
         local_config.max_formula_length = formula_search_config_default().max_formula_length;
     }
     if (local_config.max_candidates == 0) {
         local_config.max_candidates = formula_search_config_default().max_candidates;
     }
+
 
 size_t formula_search_enumerate(const FormulaCollection *library,
                                 const FormulaMemorySnapshot *memory,
@@ -813,6 +906,7 @@ size_t formula_search_enumerate(const FormulaCollection *library,
 
     }
 
+
     search_context_t ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.library = library;
@@ -821,6 +915,7 @@ size_t formula_search_enumerate(const FormulaCollection *library,
     ctx.emit = emit;
     ctx.user_data = user_data;
     ctx.limit = local_config.max_candidates;
+
 
     int min_coeff = -(int)local_config.max_coefficient;
     int max_coeff = (int)local_config.max_coefficient;
@@ -943,6 +1038,7 @@ size_t formula_search_mutate(const FormulaCollection *library,
     ctx.emit = emit;
     ctx.user_data = user_data;
     ctx.limit = local_config.max_candidates;
+
 
     int min_coeff = -(int)local_config.max_coefficient;
     int max_coeff = (int)local_config.max_coefficient;
