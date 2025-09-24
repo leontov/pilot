@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,25 @@ static void insert_sample(const char *key_str, const char *val_str, fkv_entry_ty
     free(vbuf);
 }
 
+static void insert_scored_sample(const char *key_str,
+                                 const char *val_str,
+                                 fkv_entry_type_t type,
+                                 uint64_t priority) {
+    size_t klen = strlen(key_str);
+    size_t vlen = strlen(val_str);
+    uint8_t *kbuf = malloc(klen);
+    uint8_t *vbuf = malloc(vlen);
+    for (size_t i = 0; i < klen; ++i) {
+        kbuf[i] = (uint8_t)(key_str[i] - '0');
+    }
+    for (size_t i = 0; i < vlen; ++i) {
+        vbuf[i] = (uint8_t)(val_str[i] - '0');
+    }
+    assert(fkv_put_scored(kbuf, klen, vbuf, vlen, type, priority) == 0);
+    free(kbuf);
+    free(vbuf);
+}
+
 static void create_temp_snapshot(char *buffer, size_t buffer_size, const char *tag) {
     static unsigned counter = 0;
     snprintf(buffer, buffer_size, "/tmp/%s_%ld_%u.snapshot", tag, (long)getpid(), counter++);
@@ -35,6 +55,7 @@ static void create_temp_snapshot(char *buffer, size_t buffer_size, const char *t
 
 static void test_prefix(void) {
     fkv_init();
+    fkv_set_topk_limit(4);
     insert_sample("123", "45", FKV_ENTRY_TYPE_VALUE);
     insert_sample("124", "67", FKV_ENTRY_TYPE_VALUE);
     insert_sample("129", "89", FKV_ENTRY_TYPE_VALUE);
@@ -117,10 +138,55 @@ static void test_load_overwrites_existing(void) {
     unlink(snapshot);
 }
 
+static void test_topk_ordering(void) {
+    fkv_init();
+    fkv_set_topk_limit(3);
+    insert_sample("120", "1", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("121", "2", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("122", "3", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("123", "4", FKV_ENTRY_TYPE_VALUE);
+
+    uint8_t prefix[] = {1, 2};
+    fkv_iter_t it = {0};
+    assert(fkv_get_prefix(prefix, sizeof(prefix), &it, 3) == 0);
+    assert(it.count == 3);
+    assert(it.entries[0].key_len == 3);
+    assert(it.entries[0].key[2] == 3);
+    assert(it.entries[1].key[2] == 2);
+    assert(it.entries[2].key[2] == 1);
+    assert(it.entries[0].priority > it.entries[1].priority);
+    assert(it.entries[1].priority > it.entries[2].priority);
+    fkv_iter_free(&it);
+
+    fkv_shutdown();
+}
+
+static void test_scored_priority_selection(void) {
+    fkv_init();
+    fkv_set_topk_limit(2);
+    insert_scored_sample("5550", "1", FKV_ENTRY_TYPE_VALUE, 10);
+    insert_scored_sample("5551", "2", FKV_ENTRY_TYPE_VALUE, 30);
+    insert_scored_sample("5552", "3", FKV_ENTRY_TYPE_VALUE, 20);
+
+    uint8_t prefix[] = {5, 5, 5};
+    fkv_iter_t it = {0};
+    assert(fkv_get_prefix(prefix, sizeof(prefix), &it, 2) == 0);
+    assert(it.count == 2);
+    assert(it.entries[0].priority == 30);
+    assert(it.entries[1].priority == 20);
+    assert(it.entries[0].value[0] == 2);
+    assert(it.entries[1].value[0] == 3);
+    fkv_iter_free(&it);
+
+    fkv_shutdown();
+}
+
 int main(void) {
     test_prefix();
     test_serialization_roundtrip();
     test_load_overwrites_existing();
+    test_topk_ordering();
+    test_scored_priority_selection();
     printf("fkv tests passed\n");
     return 0;
 }

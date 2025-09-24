@@ -9,17 +9,27 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct fkv_node {
-    struct fkv_node *children[10];
+typedef struct fkv_entry_record {
     uint8_t *key;
     size_t key_len;
     uint8_t *value;
     size_t value_len;
     fkv_entry_type_t type;
+    uint64_t priority;
+} fkv_entry_record_t;
+
+typedef struct fkv_node {
+    struct fkv_node *children[10];
+    fkv_entry_record_t *self_entry;
+    fkv_entry_record_t **top_entries;
+    size_t top_count;
+    size_t top_capacity;
 } fkv_node_t;
 
 static pthread_mutex_t fkv_lock = PTHREAD_MUTEX_INITIALIZER;
 static fkv_node_t *fkv_root = NULL;
+static size_t fkv_topk_limit = 4;
+static uint64_t fkv_sequence = 1;
 
 static fkv_node_t *node_create(void) {
     return calloc(1, sizeof(fkv_node_t));
@@ -32,9 +42,25 @@ static void node_free(fkv_node_t *node) {
     for (size_t i = 0; i < 10; ++i) {
         node_free(node->children[i]);
     }
-    free(node->key);
-    free(node->value);
+    if (node->self_entry) {
+        free(node->self_entry->key);
+        free(node->self_entry->value);
+        free(node->self_entry);
+    }
+    free(node->top_entries);
     free(node);
+}
+
+static void node_prune_entries(fkv_node_t *node) {
+    if (!node) {
+        return;
+    }
+    if (node->top_count > fkv_topk_limit) {
+        node->top_count = fkv_topk_limit;
+    }
+    for (size_t i = 0; i < 10; ++i) {
+        node_prune_entries(node->children[i]);
+    }
 }
 
 static int ensure_root_locked(void) {
@@ -44,55 +70,211 @@ static int ensure_root_locked(void) {
     return fkv_root ? 0 : -1;
 }
 
-static int fkv_put_locked(const uint8_t *key,
-                          size_t kn,
-                          const uint8_t *val,
-                          size_t vn,
-                          fkv_entry_type_t type) {
+static fkv_entry_record_t *entry_create(const uint8_t *key,
+                                       size_t kn,
+                                       const uint8_t *val,
+                                       size_t vn,
+                                       fkv_entry_type_t type,
+                                       uint64_t priority) {
+    fkv_entry_record_t *entry = calloc(1, sizeof(*entry));
+    if (!entry) {
+        return NULL;
+    }
+    entry->key = malloc(kn);
+    entry->value = malloc(vn);
+    if ((!entry->key && kn > 0) || (!entry->value && vn > 0)) {
+        free(entry->key);
+        free(entry->value);
+        free(entry);
+        return NULL;
+    }
+    if (kn > 0) {
+        memcpy(entry->key, key, kn);
+    }
+    if (vn > 0) {
+        memcpy(entry->value, val, vn);
+    }
+    entry->key_len = kn;
+    entry->value_len = vn;
+    entry->type = type;
+    entry->priority = priority;
+    return entry;
+}
+
+static void node_remove_top_entry(fkv_node_t *node, const fkv_entry_record_t *entry) {
+    if (!node || !entry || node->top_count == 0) {
+        return;
+    }
+    for (size_t i = 0; i < node->top_count; ++i) {
+        if (node->top_entries[i] == entry) {
+            if (i + 1 < node->top_count) {
+                memmove(node->top_entries + i,
+                        node->top_entries + i + 1,
+                        (node->top_count - i - 1) * sizeof(node->top_entries[0]));
+            }
+            node->top_count--;
+            break;
+        }
+    }
+}
+
+static int node_ensure_capacity(fkv_node_t *node, size_t needed) {
+    if (!node) {
+        return -1;
+    }
+    if (node->top_capacity >= needed) {
+        return 0;
+    }
+    size_t new_capacity = node->top_capacity ? node->top_capacity : fkv_topk_limit;
+    if (new_capacity == 0) {
+        new_capacity = 1;
+    }
+    while (new_capacity < needed) {
+        new_capacity *= 2;
+    }
+    fkv_entry_record_t **tmp =
+        realloc(node->top_entries, new_capacity * sizeof(*tmp));
+    if (!tmp) {
+        return -1;
+    }
+    node->top_entries = tmp;
+    node->top_capacity = new_capacity;
+    return 0;
+}
+
+static int node_insert_top_entry(fkv_node_t *node, fkv_entry_record_t *entry) {
+    if (!node || !entry) {
+        return -1;
+    }
+    node_remove_top_entry(node, entry);
+    if (fkv_topk_limit == 0) {
+        return 0;
+    }
+    size_t needed = node->top_count + 1;
+    if (needed < fkv_topk_limit) {
+        needed = fkv_topk_limit;
+    }
+    if (node_ensure_capacity(node, needed) != 0) {
+        return -1;
+    }
+    size_t insert_pos = node->top_count;
+    while (insert_pos > 0 && node->top_entries[insert_pos - 1]->priority < entry->priority) {
+        insert_pos--;
+    }
+    if (insert_pos < node->top_count) {
+        memmove(node->top_entries + insert_pos + 1,
+                node->top_entries + insert_pos,
+                (node->top_count - insert_pos) * sizeof(node->top_entries[0]));
+    }
+    node->top_entries[insert_pos] = entry;
+    node->top_count++;
+    if (node->top_count > fkv_topk_limit) {
+        node->top_count = fkv_topk_limit;
+    }
+    return 0;
+}
+
+static int fkv_put_locked_internal(const uint8_t *key,
+                                   size_t kn,
+                                   const uint8_t *val,
+                                   size_t vn,
+                                   fkv_entry_type_t type,
+                                   uint64_t priority) {
     if (ensure_root_locked() != 0) {
         return -1;
     }
 
+    size_t depth_capacity = kn + 1;
+    if (depth_capacity == 0) {
+        depth_capacity = 1;
+    }
+    fkv_node_t **path = calloc(depth_capacity, sizeof(*path));
+    if (!path) {
+        return -1;
+    }
+
+    int rc = 0;
     fkv_node_t *node = fkv_root;
+    size_t depth = 0;
+    path[depth++] = node;
     for (size_t i = 0; i < kn; ++i) {
         uint8_t idx = key[i];
         if (idx > 9) {
-            return -1;
+            rc = -1;
+            goto cleanup;
         }
         if (!node->children[idx]) {
             node->children[idx] = node_create();
             if (!node->children[idx]) {
-                return -1;
+                rc = -1;
+                goto cleanup;
             }
         }
         node = node->children[idx];
+        if (depth < depth_capacity) {
+            path[depth++] = node;
+        }
     }
 
-    uint8_t *new_key = malloc(kn);
-    uint8_t *new_value = malloc(vn);
-    if (!new_key || !new_value) {
-        free(new_key);
-        free(new_value);
-        return -1;
+    uint64_t effective_priority = priority ? priority : fkv_sequence++;
+
+    if (node->self_entry) {
+        if (node->self_entry->value_len != vn) {
+            uint8_t *tmp = realloc(node->self_entry->value, vn);
+            if (!tmp && vn > 0) {
+                rc = -1;
+                goto cleanup;
+            }
+            node->self_entry->value = tmp;
+        }
+        if (node->self_entry->key_len != kn) {
+            uint8_t *tmp = realloc(node->self_entry->key, kn);
+            if (!tmp && kn > 0) {
+                rc = -1;
+                goto cleanup;
+            }
+            node->self_entry->key = tmp;
+            node->self_entry->key_len = kn;
+        }
+        if (vn > 0) {
+            memcpy(node->self_entry->value, val, vn);
+        }
+        if (kn > 0) {
+            memcpy(node->self_entry->key, key, kn);
+        }
+        node->self_entry->value_len = vn;
+        node->self_entry->type = type;
+        node->self_entry->priority = effective_priority;
+    } else {
+        node->self_entry = entry_create(key, kn, val, vn, type, effective_priority);
+        if (!node->self_entry) {
+            rc = -1;
+            goto cleanup;
+        }
     }
-    memcpy(new_key, key, kn);
-    memcpy(new_value, val, vn);
 
-    free(node->key);
-    free(node->value);
+    for (size_t i = 0; i < depth; ++i) {
+        if (node_insert_top_entry(path[i], node->self_entry) != 0) {
+            rc = -1;
+            goto cleanup;
+        }
+    }
 
-    node->key = new_key;
-    node->key_len = kn;
-    node->value = new_value;
-    node->value_len = vn;
-    node->type = type;
+    if (effective_priority >= fkv_sequence) {
+        fkv_sequence = effective_priority + 1;
+    }
 
-    return 0;
+cleanup:
+    free(path);
+    return rc;
 }
 
 int fkv_init(void) {
     pthread_mutex_lock(&fkv_lock);
     int rc = ensure_root_locked();
+    if (rc == 0) {
+        fkv_sequence = 1;
+    }
     pthread_mutex_unlock(&fkv_lock);
     return rc;
 }
@@ -109,34 +291,23 @@ int fkv_put(const uint8_t *key,
             const uint8_t *val,
             size_t vn,
             fkv_entry_type_t type) {
+    return fkv_put_scored(key, kn, val, vn, type, 0);
+}
+
+int fkv_put_scored(const uint8_t *key,
+                   size_t kn,
+                   const uint8_t *val,
+                   size_t vn,
+                   fkv_entry_type_t type,
+                   uint64_t priority) {
     if (!key || !val || kn == 0 || vn == 0) {
         return -1;
     }
 
     pthread_mutex_lock(&fkv_lock);
-    int rc = fkv_put_locked(key, kn, val, vn, type);
+    int rc = fkv_put_locked_internal(key, kn, val, vn, type, priority);
     pthread_mutex_unlock(&fkv_lock);
     return rc;
-}
-
-static void collect_entries(const fkv_node_t *node,
-                            fkv_entry_t *entries,
-                            size_t *count,
-                            size_t limit) {
-    if (!node || *count >= limit) {
-        return;
-    }
-    if (node->value && *count < limit) {
-        entries[*count].key = node->key;
-        entries[*count].key_len = node->key_len;
-        entries[*count].value = node->value;
-        entries[*count].value_len = node->value_len;
-        entries[*count].type = node->type;
-        (*count)++;
-    }
-    for (size_t i = 0; i < 10 && *count < limit; ++i) {
-        collect_entries(node->children[i], entries, count, limit);
-    }
 }
 
 int fkv_get_prefix(const uint8_t *key, size_t kn, fkv_iter_t *it, size_t k) {
@@ -166,25 +337,121 @@ int fkv_get_prefix(const uint8_t *key, size_t kn, fkv_iter_t *it, size_t k) {
         }
     }
 
-    size_t limit = k ? k : 1;
-    fkv_entry_t *entries = calloc(limit, sizeof(fkv_entry_t));
+    size_t limit = k ? k : fkv_topk_limit;
+    if (limit == 0) {
+        limit = fkv_topk_limit ? fkv_topk_limit : 1;
+    }
+
+    fkv_entry_record_t **selected = NULL;
+    size_t capacity = limit;
+    if (capacity == 0) {
+        capacity = 1;
+    }
+    if (capacity <= 64) {
+        static fkv_entry_record_t *stack_entries[64];
+        selected = stack_entries;
+        capacity = 64;
+    } else {
+        selected = calloc(capacity, sizeof(*selected));
+        if (!selected) {
+            pthread_mutex_unlock(&fkv_lock);
+            return -1;
+        }
+    }
+
+    size_t selected_count = 0;
+    if (node->self_entry && limit > 0) {
+        selected[selected_count++] = node->self_entry;
+    }
+    for (size_t i = 0; i < node->top_count && selected_count < limit; ++i) {
+        int seen = 0;
+        for (size_t j = 0; j < selected_count; ++j) {
+            if (selected[j] == node->top_entries[i]) {
+                seen = 1;
+                break;
+            }
+        }
+        if (!seen) {
+            selected[selected_count++] = node->top_entries[i];
+        }
+    }
+
+    if (selected_count == 0) {
+        pthread_mutex_unlock(&fkv_lock);
+        if (capacity > 64) {
+            free(selected);
+        }
+        return 0;
+    }
+
+    fkv_entry_t *entries = calloc(selected_count, sizeof(fkv_entry_t));
     if (!entries) {
         pthread_mutex_unlock(&fkv_lock);
+        if (capacity > 64) {
+            free(selected);
+        }
         return -1;
     }
 
-    size_t count = 0;
-    collect_entries(node, entries, &count, limit);
+    for (size_t i = 0; i < selected_count; ++i) {
+        fkv_entry_record_t *rec = selected[i];
+        if (rec->key_len > 0) {
+            uint8_t *key_copy = malloc(rec->key_len);
+            if (!key_copy) {
+                pthread_mutex_unlock(&fkv_lock);
+                for (size_t j = 0; j < i; ++j) {
+                    free((void *)entries[j].key);
+                    free((void *)entries[j].value);
+                }
+                free(entries);
+                if (capacity > 64) {
+                    free(selected);
+                }
+                return -1;
+            }
+            memcpy(key_copy, rec->key, rec->key_len);
+            entries[i].key = key_copy;
+        }
+        entries[i].key_len = rec->key_len;
+        if (rec->value_len > 0) {
+            uint8_t *val_copy = malloc(rec->value_len);
+            if (!val_copy) {
+                pthread_mutex_unlock(&fkv_lock);
+                for (size_t j = 0; j <= i; ++j) {
+                    free((void *)entries[j].key);
+                    free((void *)entries[j].value);
+                }
+                free(entries);
+                if (capacity > 64) {
+                    free(selected);
+                }
+                return -1;
+            }
+            memcpy(val_copy, rec->value, rec->value_len);
+            entries[i].value = val_copy;
+        }
+        entries[i].value_len = rec->value_len;
+        entries[i].type = rec->type;
+        entries[i].priority = rec->priority;
+    }
     pthread_mutex_unlock(&fkv_lock);
 
+    if (capacity > 64) {
+        free(selected);
+    }
+
     it->entries = entries;
-    it->count = count;
+    it->count = selected_count;
     return 0;
 }
 
 void fkv_iter_free(fkv_iter_t *it) {
     if (!it || !it->entries) {
         return;
+    }
+    for (size_t i = 0; i < it->count; ++i) {
+        free((void *)it->entries[i].key);
+        free((void *)it->entries[i].value);
     }
     free(it->entries);
     it->entries = NULL;
@@ -195,7 +462,7 @@ static void count_entries(const fkv_node_t *node, size_t *count) {
     if (!node) {
         return;
     }
-    if (node->value) {
+    if (node->self_entry) {
         (*count)++;
     }
     for (size_t i = 0; i < 10; ++i) {
@@ -207,23 +474,28 @@ static int serialize_node(FILE *fp, const fkv_node_t *node) {
     if (!node) {
         return 0;
     }
-    if (node->value) {
-        uint64_t key_len = node->key_len;
-        uint64_t value_len = node->value_len;
-        uint8_t type = (uint8_t)node->type;
+    if (node->self_entry) {
+        const fkv_entry_record_t *entry = node->self_entry;
+        uint64_t key_len = entry->key_len;
+        uint64_t value_len = entry->value_len;
+        uint8_t type = (uint8_t)entry->type;
+        uint64_t priority = entry->priority;
         if (fwrite(&key_len, sizeof(key_len), 1, fp) != 1) {
             return -1;
         }
-        if (key_len && fwrite(node->key, 1, key_len, fp) != key_len) {
+        if (key_len && fwrite(entry->key, 1, key_len, fp) != key_len) {
             return -1;
         }
         if (fwrite(&value_len, sizeof(value_len), 1, fp) != 1) {
             return -1;
         }
-        if (value_len && fwrite(node->value, 1, value_len, fp) != value_len) {
+        if (value_len && fwrite(entry->value, 1, value_len, fp) != value_len) {
             return -1;
         }
         if (fwrite(&type, sizeof(type), 1, fp) != 1) {
+            return -1;
+        }
+        if (fwrite(&priority, sizeof(priority), 1, fp) != 1) {
             return -1;
         }
     }
@@ -300,6 +572,7 @@ int fkv_load(const char *path) {
         uint64_t key_len = 0;
         uint64_t value_len = 0;
         uint8_t type = 0;
+        uint64_t priority = 0;
 
         if (fread(&key_len, sizeof(key_len), 1, fp) != 1) {
             rc = -1;
@@ -337,8 +610,22 @@ int fkv_load(const char *path) {
             rc = -1;
             break;
         }
+        if (fread(&priority, sizeof(priority), 1, fp) != 1) {
+            free(key_buf);
+            free(value_buf);
+            rc = -1;
+            break;
+        }
 
-        if (fkv_put(key_buf, (size_t)key_len, value_buf, (size_t)value_len, (fkv_entry_type_t)type) != 0) {
+        pthread_mutex_lock(&fkv_lock);
+        rc = fkv_put_locked_internal(key_buf,
+                                     (size_t)key_len,
+                                     value_buf,
+                                     (size_t)value_len,
+                                     (fkv_entry_type_t)type,
+                                     priority);
+        pthread_mutex_unlock(&fkv_lock);
+        if (rc != 0) {
             free(key_buf);
             free(value_buf);
             rc = -1;
@@ -351,4 +638,23 @@ int fkv_load(const char *path) {
 
     fclose(fp);
     return rc;
+}
+
+void fkv_set_topk_limit(size_t limit) {
+    if (limit == 0) {
+        limit = 1;
+    }
+    pthread_mutex_lock(&fkv_lock);
+    fkv_topk_limit = limit;
+    if (fkv_root) {
+        node_prune_entries(fkv_root);
+    }
+    pthread_mutex_unlock(&fkv_lock);
+}
+
+size_t fkv_get_topk_limit(void) {
+    pthread_mutex_lock(&fkv_lock);
+    size_t limit = fkv_topk_limit;
+    pthread_mutex_unlock(&fkv_lock);
+    return limit;
 }

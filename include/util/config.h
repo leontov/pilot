@@ -13,11 +13,6 @@ extern "C" {
 #endif
 
 typedef struct {
-    char snapshot_path[256];
-    uint32_t snapshot_limit;
-} ai_persistence_config_t;
-
-typedef struct {
     char host[64];
     uint16_t port;
     uint32_t max_body_size;
@@ -30,15 +25,27 @@ typedef struct {
 } vm_config_t;
 
 typedef struct {
+    uint32_t top_k;
+} fkv_config_t;
+
+typedef struct {
     uint32_t tasks_per_iteration;
     uint32_t max_difficulty;
 } KolibriAISelfplayConfig;
 
 typedef struct {
+    char snapshot_path[256];
+    uint32_t snapshot_limit;
+} ai_persistence_config_t;
+
+typedef struct {
     http_config_t http;
     vm_config_t vm;
+
+    fkv_config_t fkv;
     FormulaSearchConfig search;
     uint32_t seed;
+
     ai_persistence_config_t ai;
     KolibriAISelfplayConfig selfplay;
 } kolibri_config_t;
