@@ -1406,6 +1406,7 @@ int main(int argc, char **argv) {
     }
     if (swarm_node) {
         swarm_node_destroy(swarm_node);
+    }
 
     if (status_thread_started) {
         pthread_join(status_thread, NULL);

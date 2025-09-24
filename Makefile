@@ -48,8 +48,10 @@ SRC := \
     src/util/config.c \
     src/util/json_compat.c \
     src/util/log.c \
+    src/vm/vm.c
     src/vm/vm.c \
     src/protocol/swarm.c
+
 
 
 
@@ -84,9 +86,19 @@ TEST_HTTP_ROUTES_SRC := \
   src/synthesis/search.c \
   src/kolibri_ai.c \
   src/formula_stub.c
+TEST_SYNTH_SEARCH_SRC := \
+  tests/test_synthesis_search.c \
+  src/synthesis/search.c \
+  src/formula.c \
+  src/formula_runtime.c \
+  src/formula_stub.c \
+  src/synthesis/formula_vm_eval.c \
+  src/vm/vm.c \
+  src/util/log.c \
+  src/util/config.c
 TEST_REGRESS_SRC := tests/test_blockchain_verifier.c src/blockchain.c src/formula_runtime.c src/formula_stub.c src/util/log.c
 
-.PHONY: all build clean run test test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress bench
+.PHONY: all build clean run test test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-synthesis-search bench
 
 all: build
 
@@ -160,9 +172,16 @@ $(BUILD_DIR)/tests/test_blockchain_verifier: $(TEST_REGRESS_SRC)
 test-regress: $(BUILD_DIR)/tests/test_blockchain_verifier
 	$<
 
+$(BUILD_DIR)/tests/test_synthesis_search: $(TEST_SYNTH_SEARCH_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-synthesis-search: $(BUILD_DIR)/tests/test_synthesis_search
+	$<
+
 BENCH_ARGS ?=
 
 bench: build
 	$(TARGET) --bench $(BENCH_ARGS)
 
-test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress
+test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-synthesis-search
