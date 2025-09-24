@@ -4,7 +4,7 @@ CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
 
-LDFLAGS := -lpthread -lm -luuid -lcrypto -lcurl
+LDFLAGS := -lpthread -lm -lcrypto -lcurl
 
 
 BUILD_DIR := build/obj
@@ -21,11 +21,9 @@ SRC := \
   src/http/http_server.c \
   src/http/http_routes.c \
   src/blockchain.c \
-
   src/formula_runtime.c \
   src/synthesis/search.c \
-  src/synthesis/formula_vm_eval.c
-
+  src/synthesis/formula_vm_eval.c \
   src/formula_stub.c \
   src/protocol/swarm.c
 
