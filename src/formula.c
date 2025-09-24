@@ -86,6 +86,7 @@ void formula_collection_recompute_top(FormulaCollection* collection) {
     }
 }
 
+
 // Валидация формулы
 int validate_formula(const Formula* formula) {
     if (!formula) return 0;

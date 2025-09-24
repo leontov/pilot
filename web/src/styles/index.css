@@ -1053,6 +1053,7 @@ body {
     flex-wrap: wrap;
     justify-content: center;
     text-align: center;
+
     gap: var(--space-sm);
   }
 
@@ -1062,6 +1063,7 @@ body {
 
   .header-actions {
     justify-content: center;
+
   }
 }
 
