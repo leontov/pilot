@@ -36,25 +36,27 @@
 - Expose synthesis progress UI (live candidate table, scoring graphs) and API `POST /api/v1/program/submit`.
 - Integrate promotion path: successful programs persisted in F-KV, announced over gossip, added to blockchain candidate pool.
 
-### Sprint 4 (Week 6) — Network Spine
-- Implement gossip frames (`HELLO`, `PING`, `PROGRAM_OFFER`, `BLOCK_OFFER`, `FKV_DELTA`) with TLS 1.3 PSK and rate limiting.
-- Ship PoU validation workflow: re-run programs, verify PoE ≥ τ, compute MDL deltas.
-- Launch Blockchain Studio view: block explorer, signature validation, fork detection.
-- Run 3-node cluster test: verify replication < 3 s, rejection of low-quality offers, basic reputation scoring.
+### Sprint 4 (Weeks 6–9) — «Цифровой мозг»
+- Launch curriculum learning tracks that gradually raise Δ-VM task complexity, logging uplift metrics for each tier.
+- Extend Morphology engine with self-rewriting formula capabilities and guard-rails for MDL-safe transformations.
+- Ship heuristic prediction suite that leverages execution traces and step statistics to prefetch programs and prune searches.
+- Roll out observability stack with Prometheus metrics, OTEL traces, and dashboards covering PoE uplift, MDL drift, and cluster health.
+- Upgrade Kolibri Studio Pro with Benchmark and Observability tabs plus export flows (JSON/CSV/PDF) for investors and researchers.
+- **Deliverable:** Kolibri Ω operates as a self-learning digital brain with a full end-to-end demonstration.
 
-### Sprint 5 (Weeks 7–8) — Performance & Robustness
+### Sprint 5 (Weeks 10–11) — Performance & Robustness
 - Profile VM interpreter; implement threaded dispatch optimisations and optional peephole JIT for hot paths.
 - Optimise F-KV caching (LRU), compression ratios, and snapshot compaction.
 - Execute fuzzing campaigns (Δ-VM bytecode, HTTP payloads, gossip frames) with nightly CI jobs.
 - Expand testbench: 30 curated scenarios from `docs/demos.md` automated through Kolibri Studio + API scripts.
 
-### Sprint 6 (Weeks 9–10) — Productisation & Demo Readiness
+### Sprint 6 (Weeks 12–13) — Productisation & Demo Readiness
 - Finalise documentation suite: README Pro, Whitepaper, Architecture doc, API spec (OpenAPI), Demo handbook.
 - Add Observability tab in Studio (metrics dashboards, log streaming, alert surfacing).
 - Produce scripted investor demo (video + live walkthrough) and prepare support collateral (FAQ, pricing outline).
 - Conduct security audit (penetration test, chain audit) and resolve high/critical findings.
 
-### Sprint 7 (Weeks 11–12) — Launch & Pilot Support
+### Sprint 7 (Weeks 14–15) — Launch & Pilot Support
 - Package releases: Docker image, binary tarballs, web bundle, seed datasets.
 - Establish update channel (chain governance for upgrades, version handshake in gossip).
 - Partner onboarding kit: sample integration code, SLA, support workflows.
