@@ -1,6 +1,12 @@
 # Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
 CC ?= gcc
+
+CFLAGS ?= -std=c11 -Wall -Wextra -O2
+CFLAGS += -Isrc -Iinclude -pthread
+LDFLAGS ?=
+LDFLAGS += -lpthread -lm -luuid -lcrypto -lcurl 
+
 JSONC_CFLAGS := $(shell pkg-config --cflags json-c 2>/dev/null)
 JSONC_LIBS := $(shell pkg-config --libs json-c 2>/dev/null)
 
@@ -16,11 +22,28 @@ LDFLAGS := -lpthread -lm -lcrypto -lcurl
 
 
 
+
 BUILD_DIR := build/obj
 BIN_DIR := bin
 TARGET := $(BIN_DIR)/kolibri_node
 
 SRC := \
+
+    src/main.c \
+    src/util/log.c \
+    src/util/config.c \
+    src/vm/vm.c \
+    src/fkv/fkv.c \
+    src/kolibri_ai.c \
+    src/http/http_server.c \
+    src/http/http_routes.c \
+    src/blockchain.c \
+    src/formula_runtime.c \
+    src/synthesis/search.c \
+    src/synthesis/formula_vm_eval.c \
+    src/formula_stub.c \
+    src/protocol/swarm.c
+
   src/main.c \
   src/util/log.c \
   src/util/bench.c \
@@ -39,9 +62,18 @@ SRC := \
   src/protocol/swarm.c
 
 
+OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
+
 TEST_VM_SRC := tests/unit/test_vm.c src/vm/vm.c src/util/log.c src/util/config.c src/fkv/fkv.c
 TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/config.c
 TEST_CONFIG_SRC := tests/unit/test_config.c src/util/config.c src/util/log.c
+
+TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c src/synthesis/search.c src/synthesis/formula_vm_eval.c src/vm/vm.c src/fkv/fkv.c src/util/log.c src/util/config.c
+TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c src/util/log.c src/util/config.c
+TEST_HTTP_ROUTES_SRC := tests/unit/test_http_routes.c src/http/http_routes.c src/blockchain.c src/formula_stub.c src/util/log.c src/util/config.c
+
+.PHONY: all build clean run test test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes bench
+
 TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c src/synthesis/search.c src/synthesis/formula_vm_eval.c src/vm/vm.c src/fkv/fkv.c
 TEST_KOLIBRI_ITER_SRC := \
   tests/test_kolibri_ai_iterations.c \
@@ -75,21 +107,22 @@ TEST_HTTP_ROUTES_SRC := \
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
 
-all: build
 
-$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+all: build
 
 build: $(TARGET)
 
 $(TARGET): $(OBJ) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $(OBJ) -o $@ $(LDFLAGS)
 
-$(BUILD_DIR):
-	@mkdir -p $@
+$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BIN_DIR):
+	@mkdir -p $@
+
+$(BUILD_DIR):
 	@mkdir -p $@
 
 run: build
@@ -98,6 +131,10 @@ run: build
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR) logs/* data/* web/node_modules web/dist
 
+
+bench: build
+	$(TARGET) --bench
+
 .PHONY: test test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes bench clean run build
 
 
@@ -105,38 +142,39 @@ clean:
 test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes
 
 
-$(BUILD_DIR)/tests/unit/test_vm: $(TEST_VM_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_VM_SRC) -o $@ $(LDFLAGS)
+test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes
 
-$(BUILD_DIR)/tests/unit/test_fkv: $(TEST_FKV_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_FKV_SRC) -o $@ $(LDFLAGS)
+$(BUILD_DIR)/tests/unit/test_vm: $(TEST_VM_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(TEST_VM_SRC) -o $@ $(LDFLAGS)
 
 test-vm: $(BUILD_DIR)/tests/unit/test_vm
 	$<
 
+$(BUILD_DIR)/tests/unit/test_fkv: $(TEST_FKV_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(TEST_FKV_SRC) -o $@ $(LDFLAGS)
+
 test-fkv: $(BUILD_DIR)/tests/unit/test_fkv
 	$<
 
-
 $(BUILD_DIR)/tests/unit/test_config: $(TEST_CONFIG_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(TEST_CONFIG_SRC) -o $@ $(LDFLAGS)
 
 test-config: $(BUILD_DIR)/tests/unit/test_config
 	$<
 
 $(BUILD_DIR)/tests/test_kolibri_ai_iterations: $(TEST_KOLIBRI_ITER_SRC)
-	@mkdir -p $(BUILD_DIR)/tests
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(TEST_KOLIBRI_ITER_SRC) -o $@ $(LDFLAGS)
 
 test-kolibri-ai: $(BUILD_DIR)/tests/test_kolibri_ai_iterations
 	$<
 
 $(BUILD_DIR)/tests/unit/test_swarm_protocol: $(TEST_SWARM_PROTOCOL_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_SWARM_PROTOCOL_SRC) -o $@ $(filter-out -ljson-c -luuid,$(LDFLAGS))
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(TEST_SWARM_PROTOCOL_SRC) -o $@ $(LDFLAGS)
 
 test-swarm-protocol: $(BUILD_DIR)/tests/unit/test_swarm_protocol
         $<
@@ -155,5 +193,14 @@ $(BUILD_DIR)/tests/unit/test_http_routes: $(TEST_HTTP_ROUTES_SRC)
 test-http-routes: $(BUILD_DIR)/tests/unit/test_http_routes
 	$<
 
+
+$(BUILD_DIR)/tests/unit/test_http_routes: $(TEST_HTTP_ROUTES_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(TEST_HTTP_ROUTES_SRC) -o $@ $(LDFLAGS)
+
+test-http-routes: $(BUILD_DIR)/tests/unit/test_http_routes
+	$<
+
 bench: build
 	$(TARGET) --bench $(BENCH_ARGS)
+
