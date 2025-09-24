@@ -21,11 +21,9 @@ SRC := \
   src/http/http_server.c \
   src/http/http_routes.c \
   src/blockchain.c \
-
   src/formula_runtime.c \
   src/synthesis/search.c \
-  src/synthesis/formula_vm_eval.c
-
+  src/synthesis/formula_vm_eval.c \
   src/formula_stub.c \
   src/protocol/swarm.c
 
@@ -33,11 +31,11 @@ SRC := \
 TEST_VM_SRC := tests/unit/test_vm.c src/vm/vm.c src/util/log.c src/util/config.c src/fkv/fkv.c
 TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/config.c
 TEST_CONFIG_SRC := tests/unit/test_config.c src/util/config.c src/util/log.c
+TEST_BLOCKCHAIN_UNIT_SRC := tests/unit/test_blockchain.c src/blockchain.c src/util/log.c
+TEST_BLOCKCHAIN_INT_SRC := tests/test_blockchain_integration.c src/blockchain.c src/util/log.c src/protocol/swarm.c
 
 TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c src/synthesis/search.c src/synthesis/formula_vm_eval.c src/vm/vm.c src/fkv/fkv.c
-
-TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c
-TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c
+TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c src/blockchain.c src/util/log.c
 
 
 
@@ -66,11 +64,11 @@ run: build
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR) logs/* data/* web/node_modules web/dist
 
-.PHONY: test test-vm test-fkv test-config test-kolibri-ai test-http-routes bench clean run build
+.PHONY: test test-vm test-fkv test-config test-kolibri-ai test-http-routes test-swarm-protocol test-blockchain-unit test-blockchain-integration bench clean run build
 
 
 
-test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol
+test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-blockchain-unit test-blockchain-integration
 
 
 $(BUILD_DIR)/tests/unit/test_vm: $(TEST_VM_SRC)
@@ -104,9 +102,23 @@ test-kolibri-ai: $(BUILD_DIR)/tests/test_kolibri_ai_iterations
 
 $(BUILD_DIR)/tests/unit/test_swarm_protocol: $(TEST_SWARM_PROTOCOL_SRC)
 	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_SWARM_PROTOCOL_SRC) -o $@ $(filter-out -ljson-c -luuid,$(LDFLAGS))
+	$(CC) $(CFLAGS) $(TEST_SWARM_PROTOCOL_SRC) -o $@ $(LDFLAGS)
 
 test-swarm-protocol: $(BUILD_DIR)/tests/unit/test_swarm_protocol
+        $<
+
+$(BUILD_DIR)/tests/unit/test_blockchain: $(TEST_BLOCKCHAIN_UNIT_SRC)
+	@mkdir -p $(BUILD_DIR)/tests/unit
+	$(CC) $(CFLAGS) $(TEST_BLOCKCHAIN_UNIT_SRC) -o $@ $(LDFLAGS)
+
+test-blockchain-unit: $(BUILD_DIR)/tests/unit/test_blockchain
+	$<
+
+$(BUILD_DIR)/tests/test_blockchain_integration: $(TEST_BLOCKCHAIN_INT_SRC)
+	@mkdir -p $(BUILD_DIR)/tests
+	$(CC) $(CFLAGS) $(TEST_BLOCKCHAIN_INT_SRC) -o $@ $(LDFLAGS)
+
+test-blockchain-integration: $(BUILD_DIR)/tests/test_blockchain_integration
 	$<
 
 bench: build

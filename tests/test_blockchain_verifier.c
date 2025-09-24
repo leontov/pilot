@@ -7,33 +7,35 @@
 
 #include "blockchain.h"
 
-static Formula* create_text_formula(const char* id, const char* content) {
-    Formula* formula = (Formula*)calloc(1, sizeof(Formula));
-    assert(formula);
-
-    strncpy(formula->id, id, sizeof(formula->id) - 1);
-    formula->representation = FORMULA_REPRESENTATION_TEXT;
-    strncpy(formula->content, content, sizeof(formula->content) - 1);
-
-    return formula;
-}
-
-static void free_formula(Formula* formula) {
-    free(formula);
-}
-
 static void test_blockchain_verifier_detects_tampering(void) {
     Blockchain* chain = blockchain_create();
     assert(chain);
 
-    Formula* formula1 = create_text_formula("formula_001", "payload_one");
-    Formula* formula2 = create_text_formula("formula_002", "payload_two");
+    Formula formula1;
+    Formula formula2;
+    memset(&formula1, 0, sizeof(formula1));
+    memset(&formula2, 0, sizeof(formula2));
+    strncpy(formula1.id, "formula_001", sizeof(formula1.id) - 1);
+    strncpy(formula2.id, "formula_002", sizeof(formula2.id) - 1);
+    strncpy(formula1.content, "payload_one", sizeof(formula1.content) - 1);
+    strncpy(formula2.content, "payload_two", sizeof(formula2.content) - 1);
+    formula1.representation = FORMULA_REPRESENTATION_TEXT;
+    formula2.representation = FORMULA_REPRESENTATION_TEXT;
+    formula1.effectiveness = 0.9;
+    formula2.effectiveness = 0.9;
 
-    Formula* block1_formulas[] = {formula1};
-    Formula* block2_formulas[] = {formula2};
+    Formula* block1_formulas[] = {&formula1};
+    Formula* block2_formulas[] = {&formula2};
 
-    assert(blockchain_add_block(chain, block1_formulas, 1));
-    assert(blockchain_add_block(chain, block2_formulas, 1));
+    BlockchainBlockSpec spec1 = {.formulas = block1_formulas, .formula_count = 1};
+    BlockchainBlockSpec spec2 = {.formulas = block2_formulas, .formula_count = 1};
+    BlockValidationStatus status = BLOCK_VALIDATION_PENDING;
+
+    assert(blockchain_add_block(chain, &spec1, &status));
+    assert(status == BLOCK_VALIDATION_ACCEPTED);
+    status = BLOCK_VALIDATION_PENDING;
+    assert(blockchain_add_block(chain, &spec2, &status));
+    assert(status == BLOCK_VALIDATION_ACCEPTED);
     assert(chain->block_count == 2);
 
     assert(blockchain_verify(chain));
@@ -45,8 +47,6 @@ static void test_blockchain_verifier_detects_tampering(void) {
     assert(!blockchain_verify(chain));
 
     blockchain_destroy(chain);
-    free_formula(formula1);
-    free_formula(formula2);
 }
 
 int main(void) {

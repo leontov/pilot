@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "blockchain.h"
+
 typedef enum {
     SWARM_FRAME_HELLO = 0,
     SWARM_FRAME_PING = 1,
@@ -110,5 +112,28 @@ void swarm_peer_report_violation(SwarmPeerState *peer, SwarmFrameType type);
 
 int swarm_frame_serialize(const SwarmFrame *frame, char *out, size_t out_size, size_t *written);
 int swarm_frame_parse(const char *data, size_t len, SwarmFrame *frame);
+
+typedef struct {
+    Blockchain *chain;
+    SwarmPeerState *peer;
+    unsigned char ed25519_public_key[32];
+    size_t ed25519_public_key_len;
+    unsigned char hmac_key[32];
+    size_t hmac_key_len;
+    char last_finalized_hash[65];
+    uint64_t last_finalized_height;
+} SwarmBlockchainLink;
+
+void swarm_blockchain_link_init(SwarmBlockchainLink *link, Blockchain *chain, SwarmPeerState *peer);
+int swarm_blockchain_link_set_ed25519_key(SwarmBlockchainLink *link, const unsigned char *public_key, size_t len);
+int swarm_blockchain_link_set_hmac_key(SwarmBlockchainLink *link, const unsigned char *key, size_t len);
+bool swarm_blockchain_link_process_offer(SwarmBlockchainLink *link,
+                                         const SwarmBlockOfferPayload *offer,
+                                         const BlockchainBlockSpec *spec,
+                                         const unsigned char *signature,
+                                         size_t signature_len,
+                                         const unsigned char *mac,
+                                         size_t mac_len,
+                                         BlockValidationStatus *status_out);
 
 #endif // KOLIBRI_PROTOCOL_SWARM_H

@@ -2,8 +2,13 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "util/log.h"
 
 #define SWARM_PROTOCOL_VERSION_WIDTH 4
 #define SWARM_FRAME_CODE_WIDTH 2
@@ -46,6 +51,26 @@ static const SwarmRateConfig kRateConfig[SWARM_FRAME_TYPE_COUNT] = {
 };
 
 static const uint8_t kFrameCode[SWARM_FRAME_TYPE_COUNT] = {10, 11, 12, 13, 14};
+
+static int format_block_offer_message(const SwarmBlockOfferPayload *offer,
+                                      char *out,
+                                      size_t out_size) {
+    if (!offer || !out || out_size == 0) {
+        return -1;
+    }
+    int written = snprintf(out,
+                           out_size,
+                           "%.*s|%u|%u|%u",
+                           SWARM_BLOCK_ID_DIGITS,
+                           offer->block_id,
+                           offer->height,
+                           offer->poe_milli,
+                           offer->program_count);
+    if (written < 0 || (size_t)written >= out_size) {
+        return -1;
+    }
+    return written;
+}
 
 static uint64_t pow10u(unsigned width) {
     static const uint64_t pow10_table[] = {
@@ -520,4 +545,178 @@ int swarm_frame_parse(const char *data, size_t len, SwarmFrame *frame) {
         return -1;
     }
     return 0;
+}
+
+void swarm_blockchain_link_init(SwarmBlockchainLink *link, Blockchain *chain, SwarmPeerState *peer) {
+    if (!link) {
+        return;
+    }
+    memset(link, 0, sizeof(*link));
+    link->chain = chain;
+    link->peer = peer;
+    if (chain) {
+        const char *hash = blockchain_get_last_hash(chain);
+        strncpy(link->last_finalized_hash, hash, sizeof(link->last_finalized_hash) - 1);
+        link->last_finalized_hash[sizeof(link->last_finalized_hash) - 1] = '\0';
+        link->last_finalized_height = blockchain_height(chain);
+    }
+}
+
+int swarm_blockchain_link_set_ed25519_key(SwarmBlockchainLink *link,
+                                          const unsigned char *public_key,
+                                          size_t len) {
+    if (!link || !public_key || len != 32) {
+        return -1;
+    }
+    memcpy(link->ed25519_public_key, public_key, len);
+    link->ed25519_public_key_len = len;
+    return 0;
+}
+
+int swarm_blockchain_link_set_hmac_key(SwarmBlockchainLink *link,
+                                       const unsigned char *key,
+                                       size_t len) {
+    if (!link || !key || len == 0 || len > sizeof(link->hmac_key)) {
+        return -1;
+    }
+    memcpy(link->hmac_key, key, len);
+    link->hmac_key_len = len;
+    return 0;
+}
+
+static bool verify_ed25519_signature(const SwarmBlockchainLink *link,
+                                     const unsigned char *message,
+                                     size_t message_len,
+                                     const unsigned char *signature,
+                                     size_t signature_len) {
+    if (!link || link->ed25519_public_key_len == 0) {
+        return true;
+    }
+    if (!signature || signature_len != 64) {
+        return false;
+    }
+
+    EVP_PKEY *pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519,
+                                                 NULL,
+                                                 link->ed25519_public_key,
+                                                 link->ed25519_public_key_len);
+    if (!pkey) {
+        return false;
+    }
+
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        EVP_PKEY_free(pkey);
+        return false;
+    }
+
+    int ok = EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey);
+    if (ok == 1) {
+        ok = EVP_DigestVerify(ctx, signature, signature_len, message, message_len);
+    }
+
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return ok == 1;
+}
+
+static bool verify_hmac(const SwarmBlockchainLink *link,
+                        const unsigned char *message,
+                        size_t message_len,
+                        const unsigned char *mac,
+                        size_t mac_len) {
+    if (!link || link->hmac_key_len == 0) {
+        return true;
+    }
+    if (!mac || mac_len == 0) {
+        return false;
+    }
+
+    unsigned char expected[EVP_MAX_MD_SIZE];
+    unsigned int expected_len = 0;
+    unsigned char *result = HMAC(EVP_sha256(),
+                                 link->hmac_key,
+                                 (int)link->hmac_key_len,
+                                 message,
+                                 message_len,
+                                 expected,
+                                 &expected_len);
+    if (!result) {
+        return false;
+    }
+
+    if (mac_len != expected_len) {
+        return false;
+    }
+
+    return CRYPTO_memcmp(mac, expected, expected_len) == 0;
+}
+
+bool swarm_blockchain_link_process_offer(SwarmBlockchainLink *link,
+                                         const SwarmBlockOfferPayload *offer,
+                                         const BlockchainBlockSpec *spec,
+                                         const unsigned char *signature,
+                                         size_t signature_len,
+                                         const unsigned char *mac,
+                                         size_t mac_len,
+                                         BlockValidationStatus *status_out) {
+    if (!link || !link->chain || !offer || !spec) {
+        return false;
+    }
+
+    char message[128];
+    if (format_block_offer_message(offer, message, sizeof(message)) < 0) {
+        return false;
+    }
+
+    size_t message_len = strlen(message);
+    if (!verify_ed25519_signature(link,
+                                  (const unsigned char *)message,
+                                  message_len,
+                                  signature,
+                                  signature_len)) {
+        log_warn("[swarm] block offer signature verification failed for block %s", offer->block_id);
+        if (link->peer) {
+            swarm_peer_report_violation(link->peer, SWARM_FRAME_BLOCK_OFFER);
+        }
+        if (status_out) {
+            *status_out = BLOCK_VALIDATION_REJECTED;
+        }
+        return false;
+    }
+
+    if (!verify_hmac(link,
+                      (const unsigned char *)message,
+                      message_len,
+                      mac,
+                      mac_len)) {
+        log_warn("[swarm] block offer HMAC mismatch for block %s", offer->block_id);
+        if (link->peer) {
+            swarm_peer_report_violation(link->peer, SWARM_FRAME_BLOCK_OFFER);
+        }
+        if (status_out) {
+            *status_out = BLOCK_VALIDATION_REJECTED;
+        }
+        return false;
+    }
+
+    BlockValidationStatus local_status = BLOCK_VALIDATION_PENDING;
+    bool accepted = blockchain_add_block(link->chain, spec, &local_status);
+    if (status_out) {
+        *status_out = local_status;
+    }
+
+    if (accepted) {
+        if (link->peer) {
+            swarm_peer_report_success(link->peer, SWARM_FRAME_BLOCK_OFFER);
+        }
+        const char *hash = blockchain_get_last_hash(link->chain);
+        strncpy(link->last_finalized_hash, hash, sizeof(link->last_finalized_hash) - 1);
+        link->last_finalized_hash[sizeof(link->last_finalized_hash) - 1] = '\0';
+        link->last_finalized_height = blockchain_height(link->chain);
+    } else if (link->peer) {
+        swarm_peer_report_violation(link->peer, SWARM_FRAME_BLOCK_OFFER);
+    }
+
+    return accepted;
 }
