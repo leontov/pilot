@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2024 Кочуров Владислав Евгеньевич -->
+<!-- Copyright (c) 2025 Кочуров Владислав Евгеньевич -->
 
 # Kolibri Ω Development Roadmap
 
@@ -18,6 +18,8 @@
 ## Sprint Breakdown
 
 ### Sprint 1 (Weeks 1–2) — Stabilise the Core Node
+
+- **Δ-VM v2.** Exhaustive property-based coverage for every opcode (`PUSHd`, base-10 arithmetic, branching, calls, F-KV I/O, system ops, `HALT`), a built-in profiler that logs gas and wall-clock timing per instruction to keep the 256-step P95 under 50 ms, and JSON trace dumps (registers, stack, recent ops) ready for Kolibri Studio ingestion.
 - **Δ-VM v2.** Property-based coverage for every opcode (`PUSHd`, arithmetic, branching, calls, F-KV I/O, system ops, `HALT`), a built-in profiler that records gas and wall-clock timing per step, and JSON trace dumps ready for Kolibri Studio ingestion.
 - **F-KV v2.** Background snapshot pipeline with nightly compaction to keep trie latency and footprint within targets, plus top-K optimisation via per-node LRU caching.
 - **AI Core.** Automatic history trimming driven by the MDL/PoE scoring rule `Score = W1 * PoE – W2 * MDL – W3 * Runtime – W4 * GasUsed`, configurable through `cfg/kolibri.jsonc`.
