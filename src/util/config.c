@@ -23,6 +23,8 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
 
+    cfg->fkv.top_k = 4;
+
     cfg->seed = 1337;
 
     strncpy(cfg->ai.snapshot_path,
@@ -429,6 +431,48 @@ static int parse_ai_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     return -1;
 }
 
+static int parse_fkv_object(json_cursor_t *cur, kolibri_config_t *cfg) {
+    if (consume_char(cur, '{') != 0) {
+        return -1;
+    }
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        char key[32];
+        if (parse_string(cur, key, sizeof(key)) != 0) {
+            return -1;
+        }
+        if (consume_char(cur, ':') != 0) {
+            return -1;
+        }
+        if (strcmp(key, "top_k") == 0) {
+            uint64_t value = 0;
+            if (parse_uint(cur, &value) != 0 || value == 0 || value > UINT32_MAX) {
+                return -1;
+            }
+            cfg->fkv.top_k = (uint32_t)value;
+        } else {
+            if (skip_value(cur) != 0) {
+                return -1;
+            }
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        return -1;
+    }
+    return -1;
+}
+
 static int parse_selfplay_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
@@ -657,6 +701,12 @@ int config_load(const char *path, kolibri_config_t *cfg) {
             saw_seed = 1;
         } else if (strcmp(key, "ai") == 0) {
             if (parse_ai_object(&cur, &tmp) != 0) {
+                free(buffer);
+                errno = EINVAL;
+                return -1;
+            }
+        } else if (strcmp(key, "fkv") == 0) {
+            if (parse_fkv_object(&cur, &tmp) != 0) {
                 free(buffer);
                 errno = EINVAL;
                 return -1;

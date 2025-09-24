@@ -309,7 +309,12 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
-            fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE);
+            fkv_put(key_digits,
+                    key_len,
+                    value_digits,
+                    value_len,
+                    FKV_ENTRY_TYPE_VALUE,
+                    0.0);
             break;
         }
         case 0x0E: { // HASH10

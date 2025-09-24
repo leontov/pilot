@@ -43,6 +43,9 @@ static void test_config_valid(void) {
         "    \"max_stack\": 256,\n"
         "    \"trace_depth\": 32\n"
         "  },\n"
+        "  \"fkv\": {\n"
+        "    \"top_k\": 7\n"
+        "  },\n"
         "  \"seed\": 777\n"
         "}\n";
 
@@ -55,6 +58,7 @@ static void test_config_valid(void) {
     assert(cfg.vm.max_steps == 4096);
     assert(cfg.vm.max_stack == 256);
     assert(cfg.vm.trace_depth == 32);
+    assert(cfg.fkv.top_k == 7);
     assert(cfg.seed == 777);
     remove_temp_file(path);
 }
@@ -79,6 +83,7 @@ static void test_config_missing_field(void) {
     assert(cfg.vm.max_steps == 2048);
     assert(cfg.vm.max_stack == 128);
     assert(cfg.vm.trace_depth == 64);
+    assert(cfg.fkv.top_k == 4);
     assert(cfg.seed == 1337);
     remove_temp_file(path);
 }
@@ -92,6 +97,7 @@ static void test_config_invalid_json(void) {
     assert(errno == EINVAL);
     assert(strcmp(cfg.http.host, "0.0.0.0") == 0);
     assert(cfg.http.port == 9000);
+    assert(cfg.fkv.top_k == 4);
     remove_temp_file(path);
 }
 
