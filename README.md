@@ -50,6 +50,19 @@ Other CLI commands:
 ./kolibri.sh clean  # remove build artifacts, logs, and data
 ```
 
+### Console chat mode
+
+For quick experiments without the web UI, build the node and launch the interactive chat harness:
+
+```
+make build
+./bin/kolibri_node --chat
+```
+
+The CLI accepts decimal arithmetic expressions (e.g. `12+30/6`) and stores the results in the F-KV memory. Any other text prompt
+falls back to the current best formula discovered by the Kolibri AI core, which is useful for smoke-testing the synthesis loop.
+
+
 ## AI state persistence
 
 The Kolibri AI subsystem snapshots its working memory (`KolibriMemoryModule`) and training dataset to a JSON file whenever the
