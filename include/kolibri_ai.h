@@ -99,7 +99,11 @@ Formula *kolibri_ai_get_best_formula(KolibriAI *ai);
 char *kolibri_ai_serialize_state(const KolibriAI *ai);
 char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results);
 
+/* Export the current AI state to a JSON document including formulas, dataset
+ * entries, and memory facts. Caller must free the returned string. */
 char *kolibri_ai_export_snapshot(const KolibriAI *ai);
+/* Import a snapshot previously produced by kolibri_ai_export_snapshot,
+ * restoring formulas, dataset entries, and memory facts. */
 int kolibri_ai_import_snapshot(KolibriAI *ai, const char *json);
 int kolibri_ai_sync_with_neighbor(KolibriAI *ai, const char *base_url);
 

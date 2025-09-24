@@ -5,6 +5,7 @@
 #include "kolibri_ai.h"
 
 #include "util/log.h"
+#include <json-c/json.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -606,106 +607,226 @@ char *kolibri_ai_serialize_formulas(const KolibriAI *ai, size_t max_results) {
     return json;
 }
 
+
 char *kolibri_ai_export_snapshot(const KolibriAI *ai) {
     if (!ai) {
         return NULL;
     }
-    pthread_mutex_lock((pthread_mutex_t *)&ai->mutex);
-    size_t count = ai->library ? ai->library->count : 0;
-    size_t formulas_cap = 2; /* [] */
-    if (ai->library) {
-        for (size_t i = 0; i < ai->library->count; ++i) {
-            size_t id_len = strnlen(ai->library->formulas[i].id,
-                                    sizeof(ai->library->formulas[i].id));
-            formulas_cap += id_len + 40; /* formatting overhead */
-        }
-    }
-    char *formulas = malloc(formulas_cap);
-    if (!formulas) {
-        pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
+
+    struct json_object *root = json_object_new_object();
+    if (!root) {
         return NULL;
     }
-    size_t offset = (size_t)snprintf(formulas, formulas_cap, "[");
-    for (size_t i = 0; i < count && offset < formulas_cap; ++i) {
+
+    pthread_mutex_lock((pthread_mutex_t *)&ai->mutex);
+
+    int error = 0;
+    size_t limit = ai->snapshot_limit == 0 ? SIZE_MAX : ai->snapshot_limit;
+
+    struct json_object *iterations = json_object_new_int64((int64_t)ai->iterations);
+    struct json_object *average_reward = json_object_new_double(ai->average_reward);
+    struct json_object *planning_score = json_object_new_double(ai->planning_score);
+    struct json_object *recent_poe = json_object_new_double(ai->recent_poe);
+    struct json_object *recent_mdl = json_object_new_double(ai->recent_mdl);
+    if (!iterations || !average_reward || !planning_score || !recent_poe ||
+        !recent_mdl) {
+        error = 1;
+        goto export_cleanup;
+    }
+    json_object_object_add(root, "iterations", iterations);
+    json_object_object_add(root, "average_reward", average_reward);
+    json_object_object_add(root, "planning_score", planning_score);
+    json_object_object_add(root, "recent_poe", recent_poe);
+    json_object_object_add(root, "recent_mdl", recent_mdl);
+
+    struct json_object *formulas = json_object_new_array();
+    if (!formulas) {
+        error = 1;
+        goto export_cleanup;
+    }
+    size_t formula_count = ai->library ? ai->library->count : 0;
+    size_t formula_start = 0;
+    if (limit != SIZE_MAX && formula_count > limit) {
+        formula_start = formula_count - limit;
+    }
+    for (size_t i = formula_start; i < formula_count; ++i) {
         const Formula *formula = &ai->library->formulas[i];
-        int written = snprintf(formulas + offset,
-                               formulas_cap - offset,
-                               "%s{\"id\":\"%s\",\"effectiveness\":%.6f}",
-                               i == 0 ? "" : ",",
-                               formula->id,
-                               formula->effectiveness);
-        if (written < 0) {
-            formulas[0] = '\0';
+        struct json_object *formula_obj = json_object_new_object();
+        if (!formula_obj) {
+            error = 1;
             break;
         }
-        offset += (size_t)written;
+        struct json_object *id = json_object_new_string(formula->id);
+        struct json_object *effectiveness =
+            json_object_new_double(formula->effectiveness);
+        if (!id || !effectiveness) {
+            json_object_put(formula_obj);
+            if (id) {
+                json_object_put(id);
+            }
+            if (effectiveness) {
+                json_object_put(effectiveness);
+            }
+            error = 1;
+            break;
+        }
+        json_object_object_add(formula_obj, "id", id);
+        json_object_object_add(formula_obj, "effectiveness", effectiveness);
+        json_object_array_add(formulas, formula_obj);
     }
-    if (offset < formulas_cap) {
-        snprintf(formulas + offset, formulas_cap - offset, "]");
-    } else if (formulas_cap > 0) {
-        formulas[formulas_cap - 1] = '\0';
+    if (error) {
+        json_object_put(formulas);
+        goto export_cleanup;
     }
+    json_object_object_add(root, "formulas", formulas);
 
-    double average = ai->average_reward;
-    double planning = ai->planning_score;
-    double poe = ai->recent_poe;
-    double mdl = ai->recent_mdl;
-    uint64_t iterations = ai->iterations;
+    struct json_object *dataset_obj = json_object_new_object();
+    struct json_object *entries = json_object_new_array();
+    if (!dataset_obj || !entries) {
+        if (dataset_obj) {
+            json_object_put(dataset_obj);
+        }
+        if (entries) {
+            json_object_put(entries);
+        }
+        error = 1;
+        goto export_cleanup;
+    }
+    size_t dataset_count = ai->dataset.count;
+    size_t dataset_start = 0;
+    if (limit != SIZE_MAX && dataset_count > limit) {
+        dataset_start = dataset_count - limit;
+    }
+    for (size_t i = dataset_start; i < dataset_count; ++i) {
+        const KolibriAIDatasetEntry *entry = &ai->dataset.entries[i];
+        struct json_object *entry_obj = json_object_new_object();
+        if (!entry_obj) {
+            error = 1;
+            break;
+        }
+        struct json_object *prompt = json_object_new_string(entry->prompt);
+        struct json_object *response = json_object_new_string(entry->response);
+        struct json_object *reward = json_object_new_double(entry->reward);
+        struct json_object *poe = json_object_new_double(entry->poe);
+        struct json_object *mdl = json_object_new_double(entry->mdl);
+        struct json_object *timestamp =
+            json_object_new_int64((int64_t)entry->timestamp);
+        if (!prompt || !response || !reward || !poe || !mdl || !timestamp) {
+            if (prompt) {
+                json_object_put(prompt);
+            }
+            if (response) {
+                json_object_put(response);
+            }
+            if (reward) {
+                json_object_put(reward);
+            }
+            if (poe) {
+                json_object_put(poe);
+            }
+            if (mdl) {
+                json_object_put(mdl);
+            }
+            if (timestamp) {
+                json_object_put(timestamp);
+            }
+            json_object_put(entry_obj);
+            error = 1;
+            break;
+        }
+        json_object_object_add(entry_obj, "prompt", prompt);
+        json_object_object_add(entry_obj, "response", response);
+        json_object_object_add(entry_obj, "reward", reward);
+        json_object_object_add(entry_obj, "poe", poe);
+        json_object_object_add(entry_obj, "mdl", mdl);
+        json_object_object_add(entry_obj, "timestamp", timestamp);
+        json_object_array_add(entries, entry_obj);
+    }
+    if (error) {
+        json_object_put(entries);
+        json_object_put(dataset_obj);
+        goto export_cleanup;
+    }
+    json_object_object_add(dataset_obj, "entries", entries);
+    json_object_object_add(root, "dataset", dataset_obj);
+
+    struct json_object *memory_obj = json_object_new_object();
+    struct json_object *facts = json_object_new_array();
+    if (!memory_obj || !facts) {
+        if (memory_obj) {
+            json_object_put(memory_obj);
+        }
+        if (facts) {
+            json_object_put(facts);
+        }
+        error = 1;
+        goto export_cleanup;
+    }
+    size_t fact_count = ai->memory.count;
+    size_t fact_start = 0;
+    if (limit != SIZE_MAX && fact_count > limit) {
+        fact_start = fact_count - limit;
+    }
+    for (size_t i = fact_start; i < fact_count; ++i) {
+        const KolibriMemoryFact *fact = &ai->memory.facts[i];
+        struct json_object *fact_obj = json_object_new_object();
+        if (!fact_obj) {
+            error = 1;
+            break;
+        }
+        struct json_object *key = json_object_new_string(fact->key);
+        struct json_object *value = json_object_new_string(fact->value);
+        struct json_object *salience = json_object_new_double(fact->salience);
+        struct json_object *last_updated =
+            json_object_new_int64((int64_t)fact->last_updated);
+        if (!key || !value || !salience || !last_updated) {
+            if (key) {
+                json_object_put(key);
+            }
+            if (value) {
+                json_object_put(value);
+            }
+            if (salience) {
+                json_object_put(salience);
+            }
+            if (last_updated) {
+                json_object_put(last_updated);
+            }
+            json_object_put(fact_obj);
+            error = 1;
+            break;
+        }
+        json_object_object_add(fact_obj, "key", key);
+        json_object_object_add(fact_obj, "value", value);
+        json_object_object_add(fact_obj, "salience", salience);
+        json_object_object_add(fact_obj, "last_updated", last_updated);
+        json_object_array_add(facts, fact_obj);
+    }
+    if (error) {
+        json_object_put(facts);
+        json_object_put(memory_obj);
+        goto export_cleanup;
+    }
+    json_object_object_add(memory_obj, "facts", facts);
+    json_object_object_add(root, "memory", memory_obj);
+
+export_cleanup:
     pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
 
-    size_t total = 128 + strlen(formulas);
-    char *result = malloc(total);
-    if (!result) {
-        free(formulas);
+    if (error) {
+        json_object_put(root);
         return NULL;
     }
-    snprintf(result,
-             total,
-             "{\"iterations\":%llu,\"average_reward\":%.6f,"
-             "\"planning_score\":%.6f,\"recent_poe\":%.6f,"
-             "\"recent_mdl\":%.6f,\"formulas\":%s}",
-             (unsigned long long)iterations,
-             average,
-             planning,
-             poe,
-             mdl,
-             formulas);
-    free(formulas);
+
+    const char *json_str =
+        json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+    if (!json_str) {
+        json_object_put(root);
+        return NULL;
+    }
+    char *result = strdup(json_str);
+    json_object_put(root);
     return result;
-}
-
-static int parse_double_field(const char *json, const char *key, double *out) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-    const char *pos = strstr(json, pattern);
-    if (!pos) {
-        return -1;
-    }
-    pos += strlen(pattern);
-    char *end = NULL;
-    double value = strtod(pos, &end);
-    if (end == pos) {
-        return -1;
-    }
-    *out = value;
-    return 0;
-}
-
-static int parse_uint64_field(const char *json, const char *key, uint64_t *out) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-    const char *pos = strstr(json, pattern);
-    if (!pos) {
-        return -1;
-    }
-    pos += strlen(pattern);
-    char *end = NULL;
-    unsigned long long value = strtoull(pos, &end, 10);
-    if (end == pos) {
-        return -1;
-    }
-    *out = (uint64_t)value;
-    return 0;
 }
 
 int kolibri_ai_import_snapshot(KolibriAI *ai, const char *json) {
@@ -713,76 +834,176 @@ int kolibri_ai_import_snapshot(KolibriAI *ai, const char *json) {
         return -1;
     }
 
+    struct json_object *root = json_tokener_parse(json);
+    if (!root || !json_object_is_type(root, json_type_object)) {
+        if (root) {
+            json_object_put(root);
+        }
+        return -1;
+    }
+
     pthread_mutex_lock(&ai->mutex);
-    double tmp_double = 0.0;
-    uint64_t tmp_u64 = 0;
-    if (parse_uint64_field(json, "iterations", &tmp_u64) == 0) {
-        ai->iterations = tmp_u64;
+
+    struct json_object *value = NULL;
+    if (json_object_object_get_ex(root, "iterations", &value) &&
+        json_object_is_type(value, json_type_int)) {
+        ai->iterations = (uint64_t)json_object_get_int64(value);
     }
-    if (parse_double_field(json, "average_reward", &tmp_double) == 0) {
-        ai->average_reward = tmp_double;
+    if (json_object_object_get_ex(root, "average_reward", &value) &&
+        json_object_is_type(value, json_type_double)) {
+        ai->average_reward = json_object_get_double(value);
     }
-    if (parse_double_field(json, "planning_score", &tmp_double) == 0) {
-        ai->planning_score = tmp_double;
+    if (json_object_object_get_ex(root, "planning_score", &value) &&
+        json_object_is_type(value, json_type_double)) {
+        ai->planning_score = json_object_get_double(value);
     }
-    if (parse_double_field(json, "recent_poe", &tmp_double) == 0) {
-        ai->recent_poe = tmp_double;
+    if (json_object_object_get_ex(root, "recent_poe", &value) &&
+        json_object_is_type(value, json_type_double)) {
+        ai->recent_poe = json_object_get_double(value);
     }
-    if (parse_double_field(json, "recent_mdl", &tmp_double) == 0) {
-        ai->recent_mdl = tmp_double;
+    if (json_object_object_get_ex(root, "recent_mdl", &value) &&
+        json_object_is_type(value, json_type_double)) {
+        ai->recent_mdl = json_object_get_double(value);
     }
 
-    const char *array = strstr(json, "\"formulas\":[");
-    if (array) {
-        array += strlen("\"formulas\":[");
-        const char *array_end = strchr(array, ']');
-        if (array_end) {
-            for (size_t i = 0; i < ai->library->count; ++i) {
-                formula_clear(&ai->library->formulas[i]);
+    size_t limit = ai->snapshot_limit == 0 ? SIZE_MAX : ai->snapshot_limit;
+
+    struct json_object *formulas = NULL;
+    if (json_object_object_get_ex(root, "formulas", &formulas) &&
+        json_object_is_type(formulas, json_type_array) && ai->library) {
+        for (size_t i = 0; i < ai->library->count; ++i) {
+            formula_clear(&ai->library->formulas[i]);
+        }
+        ai->library->count = 0;
+
+        size_t array_len = json_object_array_length(formulas);
+        size_t start = 0;
+        if (limit != SIZE_MAX && array_len > limit) {
+            start = array_len - limit;
+        }
+        for (size_t i = start; i < array_len; ++i) {
+            struct json_object *item =
+                json_object_array_get_idx(formulas, (int)i);
+            if (!item || !json_object_is_type(item, json_type_object)) {
+                continue;
             }
-            ai->library->count = 0;
-            while (array < array_end) {
-                const char *id_key = strstr(array, "\"id\":\"");
-                if (!id_key || id_key >= array_end) {
-                    break;
-                }
-                id_key += strlen("\"id\":\"");
-                const char *id_end = strchr(id_key, '"');
-                if (!id_end || id_end > array_end) {
-                    break;
-                }
-                size_t id_len = (size_t)(id_end - id_key);
-                char id_buf[64];
-                if (id_len >= sizeof(id_buf)) {
-                    id_len = sizeof(id_buf) - 1;
-                }
-                memcpy(id_buf, id_key, id_len);
-                id_buf[id_len] = '\0';
-
-                const char *eff_key = strstr(id_end, "\"effectiveness\":");
-                if (!eff_key || eff_key >= array_end) {
-                    break;
-                }
-                eff_key += strlen("\"effectiveness\":");
-                char *eff_end = NULL;
-                double eff_value = strtod(eff_key, &eff_end);
-                if (eff_end == eff_key) {
-                    break;
-                }
-
-                Formula formula = {0};
-                formula.representation = FORMULA_REPRESENTATION_TEXT;
-                memcpy(formula.id, id_buf, id_len);
-                formula.id[id_len] = '\0';
-                formula.effectiveness = eff_value;
-                formula_collection_add(ai->library, &formula);
-                array = eff_end;
+            struct json_object *id_obj = NULL;
+            struct json_object *eff_obj = NULL;
+            if (!json_object_object_get_ex(item, "id", &id_obj) ||
+                !json_object_object_get_ex(item, "effectiveness", &eff_obj)) {
+                continue;
             }
-            update_average_reward(ai);
+            const char *id = json_object_get_string(id_obj);
+            double effectiveness = json_object_get_double(eff_obj);
+            if (!id) {
+                continue;
+            }
+            Formula formula = {0};
+            formula.representation = FORMULA_REPRESENTATION_TEXT;
+            copy_string_truncated(formula.id, sizeof(formula.id), id);
+            formula.effectiveness = effectiveness;
+            formula_collection_add(ai->library, &formula);
+        }
+        update_average_reward(ai);
+    }
+
+    ai->dataset.count = 0;
+    struct json_object *dataset_obj = NULL;
+    if (json_object_object_get_ex(root, "dataset", &dataset_obj) &&
+        json_object_is_type(dataset_obj, json_type_object)) {
+        struct json_object *entries = NULL;
+        if (json_object_object_get_ex(dataset_obj, "entries", &entries) &&
+            json_object_is_type(entries, json_type_array)) {
+            size_t array_len = json_object_array_length(entries);
+            size_t start = 0;
+            if (limit != SIZE_MAX && array_len > limit) {
+                start = array_len - limit;
+            }
+            for (size_t i = start; i < array_len; ++i) {
+                struct json_object *entry =
+                    json_object_array_get_idx(entries, (int)i);
+                if (!entry || !json_object_is_type(entry, json_type_object)) {
+                    continue;
+                }
+                KolibriAIDatasetEntry record;
+                memset(&record, 0, sizeof(record));
+
+                struct json_object *field = NULL;
+                if (json_object_object_get_ex(entry, "prompt", &field)) {
+                    copy_string_truncated(record.prompt,
+                                          sizeof(record.prompt),
+                                          json_object_get_string(field));
+                }
+                if (json_object_object_get_ex(entry, "response", &field)) {
+                    copy_string_truncated(record.response,
+                                          sizeof(record.response),
+                                          json_object_get_string(field));
+                }
+                if (json_object_object_get_ex(entry, "reward", &field)) {
+                    record.reward = json_object_get_double(field);
+                }
+                if (json_object_object_get_ex(entry, "poe", &field)) {
+                    record.poe = json_object_get_double(field);
+                }
+                if (json_object_object_get_ex(entry, "mdl", &field)) {
+                    record.mdl = json_object_get_double(field);
+                }
+                if (json_object_object_get_ex(entry, "timestamp", &field)) {
+                    record.timestamp = (time_t)json_object_get_int64(field);
+                }
+                dataset_append(&ai->dataset, &record);
+            }
+        }
+    }
+
+    ai->memory.count = 0;
+    struct json_object *memory_obj = NULL;
+    if (json_object_object_get_ex(root, "memory", &memory_obj) &&
+        json_object_is_type(memory_obj, json_type_object)) {
+        struct json_object *facts = NULL;
+        if (json_object_object_get_ex(memory_obj, "facts", &facts) &&
+            json_object_is_type(facts, json_type_array)) {
+            size_t array_len = json_object_array_length(facts);
+            size_t start = 0;
+            if (limit != SIZE_MAX && array_len > limit) {
+                start = array_len - limit;
+            }
+            for (size_t i = start; i < array_len; ++i) {
+                struct json_object *fact_obj =
+                    json_object_array_get_idx(facts, (int)i);
+                if (!fact_obj ||
+                    !json_object_is_type(fact_obj, json_type_object)) {
+                    continue;
+                }
+                KolibriMemoryFact fact;
+                memset(&fact, 0, sizeof(fact));
+                struct json_object *field = NULL;
+                if (json_object_object_get_ex(fact_obj, "key", &field)) {
+                    copy_string_truncated(fact.key,
+                                          sizeof(fact.key),
+                                          json_object_get_string(field));
+                }
+                if (json_object_object_get_ex(fact_obj, "value", &field)) {
+                    copy_string_truncated(fact.value,
+                                          sizeof(fact.value),
+                                          json_object_get_string(field));
+                }
+                if (json_object_object_get_ex(fact_obj, "salience", &field)) {
+                    fact.salience = json_object_get_double(field);
+                }
+                if (json_object_object_get_ex(fact_obj, "last_updated", &field)) {
+                    fact.last_updated = (time_t)json_object_get_int64(field);
+                }
+                if (memory_reserve(&ai->memory, ai->memory.count + 1) != 0) {
+                    continue;
+                }
+                ai->memory.facts[ai->memory.count++] = fact;
+            }
         }
     }
 
     pthread_mutex_unlock(&ai->mutex);
+    json_object_put(root);
     return 0;
 }
 
