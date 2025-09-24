@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { apiClient } from "../api/client";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
+import { TraceViewer } from "../components/TraceViewer";
 
 function parseProgram(source: string): number[] {
   const tokens = source
@@ -24,17 +25,6 @@ function parseProgram(source: string): number[] {
   });
 
   return result;
-}
-
-function formatTrace(trace: unknown) {
-  if (trace == null) {
-    return "[]";
-  }
-  try {
-    return JSON.stringify(trace, null, 2);
-  } catch (error) {
-    return String(trace);
-  }
 }
 
 export function ProgramsView() {
@@ -125,10 +115,7 @@ export function ProgramsView() {
             </pre>
           </div>
           <div className="trace-block">
-            <h4 className="trace-title">Трасса</h4>
-            <pre className="output" aria-live="polite">
-              {formatTrace(trace)}
-            </pre>
+            <TraceViewer trace={trace} title="Трасса" />
           </div>
         </div>
       </article>

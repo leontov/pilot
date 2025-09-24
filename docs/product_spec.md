@@ -46,6 +46,7 @@
 - **Structure:** 10-ary trie with node buckets storing top-K (default 8) items sorted by PoE score. Nodes carry aggregated metrics (PoE mean, MDL delta, gas usage) and cross-links for sibling prefetching.
 - **APIs:**
   - `fkv_put(key, value, type, metadata)` — writes decimal-encoded value, updates PoE/MDL aggregates, returns `{version, gas_used}`.
+  - `fkv_put_scored(key, value, type, priority)` — injects explicit PoE/MDL composite score to steer top-K ranking per prefix.
   - `fkv_get_prefix(prefix, limit, type_filter)` — returns ordered list with latency target P95 < 10 ms and streaming pagination for long tails.
   - `fkv_topk_programs(prefix, k)` — fetches highest PoE procedural memories with optional freshness filter.
   - Admin endpoints: `fkv_compact`, `fkv_snapshot`, `fkv_stats` for observability and control.

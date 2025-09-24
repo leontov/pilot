@@ -54,6 +54,7 @@ case "${1:-}" in
     stop_node
     ;;
   bench)
+
     shift
     timestamp=$(date +%Y%m%dT%H%M%S)
     args=("$@")
@@ -107,6 +108,11 @@ case "${1:-}" in
     if [ -n "$bench_output" ]; then
       echo "[kolibri] benchmark report saved to $bench_output"
     fi
+
+    echo "[kolibri] running Δ-VM and F-KV microbenchmarks" >&2
+    make -C "$ROOT_DIR" bench
+    echo "[kolibri] benchmark metrics saved to $LOG_DIR/bench.log and $LOG_DIR/bench.json" >&2
+
     ;;
   clean)
     stop_node || true
