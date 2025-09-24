@@ -12,6 +12,24 @@ This playbook collects seventy-eight extended demo scenarios that showcase Kolib
 > * Every demo must be reproducible. Capture traces, PoE deltas, and MDL deltas when preparing investor presentations.
 > * Tie each scenario to measurable KPIs so QA can regress them automatically.
 
+## Investor Spotlight Sequence (≤ 20 minutes)
+
+All investor demos must start from a clean checkout followed by a single command:
+
+```bash
+./kolibri.sh up
+```
+
+This builds the native node, installs web assets, and launches the stack at `http://localhost:9000`. Once the node is running, execute the following fast-paced sequence to demonstrate end-to-end readiness:
+
+1. **Deterministic Arithmetic (2 min)** — Dialogue tab → `2+2`; show JSON trace in Studio and latency counters in `/api/v1/metrics`.
+2. **Memory Write/Recall (3 min)** — Dialogue tab: "Запомни, что Москва — столица России"; Memory tab: confirm prefix `S/geo/country/RU`; API: `GET /api/v1/fkv/get`.
+3. **Program Synthesis Win (5 min)** — Programs tab: launch search, display new program with PoE uplift, cross-check via `POST /api/v1/program/submit`.
+4. **Blockchain Validation (5 min)** — Blockchain tab: accept `PROGRAM_OFFER`, seal block, highlight PoE statistics and Ed25519 signature.
+5. **Cluster Snapshot (5 min)** — Optional second node launched from a separate checkout (`./kolibri.sh up` with peer configuration in `cfg/kolibri.jsonc`); show CRDT reconciliation in Cluster tab and confirm via `/api/v1/chain/submit` replay.
+
+Wrap up with a KPI recap referencing the dashboard in the README Pro (`docs/readme_pro.md`).
+
 For convenience, similar scenarios are grouped. The "Studio" column below highlights the relevant tab, while the "API" column lists the key endpoint(s).
 
 | # | Scenario | Goal | Key KPIs | Studio | API |
