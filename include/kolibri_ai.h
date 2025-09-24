@@ -4,7 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-
+#include "formula_core.h"
+#include "synthesis/selfplay.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,7 +36,7 @@ typedef enum {
     KOLIBRI_DIFFICULTY_CHALLENGE = 3
 } KolibriDifficultyLevel;
 
-KolibriAI *kolibri_ai_create(const kolibri_config_t *cfg);
+KolibriAI *kolibri_ai_create(const struct kolibri_config_t *cfg);
 void kolibri_ai_destroy(KolibriAI *ai);
 
 void kolibri_ai_start(KolibriAI *ai);
