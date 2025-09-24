@@ -21,35 +21,45 @@ static void init_config(kolibri_config_t *cfg) {
     cfg->vm.trace_depth = 32;
 }
 
-static void test_vm_run_route(const kolibri_config_t *cfg) {
-    http_response_t resp = {0};
+static void assert_missing_program_rejected(const kolibri_config_t *cfg) {
+    const char *missing_body = "{\"program_id\":\"prog-999999\"}";
+    http_response_t resp = (http_response_t){0};
 
+    int rc = http_handle_request(cfg,
+                                 "POST",
+                                 "/api/v1/chain/submit",
+                                 missing_body,
+                                 strlen(missing_body),
+                                 &resp);
+    assert(rc == 0);
+    assert(resp.status == 404);
+    assert(resp.data != NULL);
+    assert(strstr(resp.data, "\"error\"") != NULL);
+
+    http_response_free(&resp);
+}
+
+static void test_vm_run_route(const kolibri_config_t *cfg) {
+    const char *body = "{\"program\":\"2+3\"}";
+    http_response_t resp = (http_response_t){0};
 
     int rc = http_handle_request(cfg,
                                  "POST",
                                  "/api/v1/vm/run",
                                  body,
-
-    const char *text_body = "{\"program\":\"2+2\"}";
-    int rc = http_handle_request(cfg,
-                                 "POST",
-                                 "/api/v1/vm/run",
-                                 text_body,
-                                 strlen(text_body),
-
+                                 strlen(body),
                                  &resp);
     assert(rc == 0);
     assert(resp.status == 200);
     assert(resp.data != NULL);
-    assert(strstr(resp.data, "\"result\":5") != NULL);
+    assert(strstr(resp.data, "\"result\":\"5\"") != NULL);
 
     http_response_free(&resp);
 }
 
-
 static void test_dialog_route(const kolibri_config_t *cfg) {
     const char *body = "{\"input\":\"7+8\"}";
-    http_response_t resp = {0};
+    http_response_t resp = (http_response_t){0};
 
     int rc = http_handle_request(cfg,
                                  "POST",
@@ -66,21 +76,23 @@ static void test_dialog_route(const kolibri_config_t *cfg) {
 }
 
 static void test_fkv_get_route(const kolibri_config_t *cfg) {
-    uint8_t key[] = {1, 2, 3};
-    uint8_t value[] = {4, 5};
-    assert(fkv_put(key, sizeof(key), value, sizeof(value), FKV_ENTRY_TYPE_VALUE) == 0);
+    uint8_t value_key[] = {1, 2, 3};
+    uint8_t value_val[] = {4, 5};
+    assert(fkv_put(value_key, sizeof(value_key), value_val, sizeof(value_val), FKV_ENTRY_TYPE_VALUE) == 0);
 
-    http_response_t resp = {0};
-    int rc = http_handle_request(cfg,
-                                 "GET",
-                                 "/api/v1/fkv/get?prefix=12&limit=1",
-                                 NULL,
-                                 0,
-                                 &resp);
+    uint8_t program_key[] = {1, 2, 9};
+    uint8_t program_val[] = {7, 7};
+    assert(fkv_put(program_key, sizeof(program_key), program_val, sizeof(program_val), FKV_ENTRY_TYPE_PROGRAM) == 0);
+
+    http_response_t resp = (http_response_t){0};
+    const char *path = "/api/v1/fkv/get?prefix=12&limit=5";
+    int rc = http_handle_request(cfg, "GET", path, NULL, 0, &resp);
     assert(rc == 0);
     assert(resp.status == 200);
     assert(resp.data != NULL);
     assert(strstr(resp.data, "\"key\":\"123\"") != NULL);
+    assert(strstr(resp.data, "\"value\":\"45\"") != NULL);
+    assert(strstr(resp.data, "\"program\":\"77\"") != NULL);
 
     http_response_free(&resp);
 }
@@ -105,6 +117,7 @@ static void test_chain_submit_route(const kolibri_config_t *cfg) {
     const char *program_id_start = strstr(resp.data, "\"program_id\":\"");
     assert(program_id_start != NULL);
     program_id_start += strlen("\"program_id\":\"");
+
     char program_id[64];
     size_t idx = 0;
     while (program_id_start[idx] && program_id_start[idx] != '"' && idx + 1 < sizeof(program_id)) {
@@ -120,6 +133,19 @@ static void test_chain_submit_route(const kolibri_config_t *cfg) {
     snprintf(chain_request, sizeof(chain_request), "{\"program_id\":\"%s\"}", program_id);
 
     resp = (http_response_t){0};
+    rc = http_handle_request(cfg,
+                             "POST",
+                             "/api/v1/chain/submit",
+                             chain_request,
+                             strlen(chain_request),
+                             &resp);
+    assert(rc == 0);
+    assert(resp.status == 200);
+    assert(resp.data != NULL);
+    assert(strstr(resp.data, "\"status\":\"accepted\"") != NULL);
+    assert(chain->block_count >= 1);
+
+    http_response_free(&resp);
 
     uint8_t *bytecode = NULL;
     size_t bytecode_len = 0;
@@ -139,7 +165,7 @@ static void test_chain_submit_route(const kolibri_config_t *cfg) {
     snprintf(bytecode_body + offset, sizeof(bytecode_body) - offset, "]}");
     free(bytecode);
 
-
+    resp = (http_response_t){0};
     rc = http_handle_request(cfg,
                              "POST",
                              "/api/v1/vm/run",
@@ -149,51 +175,11 @@ static void test_chain_submit_route(const kolibri_config_t *cfg) {
     assert(rc == 0);
     assert(resp.status == 200);
     assert(resp.data != NULL);
-
-    assert(strstr(resp.data, "\"status\":\"accepted\"") != NULL);
-    assert(chain->block_count >= 1);
-
-    http_response_free(&resp);
-
-    const char *missing_body = "{\"program_id\":\"prog-999999\"}";
-    resp = (http_response_t){0};
-    rc = http_handle_request(cfg,
-                             "POST",
-                             "/api/v1/chain/submit",
-                             missing_body,
-                             strlen(missing_body),
-                             &resp);
-    assert(rc == 0);
-    assert(resp.status == 404);
-    assert(resp.data != NULL);
-    assert(strstr(resp.data, "\"error\"") != NULL);
-
-
     assert(strstr(resp.data, "\"result\":\"8\"") != NULL);
-    http_response_free(&resp);
-}
-
-static void test_fkv_get_route(const kolibri_config_t *cfg) {
-    (void)cfg;
-    uint8_t value_key[] = {1, 2, 3};
-    uint8_t value_val[] = {4, 5};
-    assert(fkv_put(value_key, sizeof(value_key), value_val, sizeof(value_val), FKV_ENTRY_TYPE_VALUE) == 0);
-
-    uint8_t program_key[] = {1, 2, 9};
-    uint8_t program_val[] = {7, 7};
-    assert(fkv_put(program_key, sizeof(program_key), program_val, sizeof(program_val), FKV_ENTRY_TYPE_PROGRAM) == 0);
-
-    http_response_t resp = {0};
-    const char *path = "/api/v1/fkv/get?prefix=12&limit=5";
-    int rc = http_handle_request(cfg, "GET", path, NULL, 0, &resp);
-    assert(rc == 0);
-    assert(resp.status == 200);
-    assert(resp.data != NULL);
-    assert(strstr(resp.data, "\"key\":\"123\"") != NULL);
-    assert(strstr(resp.data, "\"value\":\"45\"") != NULL);
-    assert(strstr(resp.data, "\"program\":\"77\"") != NULL);
 
     http_response_free(&resp);
+
+    assert_missing_program_rejected(cfg);
 
     http_routes_set_blockchain(NULL);
     blockchain_destroy(chain);
@@ -206,7 +192,6 @@ int main(void) {
     http_routes_set_blockchain(NULL);
 
     assert(fkv_init() == 0);
-
     test_dialog_route(&cfg);
     fkv_shutdown();
 
@@ -221,12 +206,6 @@ int main(void) {
     assert(fkv_init() == 0);
     test_chain_submit_route(&cfg);
     fkv_shutdown();
-
-
-    test_vm_run_route(&cfg);
-    test_fkv_get_route(&cfg);
-    fkv_shutdown();
-
 
     printf("http route tests passed\n");
     return 0;
