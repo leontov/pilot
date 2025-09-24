@@ -19,11 +19,13 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 static volatile sig_atomic_t running = 1;
@@ -231,6 +233,386 @@ static void describe_best_formula(KolibriAI *ai) {
     free(best);
 }
 
+typedef struct {
+    double mean_us;
+    double p95_us;
+    double min_us;
+    double max_us;
+} bench_timing_stats_t;
+
+static uint64_t monotonic_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static void bench_log_line(FILE *fp, const char *fmt, ...) {
+    if (!fmt) {
+        return;
+    }
+    char buffer[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, ap);
+    va_end(ap);
+    log_info("%s", buffer);
+    if (fp) {
+        fprintf(fp, "%s\n", buffer);
+        fflush(fp);
+    }
+}
+
+static int cmp_double(const void *a, const void *b) {
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    if (da < db) {
+        return -1;
+    }
+    if (da > db) {
+        return 1;
+    }
+    return 0;
+}
+
+static int compute_timing_stats(const double *samples, size_t count, bench_timing_stats_t *out) {
+    if (!samples || count == 0 || !out) {
+        return -1;
+    }
+    double min_v = samples[0];
+    double max_v = samples[0];
+    double sum = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        double v = samples[i];
+        if (v < min_v) {
+            min_v = v;
+        }
+        if (v > max_v) {
+            max_v = v;
+        }
+        sum += v;
+    }
+    double *sorted = malloc(count * sizeof(double));
+    if (!sorted) {
+        return -1;
+    }
+    memcpy(sorted, samples, count * sizeof(double));
+    qsort(sorted, count, sizeof(double), cmp_double);
+    size_t rank = (95 * count + 99) / 100;
+    if (rank == 0) {
+        rank = 1;
+    }
+    if (rank > count) {
+        rank = count;
+    }
+    out->mean_us = sum / (double)count;
+    out->p95_us = sorted[rank - 1];
+    out->min_us = min_v;
+    out->max_us = max_v;
+    free(sorted);
+    return 0;
+}
+
+static void compute_step_stats(const uint32_t *values,
+                               size_t count,
+                               double *avg_out,
+                               uint32_t *min_out,
+                               uint32_t *max_out) {
+    if (!values || count == 0) {
+        if (avg_out) {
+            *avg_out = 0.0;
+        }
+        if (min_out) {
+            *min_out = 0;
+        }
+        if (max_out) {
+            *max_out = 0;
+        }
+        return;
+    }
+    uint32_t min_v = values[0];
+    uint32_t max_v = values[0];
+    uint64_t sum = 0;
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t v = values[i];
+        if (v < min_v) {
+            min_v = v;
+        }
+        if (v > max_v) {
+            max_v = v;
+        }
+        sum += (uint64_t)v;
+    }
+    if (avg_out) {
+        *avg_out = (double)sum / (double)count;
+    }
+    if (min_out) {
+        *min_out = min_v;
+    }
+    if (max_out) {
+        *max_out = max_v;
+    }
+}
+
+static int build_program_from_expression(const char *expression,
+                                         uint8_t **out_code,
+                                         size_t *out_len) {
+    if (!expression || !out_code || !out_len) {
+        return -1;
+    }
+    *out_code = NULL;
+    *out_len = 0;
+    if (formula_vm_compile_from_text(expression, out_code, out_len) != 0) {
+        return -1;
+    }
+    if (*out_len > 0 && (*out_code)[*out_len - 1] == 0x0B) {
+        (*out_len)--;
+    }
+    uint8_t *resized = realloc(*out_code, *out_len + 1);
+    if (!resized) {
+        free(*out_code);
+        *out_code = NULL;
+        *out_len = 0;
+        return -1;
+    }
+    resized[*out_len] = 0x12; // HALT
+    *out_code = resized;
+    *out_len = *out_len + 1;
+    return 0;
+}
+
+static int run_vm_microbench(FILE *log_fp) {
+    typedef struct {
+        const char *name;
+        const char *expression;
+        size_t iterations;
+        uint64_t expected_result;
+    } vm_case_t;
+
+    const vm_case_t cases[] = {
+        {"add_small", "2+3", 1000, 5u},
+        {"mul_large", "98765*4321", 1000, 426763565u},
+        {"div_long", "123456789/3", 1000, 41152263u},
+    };
+
+    bench_log_line(log_fp, "--- Δ-VM microbenchmarks ---");
+    int rc = 0;
+    vm_limits_t limits = {.max_steps = 512, .max_stack = 128};
+
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+        const vm_case_t *vm_case = &cases[c];
+        uint8_t *code = NULL;
+        size_t code_len = 0;
+        if (build_program_from_expression(vm_case->expression, &code, &code_len) != 0) {
+            bench_log_line(log_fp,
+                           "Δ-VM %-12s | failed to compile expression '%s'",
+                           vm_case->name,
+                           vm_case->expression);
+            rc = -1;
+            continue;
+        }
+
+        double *samples = calloc(vm_case->iterations, sizeof(double));
+        uint32_t *steps = calloc(vm_case->iterations, sizeof(uint32_t));
+        if (!samples || !steps) {
+            bench_log_line(log_fp,
+                           "Δ-VM %-12s | memory allocation failed",
+                           vm_case->name);
+            free(samples);
+            free(steps);
+            free(code);
+            rc = -1;
+            continue;
+        }
+
+        size_t completed = 0;
+        size_t halted_count = 0;
+        int result_mismatch = 0;
+        uint64_t last_result = 0;
+        for (; completed < vm_case->iterations; ++completed) {
+            prog_t prog = {.code = code, .len = code_len};
+            uint64_t start_ns = monotonic_ns();
+            vm_result_t result = {0};
+            int run_rc = vm_run(&prog, &limits, NULL, &result);
+            uint64_t end_ns = monotonic_ns();
+            if (run_rc != 0 || result.status != VM_OK) {
+                bench_log_line(log_fp,
+                               "Δ-VM %-12s | iteration %zu failed (rc=%d status=%d)",
+                               vm_case->name,
+                               completed,
+                               run_rc,
+                               (int)result.status);
+                rc = -1;
+                break;
+            }
+            samples[completed] = (double)(end_ns - start_ns) / 1000.0; // microseconds
+            steps[completed] = result.steps;
+            if (result.halted) {
+                halted_count++;
+            }
+            if (result.result != vm_case->expected_result) {
+                result_mismatch = 1;
+            }
+            last_result = result.result;
+        }
+
+        if (completed == vm_case->iterations) {
+            bench_timing_stats_t stats;
+            if (compute_timing_stats(samples, vm_case->iterations, &stats) != 0) {
+                bench_log_line(log_fp,
+                               "Δ-VM %-12s | failed to compute timing stats",
+                               vm_case->name);
+                rc = -1;
+            } else {
+                double avg_steps = 0.0;
+                uint32_t min_steps = 0;
+                uint32_t max_steps = 0;
+                compute_step_stats(steps,
+                                   vm_case->iterations,
+                                   &avg_steps,
+                                   &min_steps,
+                                   &max_steps);
+                double halted_ratio = vm_case->iterations
+                                           ? (double)halted_count * 100.0 /
+                                                 (double)vm_case->iterations
+                                           : 0.0;
+                bench_log_line(log_fp,
+                               "Δ-VM %-12s | iters=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs | steps(avg)=%.2f min=%u max=%u | HALT=%.1f%% | result=%" PRIu64,
+                               vm_case->name,
+                               vm_case->iterations,
+                               stats.mean_us,
+                               stats.p95_us,
+                               stats.min_us,
+                               stats.max_us,
+                               avg_steps,
+                               min_steps,
+                               max_steps,
+                               halted_ratio,
+                               last_result);
+                if (result_mismatch) {
+                    bench_log_line(log_fp,
+                                   "Δ-VM %-12s | result mismatch detected (expected=%" PRIu64 ")",
+                                   vm_case->name,
+                                   vm_case->expected_result);
+                    rc = -1;
+                }
+            }
+        }
+        free(samples);
+        free(steps);
+        free(code);
+    }
+    return rc;
+}
+
+static int run_fkv_microbench(FILE *log_fp) {
+    const size_t operations = 1000;
+    bench_log_line(log_fp, "--- F-KV microbenchmarks ---");
+
+    if (fkv_init() != 0) {
+        bench_log_line(log_fp, "F-KV init failed");
+        return -1;
+    }
+
+    double *put_samples = calloc(operations, sizeof(double));
+    double *get_samples = calloc(operations, sizeof(double));
+    if (!put_samples || !get_samples) {
+        bench_log_line(log_fp, "F-KV | memory allocation failed");
+        free(put_samples);
+        free(get_samples);
+        fkv_shutdown();
+        return -1;
+    }
+
+    int rc = 0;
+    for (size_t i = 0; i < operations; ++i) {
+        uint8_t key_digits[32];
+        size_t key_len = 0;
+        uint8_t value_digits[32];
+        size_t value_len = 0;
+        if (digits_from_number(1000u + (uint64_t)i, key_digits, sizeof(key_digits), &key_len) != 0 ||
+            digits_from_number((uint64_t)i * 17u + 11u,
+                               value_digits,
+                               sizeof(value_digits),
+                               &value_len) != 0) {
+            bench_log_line(log_fp, "F-KV PUT | digit encoding failed at %zu", i);
+            rc = -1;
+            break;
+        }
+        uint64_t start_ns = monotonic_ns();
+        int put_rc = fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE);
+        uint64_t end_ns = monotonic_ns();
+        if (put_rc != 0) {
+            bench_log_line(log_fp, "F-KV PUT | operation %zu failed (rc=%d)", i, put_rc);
+            rc = -1;
+            break;
+        }
+        put_samples[i] = (double)(end_ns - start_ns) / 1000.0;
+    }
+
+    size_t hits = 0;
+    if (rc == 0) {
+        for (size_t i = 0; i < operations; ++i) {
+            uint8_t key_digits[32];
+            size_t key_len = 0;
+            if (digits_from_number(1000u + (uint64_t)i,
+                                   key_digits,
+                                   sizeof(key_digits),
+                                   &key_len) != 0) {
+                bench_log_line(log_fp, "F-KV GET | digit encoding failed at %zu", i);
+                rc = -1;
+                break;
+            }
+            uint64_t start_ns = monotonic_ns();
+            fkv_iter_t it = {0};
+            int get_rc = fkv_get_prefix(key_digits, key_len, &it, 1);
+            uint64_t end_ns = monotonic_ns();
+            if (get_rc != 0) {
+                bench_log_line(log_fp, "F-KV GET | operation %zu failed (rc=%d)", i, get_rc);
+                rc = -1;
+                fkv_iter_free(&it);
+                break;
+            }
+            get_samples[i] = (double)(end_ns - start_ns) / 1000.0;
+            if (it.count > 0) {
+                hits++;
+            }
+            fkv_iter_free(&it);
+        }
+    }
+
+    if (rc == 0) {
+        bench_timing_stats_t put_stats;
+        bench_timing_stats_t get_stats;
+        if (compute_timing_stats(put_samples, operations, &put_stats) != 0 ||
+            compute_timing_stats(get_samples, operations, &get_stats) != 0) {
+            bench_log_line(log_fp, "F-KV | failed to compute timing stats");
+            rc = -1;
+        } else {
+            bench_log_line(log_fp,
+                           "F-KV PUT  | ops=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs",
+                           operations,
+                           put_stats.mean_us,
+                           put_stats.p95_us,
+                           put_stats.min_us,
+                           put_stats.max_us);
+            double hit_rate = operations ? (double)hits * 100.0 / (double)operations : 0.0;
+            bench_log_line(log_fp,
+                           "F-KV GET  | ops=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs | hit=%.1f%%",
+                           operations,
+                           get_stats.mean_us,
+                           get_stats.p95_us,
+                           get_stats.min_us,
+                           get_stats.max_us,
+                           hit_rate);
+        }
+    }
+
+    free(put_samples);
+    free(get_samples);
+    fkv_shutdown();
+    return rc;
+}
+
 static int run_chat(const kolibri_config_t *cfg) {
     KolibriAI *ai = kolibri_ai_create(NULL);
     if (ai) {
@@ -308,8 +690,32 @@ static int run_chat(const kolibri_config_t *cfg) {
 }
 
 static int run_bench(void) {
-    log_info("Benchmarks are not implemented yet");
-    return 0;
+    if (mkdir("logs", 0755) != 0 && errno != EEXIST) {
+        log_warn("failed to create logs directory: %s", strerror(errno));
+    }
+
+    FILE *bench_log = fopen("logs/bench.log", "a");
+    if (!bench_log) {
+        log_warn("could not open logs/bench.log: %s", strerror(errno));
+    }
+
+    bench_log_line(bench_log, "=== Kolibri Ω benchmark suite ===");
+
+    int rc = 0;
+    if (run_vm_microbench(bench_log) != 0) {
+        rc = -1;
+    }
+    if (run_fkv_microbench(bench_log) != 0) {
+        rc = -1;
+    }
+
+    bench_log_line(bench_log, "=== Benchmarks completed (%s) ===", rc == 0 ? "OK" : "FAIL");
+    if (bench_log) {
+        fclose(bench_log);
+    }
+
+    log_info("Benchmark report saved to logs/bench.log");
+    return rc == 0 ? 0 : 1;
 }
 
 int main(int argc, char **argv) {
@@ -326,6 +732,7 @@ int main(int argc, char **argv) {
 
     if (argc > 1 && strcmp(argv[1], "--bench") == 0) {
         if (log_fp) {
+            log_set_file(NULL);
             fclose(log_fp);
         }
         return run_bench();
