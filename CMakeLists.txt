@@ -53,13 +53,16 @@ set(SOURCES
         src/kolibri_ai.c
         src/protocol/swarm.c
         src/synthesis/formula_vm_eval.c
-        src/synthesis/search.c
+        src/synthesis/search.
+        src/protocol/swarm.c
+        src/protocol/swarm_node.c
         src/synthesis/selfplay.c
         src/util/bench.c
         src/util/config.c
         src/util/json_compat.c
         src/util/log.c
         src/vm/vm.c
+
 )
 
 # Создание исполняемого файла
