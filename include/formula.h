@@ -4,6 +4,7 @@
 #define FORMULA_H
 
 #include "formula_core.h"
+#include "vm/vm.h"
 
 
 // High level categories used by legacy evaluators.
