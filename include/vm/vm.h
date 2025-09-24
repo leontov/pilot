@@ -55,6 +55,9 @@ void vm_set_seed(uint32_t seed);
 
 int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result_t *out);
 
+void vm_force_fkv_errors(int get_enabled, int get_rc, int put_enabled, int put_rc);
+void vm_reset_fkv_errors(void);
+
 #ifdef __cplusplus
 }
 #endif
