@@ -55,6 +55,11 @@ case "${1:-}" in
     ;;
   bench)
     echo "[kolibri] running Δ-VM and F-KV microbenchmarks" >&2
+    if [ -n "${KOLIBRI_BENCH_ITERATIONS:-}" ] || [ -n "${KOLIBRI_BENCH_WARMUP:-}" ]; then
+      echo "[kolibri] iterations=${KOLIBRI_BENCH_ITERATIONS:-default} warmup=${KOLIBRI_BENCH_WARMUP:-auto}" >&2
+    else
+      echo "[kolibri] set KOLIBRI_BENCH_ITERATIONS / KOLIBRI_BENCH_WARMUP to tune workload" >&2
+    fi
     make -C "$ROOT_DIR" bench
     ;;
   clean)

@@ -46,7 +46,7 @@ Other CLI commands:
 
 ```
 ./kolibri.sh stop   # stop running node
-./kolibri.sh bench  # execute Δ-VM and F-KV microbenchmarks (mean, p95, steps)
+./kolibri.sh bench  # execute Δ-VM and F-KV microbenchmarks (latency, spread, throughput)
 ./kolibri.sh clean  # remove build artifacts, logs, and data
 ```
 
@@ -68,14 +68,16 @@ falls back to the current best formula discovered by the Kolibri AI core, which 
 `./kolibri.sh bench` builds the native node (if needed) and runs `kolibri_node --bench`. The command prints a compact table with
 the following columns:
 
-* **Mean (us)** – average latency per operation in microseconds.
-* **P95 (us)** – 95th percentile latency; 95 % of the samples fall at or below this number.
+* **Mean / P95 (us)** – average and 95th percentile latency per operation in microseconds.
+* **StdDev / Min / Max (us)** – spread of the distribution and its observed bounds.
+* **Ops/s** – steady-state throughput derived from the mean latency.
 * **Steps** – number of Δ-VM interpreter steps executed by the benchmarked program. This column is only populated for VM rows;
   F-KV operations do not have a concept of “steps” and display `-`.
 
-Use the mean/p95 pair to track overall throughput vs. tail latency. VM benchmarks focus on deterministic program execution while
-the F-KV rows stress bulk `fkv_put`/`fkv_get_prefix` calls against the in-memory trie. Each run also appends the same summary to
-`logs/kolibri.log` so historical trends can be inspected later.
+By default the harness performs a 10 % warmup pass (minimum one iteration) to populate caches before measuring. Override the
+workload with `KOLIBRI_BENCH_ITERATIONS=<n>` and adjust the warmup length with `KOLIBRI_BENCH_WARMUP=<m>`. Every run emits both the
+formatted table and a structured JSON snapshot at `logs/bench.json`, while the textual metrics continue to be appended to
+`logs/kolibri.log` for long-term tracking.
 
 
 ## AI state persistence

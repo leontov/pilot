@@ -18,6 +18,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -311,8 +312,13 @@ static int run_chat(const kolibri_config_t *cfg) {
 typedef struct {
     const char *name;
     size_t iterations;
+    size_t warmup;
     double mean_us;
     double p95_us;
+    double min_us;
+    double max_us;
+    double stddev_us;
+    double throughput_ops;
     uint32_t steps;
     int has_steps;
 } bench_stats_t;
@@ -362,7 +368,7 @@ static double percentile(double *values, size_t n, double p) {
     return values[lower] + fraction * (values[upper] - values[lower]);
 }
 
-static int bench_vm_sum_digits(size_t iterations, bench_stats_t *out) {
+static int bench_vm_sum_digits(size_t iterations, size_t warmup, bench_stats_t *out) {
     if (!out || iterations == 0) {
         return -1;
     }
@@ -398,9 +404,14 @@ static int bench_vm_sum_digits(size_t iterations, bench_stats_t *out) {
     vm_limits_t limits = {.max_steps = 256, .max_stack = 64};
     prog_t prog = {.code = program, .len = sizeof(program)};
     double sum = 0.0;
+    double sum_sq = 0.0;
+    double min_us = 0.0;
+    double max_us = 0.0;
     uint32_t last_steps = 0;
 
-    for (size_t i = 0; i < iterations; ++i) {
+    size_t total = warmup + iterations;
+    size_t sample_index = 0;
+    for (size_t i = 0; i < total; ++i) {
         struct timespec start_ts;
         struct timespec end_ts;
         if (clock_gettime(CLOCK_MONOTONIC, &start_ts) != 0) {
@@ -420,17 +431,40 @@ static int bench_vm_sum_digits(size_t iterations, bench_stats_t *out) {
         }
 
         double elapsed = elapsed_us(&start_ts, &end_ts);
-        samples[i] = elapsed;
-        sum += elapsed;
-        last_steps = result.steps;
+        if (i >= warmup) {
+            samples[sample_index++] = elapsed;
+            sum += elapsed;
+            sum_sq += elapsed * elapsed;
+            if (sample_index == 1) {
+                min_us = max_us = elapsed;
+            } else {
+                if (elapsed < min_us) {
+                    min_us = elapsed;
+                }
+                if (elapsed > max_us) {
+                    max_us = elapsed;
+                }
+            }
+            last_steps = result.steps;
+        }
     }
 
     qsort(samples, iterations, sizeof(double), cmp_double);
 
     out->name = "Δ-VM sum digits";
     out->iterations = iterations;
+    out->warmup = warmup;
     out->mean_us = sum / (double)iterations;
     out->p95_us = percentile(samples, iterations, 95.0);
+    out->min_us = min_us;
+    out->max_us = max_us;
+    double mean = out->mean_us;
+    double variance = 0.0;
+    if (iterations > 1) {
+        variance = (sum_sq - (sum * sum) / (double)iterations) / (double)(iterations - 1);
+    }
+    out->stddev_us = variance > 0.0 ? sqrt(variance) : 0.0;
+    out->throughput_ops = mean > 0.0 ? 1e6 / mean : 0.0;
     out->steps = last_steps;
     out->has_steps = 1;
 
@@ -438,7 +472,7 @@ static int bench_vm_sum_digits(size_t iterations, bench_stats_t *out) {
     return 0;
 }
 
-static int bench_fkv_put(size_t iterations, bench_stats_t *out) {
+static int bench_fkv_put(size_t iterations, size_t warmup, bench_stats_t *out) {
     if (!out || iterations == 0) {
         return -1;
     }
@@ -449,13 +483,21 @@ static int bench_fkv_put(size_t iterations, bench_stats_t *out) {
     }
 
     double sum = 0.0;
-    for (size_t i = 0; i < iterations; ++i) {
+    double sum_sq = 0.0;
+    double min_us = 0.0;
+    double max_us = 0.0;
+
+    size_t total = warmup + iterations;
+    size_t sample_index = 0;
+    for (size_t i = 0; i < total; ++i) {
         uint8_t key_digits[32];
         uint8_t value_digits[32];
         size_t key_len = 0;
         size_t value_len = 0;
-        if (digits_from_number((uint64_t)(i + 1), key_digits, sizeof(key_digits), &key_len) != 0 ||
-            digits_from_number((uint64_t)(i * 3 + 7), value_digits, sizeof(value_digits), &value_len) != 0) {
+        uint64_t key_index = (uint64_t)(i + 1);
+        uint64_t value_index = (uint64_t)(i * 3 + 7);
+        if (digits_from_number(key_index, key_digits, sizeof(key_digits), &key_len) != 0 ||
+            digits_from_number(value_index, value_digits, sizeof(value_digits), &value_len) != 0) {
             free(samples);
             return -1;
         }
@@ -478,16 +520,38 @@ static int bench_fkv_put(size_t iterations, bench_stats_t *out) {
         }
 
         double elapsed = elapsed_us(&start_ts, &end_ts);
-        samples[i] = elapsed;
-        sum += elapsed;
+        if (i >= warmup) {
+            samples[sample_index++] = elapsed;
+            sum += elapsed;
+            sum_sq += elapsed * elapsed;
+            if (sample_index == 1) {
+                min_us = max_us = elapsed;
+            } else {
+                if (elapsed < min_us) {
+                    min_us = elapsed;
+                }
+                if (elapsed > max_us) {
+                    max_us = elapsed;
+                }
+            }
+        }
     }
 
     qsort(samples, iterations, sizeof(double), cmp_double);
 
     out->name = "F-KV put";
     out->iterations = iterations;
+    out->warmup = warmup;
     out->mean_us = sum / (double)iterations;
     out->p95_us = percentile(samples, iterations, 95.0);
+    out->min_us = min_us;
+    out->max_us = max_us;
+    double variance = 0.0;
+    if (iterations > 1) {
+        variance = (sum_sq - (sum * sum) / (double)iterations) / (double)(iterations - 1);
+    }
+    out->stddev_us = variance > 0.0 ? sqrt(variance) : 0.0;
+    out->throughput_ops = out->mean_us > 0.0 ? 1e6 / out->mean_us : 0.0;
     out->steps = 0;
     out->has_steps = 0;
 
@@ -495,7 +559,7 @@ static int bench_fkv_put(size_t iterations, bench_stats_t *out) {
     return 0;
 }
 
-static int bench_fkv_get(size_t iterations, bench_stats_t *out) {
+static int bench_fkv_get(size_t iterations, size_t warmup, bench_stats_t *out) {
     if (!out || iterations == 0) {
         return -1;
     }
@@ -506,10 +570,16 @@ static int bench_fkv_get(size_t iterations, bench_stats_t *out) {
     }
 
     double sum = 0.0;
-    for (size_t i = 0; i < iterations; ++i) {
+    double sum_sq = 0.0;
+    double min_us = 0.0;
+    double max_us = 0.0;
+    size_t total = warmup + iterations;
+    size_t sample_index = 0;
+    for (size_t i = 0; i < total; ++i) {
         uint8_t key_digits[32];
         size_t key_len = 0;
-        size_t key_id = (i % iterations) + 1;
+        size_t dataset = total > 0 ? total : iterations;
+        size_t key_id = (i % dataset) + 1;
         if (digits_from_number((uint64_t)key_id, key_digits, sizeof(key_digits), &key_len) != 0) {
             free(samples);
             return -1;
@@ -535,8 +605,21 @@ static int bench_fkv_get(size_t iterations, bench_stats_t *out) {
         }
 
         double elapsed = elapsed_us(&start_ts, &end_ts);
-        samples[i] = elapsed;
-        sum += elapsed;
+        if (i >= warmup) {
+            samples[sample_index++] = elapsed;
+            sum += elapsed;
+            sum_sq += elapsed * elapsed;
+            if (sample_index == 1) {
+                min_us = max_us = elapsed;
+            } else {
+                if (elapsed < min_us) {
+                    min_us = elapsed;
+                }
+                if (elapsed > max_us) {
+                    max_us = elapsed;
+                }
+            }
+        }
 
         fkv_iter_free(&it);
     }
@@ -545,8 +628,17 @@ static int bench_fkv_get(size_t iterations, bench_stats_t *out) {
 
     out->name = "F-KV get_prefix";
     out->iterations = iterations;
+    out->warmup = warmup;
     out->mean_us = sum / (double)iterations;
     out->p95_us = percentile(samples, iterations, 95.0);
+    out->min_us = min_us;
+    out->max_us = max_us;
+    double variance = 0.0;
+    if (iterations > 1) {
+        variance = (sum_sq - (sum * sum) / (double)iterations) / (double)(iterations - 1);
+    }
+    out->stddev_us = variance > 0.0 ? sqrt(variance) : 0.0;
+    out->throughput_ops = out->mean_us > 0.0 ? 1e6 / out->mean_us : 0.0;
     out->steps = 0;
     out->has_steps = 0;
 
@@ -559,8 +651,18 @@ static void print_bench_report(const bench_stats_t *results, size_t count) {
         return;
     }
     puts("=== Kolibri Microbenchmarks ===");
-    printf("%-28s %10s %12s %12s %8s\n", "Benchmark", "Iter", "Mean (us)", "P95 (us)", "Steps");
-    puts("--------------------------------------------------------------------------");
+    printf("%-24s %8s %7s %11s %11s %11s %11s %11s %11s %8s\n",
+           "Benchmark",
+           "Iter",
+           "Warmup",
+           "Mean (us)",
+           "P95 (us)",
+           "StdDev",
+           "Min",
+           "Max",
+           "Ops/s",
+           "Steps");
+    puts("-----------------------------------------------------------------------------------------------------------------");
     for (size_t i = 0; i < count; ++i) {
         char steps_buf[32];
         if (results[i].has_steps) {
@@ -568,13 +670,70 @@ static void print_bench_report(const bench_stats_t *results, size_t count) {
         } else {
             snprintf(steps_buf, sizeof(steps_buf), "-");
         }
-        printf("%-28s %10zu %12.2f %12.2f %8s\n",
+        printf("%-24s %8zu %7zu %11.2f %11.2f %11.2f %11.2f %11.2f %11.0f %8s\n",
                results[i].name,
                results[i].iterations,
+               results[i].warmup,
                results[i].mean_us,
                results[i].p95_us,
+               results[i].stddev_us,
+               results[i].min_us,
+               results[i].max_us,
+               results[i].throughput_ops,
                steps_buf);
     }
+}
+
+static void write_bench_json(const bench_stats_t *results,
+                             size_t count,
+                             size_t iterations,
+                             size_t warmup,
+                             const char *path) {
+    if (!results || count == 0 || !path) {
+        return;
+    }
+
+    FILE *fp = fopen(path, "w");
+    if (!fp) {
+        log_warn("could not open %s for writing", path);
+        return;
+    }
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm_info;
+    localtime_r(&ts.tv_sec, &tm_info);
+    char timestamp[64];
+    if (strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &tm_info) == 0) {
+        timestamp[0] = '\0';
+    }
+
+    fprintf(fp,
+            "{\n  \"timestamp\": \"%s\",\n  \"iterations\": %zu,\n  \"warmup\": %zu,\n  \"results\": [\n",
+            timestamp,
+            iterations,
+            warmup);
+    for (size_t i = 0; i < count; ++i) {
+        const bench_stats_t *stat = &results[i];
+        fprintf(fp,
+                "    {\"name\": \"%s\", \"iterations\": %zu, \"warmup\": %zu, \"mean_us\": %.4f, "
+                "\"p95_us\": %.4f, \"stddev_us\": %.4f, \"min_us\": %.4f, \"max_us\": %.4f, "
+                "\"throughput_ops\": %.4f, \"steps\": %u, \"has_steps\": %d}%s\n",
+                stat->name,
+                stat->iterations,
+                stat->warmup,
+                stat->mean_us,
+                stat->p95_us,
+                stat->stddev_us,
+                stat->min_us,
+                stat->max_us,
+                stat->throughput_ops,
+                stat->steps,
+                stat->has_steps,
+                (i + 1 == count) ? "" : ",");
+    }
+    fputs("  ]\n}\n", fp);
+    fclose(fp);
 }
 
 static int run_bench(void) {
@@ -599,42 +758,89 @@ static int run_bench(void) {
     }
     fkv_ready = 1;
 
-    const size_t iterations = 2000;
+    size_t iterations = 2000;
+    const char *iter_env = getenv("KOLIBRI_BENCH_ITERATIONS");
+    if (iter_env && iter_env[0]) {
+        char *endptr = NULL;
+        unsigned long long value = strtoull(iter_env, &endptr, 10);
+        if (endptr && *endptr == '\0' && value > 0ull && value <= 10000000ull) {
+            iterations = (size_t)value;
+        } else {
+            log_warn("invalid KOLIBRI_BENCH_ITERATIONS=%s, using default %zu", iter_env, iterations);
+        }
+    }
+
+    size_t warmup = iterations / 10;
+    if (warmup == 0 && iterations > 1) {
+        warmup = 1;
+    }
+    const char *warm_env = getenv("KOLIBRI_BENCH_WARMUP");
+    if (warm_env && warm_env[0]) {
+        char *endptr = NULL;
+        unsigned long long value = strtoull(warm_env, &endptr, 10);
+        if (endptr && *endptr == '\0' && value <= 5000000ull) {
+            size_t parsed = (size_t)value;
+            if (parsed >= iterations) {
+                log_warn("warmup %zu is not less than iterations %zu, reducing warmup", parsed, iterations);
+                warmup = iterations > 1 ? iterations - 1 : 0;
+            } else {
+                warmup = parsed;
+            }
+        } else {
+            log_warn("invalid KOLIBRI_BENCH_WARMUP=%s, using default %zu", warm_env, warmup);
+        }
+    }
+
+    log_info("Benchmark parameters: iterations=%zu warmup=%zu", iterations, warmup);
+
     bench_stats_t results[3];
     size_t count = 0;
 
-    if (bench_vm_sum_digits(iterations, &results[count]) != 0) {
+    if (bench_vm_sum_digits(iterations, warmup, &results[count]) != 0) {
         log_error("Δ-VM benchmark failed");
         rc = 1;
         goto done;
     }
-    log_info("Δ-VM sum digits: mean=%.2fus p95=%.2fus steps=%" PRIu32,
+    log_info("Δ-VM sum digits: mean=%.2fus p95=%.2fus std=%.2fus min=%.2fus max=%.2fus ops/s=%.0f steps=%" PRIu32,
              results[count].mean_us,
              results[count].p95_us,
+             results[count].stddev_us,
+             results[count].min_us,
+             results[count].max_us,
+             results[count].throughput_ops,
              results[count].steps);
     count++;
 
-    if (bench_fkv_put(iterations, &results[count]) != 0) {
+    if (bench_fkv_put(iterations, warmup, &results[count]) != 0) {
         log_error("F-KV put benchmark failed");
         rc = 1;
         goto done;
     }
-    log_info("F-KV put: mean=%.2fus p95=%.2fus",
+    log_info("F-KV put: mean=%.2fus p95=%.2fus std=%.2fus min=%.2fus max=%.2fus ops/s=%.0f",
              results[count].mean_us,
-             results[count].p95_us);
+             results[count].p95_us,
+             results[count].stddev_us,
+             results[count].min_us,
+             results[count].max_us,
+             results[count].throughput_ops);
     count++;
 
-    if (bench_fkv_get(iterations, &results[count]) != 0) {
+    if (bench_fkv_get(iterations, warmup, &results[count]) != 0) {
         log_error("F-KV get benchmark failed");
         rc = 1;
         goto done;
     }
-    log_info("F-KV get_prefix: mean=%.2fus p95=%.2fus",
+    log_info("F-KV get_prefix: mean=%.2fus p95=%.2fus std=%.2fus min=%.2fus max=%.2fus ops/s=%.0f",
              results[count].mean_us,
-             results[count].p95_us);
+             results[count].p95_us,
+             results[count].stddev_us,
+             results[count].min_us,
+             results[count].max_us,
+             results[count].throughput_ops);
     count++;
 
     print_bench_report(results, count);
+    write_bench_json(results, count, iterations, warmup, "logs/bench.json");
 
 done:
     if (fkv_ready) {
