@@ -69,14 +69,6 @@ static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
     }
     size_t n = (size_t)written;
     if (n >= sizeof(buf) || n > *len) {
-    if (value < 0) {
-        return -1;
-    }
-
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%lld", (long long)value);
-    size_t n = strlen(buf);
-    if (n > *len) {
         return -1;
     }
     for (size_t i = 0; i < n; ++i) {
