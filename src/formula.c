@@ -20,7 +20,7 @@
 #endif
 
 #ifndef KOLIBRI_AI_LEARNING_DATA_DEFAULT
-#define KOLIBRI_AI_LEARNING_DATA_DEFAULT "data/kolibri_learning.jsonl"
+#define KOLIBRI_AI_LEARNING_DATA_DEFAULT "data/kolibri_ai_learning.jsonl"
 #endif
 
 static void formula_collection_reset_top(FormulaCollection* collection) {
@@ -84,195 +84,6 @@ static void formula_collection_recompute_top(FormulaCollection* collection) {
     for (size_t i = 0; i < collection->count; i++) {
         formula_collection_consider_index(collection, i);
     }
-}
-
-// Определения типов формул
-const int FORMULA_TYPE_SIMPLE = 0;
-const int FORMULA_TYPE_POLYNOMIAL = 1;
-const int FORMULA_TYPE_COMPOSITE = 2;
-const int FORMULA_TYPE_PERIODIC = 3;
-
-void formula_clear(Formula* formula) {
-    if (!formula) {
-        return;
-    }
-
-    free(formula->coefficients);
-    formula->coefficients = NULL;
-    formula->coeff_count = 0;
-
-    free(formula->expression);
-    formula->expression = NULL;
-}
-
-int formula_copy(Formula* dest, const Formula* src) {
-    if (!dest || !src) {
-        return -1;
-    }
-
-    formula_clear(dest);
-    memset(dest, 0, sizeof(*dest));
-
-    memcpy(dest->id, src->id, sizeof(dest->id));
-    dest->effectiveness = src->effectiveness;
-    dest->created_at = src->created_at;
-    dest->tests_passed = src->tests_passed;
-    dest->confirmations = src->confirmations;
-    dest->representation = src->representation;
-    dest->type = src->type;
-
-    if (src->representation == FORMULA_REPRESENTATION_TEXT) {
-        strncpy(dest->content, src->content, sizeof(dest->content) - 1);
-        dest->content[sizeof(dest->content) - 1] = '\0';
-    } else if (src->representation == FORMULA_REPRESENTATION_ANALYTIC) {
-        dest->coeff_count = src->coeff_count;
-        if (src->coeff_count > 0 && src->coefficients) {
-            dest->coefficients = malloc(sizeof(double) * src->coeff_count);
-            if (!dest->coefficients) {
-                formula_clear(dest);
-                return -1;
-            }
-            memcpy(dest->coefficients, src->coefficients, sizeof(double) * src->coeff_count);
-        }
-
-        if (src->expression) {
-            dest->expression = strdup(src->expression);
-            if (!dest->expression) {
-                formula_clear(dest);
-                return -1;
-            }
-        }
-    }
-
-    return 0;
-}
-
-// Создание коллекции формул
-FormulaCollection* formula_collection_create(size_t initial_capacity) {
-    FormulaCollection* collection = malloc(sizeof(FormulaCollection));
-    if (!collection) return NULL;
-
-    collection->formulas = calloc(initial_capacity, sizeof(Formula));
-    if (!collection->formulas) {
-        free(collection);
-        return NULL;
-    }
-
-    collection->count = 0;
-    collection->capacity = initial_capacity;
-    formula_collection_reset_top(collection);
-    return collection;
-}
-
-// Уничтожение коллекции
-void formula_collection_destroy(FormulaCollection* collection) {
-    if (collection) {
-        for (size_t i = 0; i < collection->count; i++) {
-            formula_clear(&collection->formulas[i]);
-        }
-        free(collection->formulas);
-        free(collection);
-    }
-}
-
-// Добавление формулы в коллекцию
-int formula_collection_add(FormulaCollection* collection, const Formula* formula) {
-    if (!collection || !formula) return -1;
-
-    if (collection->count >= collection->capacity) {
-        size_t new_capacity = collection->capacity * 2;
-        Formula* new_formulas = realloc(collection->formulas, sizeof(Formula) * new_capacity);
-        if (!new_formulas) return -1;
-
-        // Zero initialise the new capacity to avoid stale pointers.
-        memset(new_formulas + collection->capacity, 0,
-               sizeof(Formula) * (new_capacity - collection->capacity));
-
-        collection->formulas = new_formulas;
-        collection->capacity = new_capacity;
-    }
-
-    Formula* dest = &collection->formulas[collection->count];
-    if (formula_copy(dest, formula) != 0) {
-        memset(dest, 0, sizeof(*dest));
-        return -1;
-    }
-
-    collection->count++;
-    formula_collection_consider_index(collection, collection->count - 1);
-    return 0;
-}
-
-// Поиск формулы по ID
-Formula* formula_collection_find(FormulaCollection* collection, const char* id) {
-    if (!collection || !id) return NULL;
-
-    for (size_t i = 0; i < collection->count; i++) {
-        if (strcmp(collection->formulas[i].id, id) == 0) {
-            return &collection->formulas[i];
-        }
-    }
-    return NULL;
-}
-
-void formula_collection_remove(FormulaCollection* collection, const char* id) {
-    if (!collection || !id) return;
-
-    for (size_t i = 0; i < collection->count; i++) {
-        if (strcmp(collection->formulas[i].id, id) == 0) {
-            formula_clear(&collection->formulas[i]);
-            if (i + 1 < collection->count) {
-                memmove(&collection->formulas[i],
-                        &collection->formulas[i + 1],
-                        (collection->count - i - 1) * sizeof(Formula));
-            }
-            if (collection->count > 0) {
-                memset(&collection->formulas[collection->count - 1], 0, sizeof(Formula));
-                collection->count--;
-                memset(&collection->formulas[collection->count], 0, sizeof(Formula));
-            }
-            formula_collection_recompute_top(collection);
-            return;
-        }
-    }
-}
-
-size_t formula_collection_get_top(const FormulaCollection* collection,
-                                  const Formula** out_formulas,
-                                  size_t max_results) {
-    if (!collection || !out_formulas || max_results == 0) {
-        return 0;
-    }
-
-    size_t available = collection->best_count;
-    if (available > max_results) {
-        available = max_results;
-    }
-
-    size_t produced = 0;
-    for (size_t i = 0; i < available; i++) {
-        size_t index = collection->best_indices[i];
-        if (index >= collection->count) {
-            break;
-        }
-        out_formulas[produced++] = &collection->formulas[index];
-    }
-
-    return produced;
-}
-
-// Распознавание типа формулы
-int get_formula_type(const char* content) {
-    if (!content) return FORMULA_TYPE_SIMPLE;
-    
-    if (strstr(content, "sin") || strstr(content, "cos"))
-        return FORMULA_TYPE_PERIODIC;
-    else if (strstr(content, "^"))
-        return FORMULA_TYPE_POLYNOMIAL;
-    else if (strstr(content, "+") || strstr(content, "*"))
-        return FORMULA_TYPE_COMPOSITE;
-        
-    return FORMULA_TYPE_SIMPLE;
 }
 
 // Валидация формулы
@@ -660,10 +471,6 @@ FormulaTrainingPipeline* formula_training_pipeline_create(size_t capacity) {
     pipeline->candidates.capacity = capacity;
     pipeline->candidates.count = 0;
     formula_training_metrics_reset(&pipeline->metrics);
-    pipeline->search_config = formula_search_config_default();
-    pipeline->mutation_config = formula_mutation_config_default();
-    pipeline->planner_config = formula_mcts_config_default();
-    pipeline->score_weights = formula_score_weights_default();
 
     return pipeline;
 }
@@ -942,16 +749,6 @@ void formula_training_pipeline_set_search_config(FormulaTrainingPipeline* pipeli
     } else {
         pipeline->search_config = formula_search_config_default();
     }
-
-    FormulaMutationConfig defaults = formula_mutation_config_default();
-    uint32_t limit = pipeline->search_config.max_candidates;
-    if (limit == 0) {
-        limit = defaults.max_mutations;
-    }
-    pipeline->mutation_config.max_mutations = limit;
-    if (pipeline->mutation_config.max_adjustment == 0) {
-        pipeline->mutation_config.max_adjustment = defaults.max_adjustment;
-    }
 }
 
 static void formula_training_pipeline_reset_candidates(FormulaTrainingPipeline* pipeline) {
@@ -1052,18 +849,6 @@ static void formula_training_pipeline_add_from_search(FormulaTrainingPipeline* p
     };
 
     formula_search_enumerate(library, snapshot, &config, pipeline_search_emit, &ctx);
-
-    if (ctx.remaining > 0) {
-        FormulaMutationConfig mutation = pipeline->mutation_config;
-        if (mutation.max_mutations == 0 || mutation.max_mutations > ctx.remaining) {
-            mutation.max_mutations = (uint32_t)ctx.remaining;
-        }
-        formula_search_mutate(library,
-                               snapshot,
-                               &mutation,
-                               pipeline_search_emit,
-                               &ctx);
-    }
 }
 
 int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
@@ -1179,7 +964,6 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
     if (!pipeline) {
         return -1;
     }
-    (void)library;
 
     double preserved_mlp_loss = pipeline->metrics.last_mlp_loss;
     double preserved_transformer_loss = pipeline->metrics.last_transformer_loss;
@@ -1237,34 +1021,24 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
 
         double reward = 0.0;
         double accuracy = 0.0;
-        double combined_poe = 0.0;
-        double runtime_norm = 0.0;
         if (eval_rc == 0 && vm_out.status == VM_OK) {
-            combined_poe = (valid_targets > 0)
-                               ? (0.7 * poe + 0.3 * dataset_score)
-                               : poe;
-            runtime_norm = (double)vm_out.steps / 256.0;
-            double score = formula_search_compute_score(&pipeline->score_weights,
-                                                        combined_poe,
-                                                        mdl,
-                                                        runtime_norm,
-                                                        0.0);
-            reward = score;
-            accuracy = (valid_targets > 0) ? best_dataset_score : combined_poe;
+            double base = 0.6 * poe + 0.4 * dataset_score;
+            double penalty = 0.2 * mdl;
+            reward = fmax(0.0, fmin(1.0, base - penalty));
+            accuracy = (valid_targets > 0) ? best_dataset_score : poe;
         } else {
-            combined_poe = 0.0;
+            poe = 0.0;
             mdl = 1.0;
-            runtime_norm = 1.0;
         }
 
         double imitation = compute_memory_alignment(hypothesis, &pipeline->memory_snapshot);
-        double success = reward > 0.6 ? 1.0 : reward;
+        double success = poe > 0.5 ? 1.0 : reward;
 
         hypothesis->experience.reward = reward;
         hypothesis->experience.imitation_score = imitation;
         hypothesis->experience.accuracy = fmax(0.0, accuracy);
         hypothesis->experience.loss = fmax(0.0, 1.0 - reward);
-        hypothesis->experience.poe = combined_poe;
+        hypothesis->experience.poe = poe;
         hypothesis->experience.mdl = mdl;
         if (best_entry) {
             strncpy(hypothesis->experience.task_id,
@@ -1276,6 +1050,10 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
         }
 
         hypothesis->formula.effectiveness = reward;
+
+        if (library && poe > 0.55 && reward > 0.25) {
+            formula_collection_add(library, &hypothesis->formula);
+        }
 
         total_reward += reward;
         total_imitation += imitation;

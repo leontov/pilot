@@ -33,9 +33,12 @@ json_object *json_object_new_array(void);
 json_object *json_object_new_string(const char *s);
 json_object *json_object_new_double(double val);
 json_object *json_object_new_int64(long long val);
+json_object *json_object_new_int(int32_t val);
+json_object *json_object_new_boolean(int val);
 void json_object_object_add(json_object *obj, const char *key, json_object *val);
 void json_object_array_add(json_object *array, json_object *val);
 const char *json_object_to_json_string_ext(json_object *obj, int flags);
+const char *json_object_to_json_string(json_object *obj);
 void json_object_put(json_object *obj);
 int json_object_object_get_ex(const json_object *obj, const char *key, json_object **out);
 size_t json_object_array_length(const json_object *obj);
@@ -43,12 +46,17 @@ json_object *json_object_array_get_idx(const json_object *obj, int idx);
 int json_object_is_type(const json_object *obj, enum json_type type);
 double json_object_get_double(const json_object *obj);
 long long json_object_get_int64(const json_object *obj);
+int json_object_get_int(const json_object *obj);
 const char *json_object_get_string(const json_object *obj);
 
 json_tokener *json_tokener_new(void);
+json_object *json_tokener_parse(const char *str);
 json_object *json_tokener_parse_ex(json_tokener *tok, const char *str, int len);
 enum json_tokener_error json_tokener_get_error(json_tokener *tok);
+void json_tokener_reset(json_tokener *tok);
 void json_tokener_free(json_tokener *tok);
+
+json_object *json_object_from_file(const char *filename);
 
 #ifdef __cplusplus
 }
