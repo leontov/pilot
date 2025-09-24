@@ -22,15 +22,29 @@ typedef struct {
     uint32_t trace_depth;
 } vm_config_t;
 
+#ifndef KOLIBRI_AI_PERSISTENCE_CONFIG_DEFINED
+#define KOLIBRI_AI_PERSISTENCE_CONFIG_DEFINED
 typedef struct {
+    char snapshot_path[256];
+    uint32_t snapshot_limit;
+} ai_persistence_config_t;
+#endif
 
+#ifndef KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
+#define KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
+typedef struct {
+    uint32_t tasks_per_iteration;
+    uint32_t max_difficulty;
+} KolibriAISelfplayConfig;
+#endif
 
 typedef struct {
     http_config_t http;
     vm_config_t vm;
-
-    uint32_t seed;
     ai_persistence_config_t ai;
+    KolibriAISelfplayConfig selfplay;
+    FormulaSearchConfig search;
+    uint32_t seed;
 } kolibri_config_t;
 
 int config_load(const char *path, kolibri_config_t *cfg);

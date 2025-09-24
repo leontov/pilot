@@ -14,10 +14,13 @@ extern "C" {
 typedef struct KolibriAI KolibriAI;
 struct kolibri_config_t;
 
+#ifndef KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
+#define KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
 typedef struct {
     uint32_t tasks_per_iteration;
     uint32_t max_difficulty;
 } KolibriAISelfplayConfig;
+#endif
 
 typedef struct {
     KolibriSelfplayTask task;
