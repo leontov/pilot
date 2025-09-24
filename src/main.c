@@ -11,6 +11,7 @@
 #include "kolibri_ai.h"
 #include "synthesis/formula_vm_eval.h"
 #include "util/config.h"
+#include "util/bench.h"
 #include "util/log.h"
 #include "vm/vm.h"
 #include "formula.h"
@@ -307,9 +308,149 @@ static int run_chat(const kolibri_config_t *cfg) {
     return 0;
 }
 
-static int run_bench(void) {
-    log_info("Benchmarks are not implemented yet");
+static int parse_size_t_arg(const char *value, size_t *out) {
+    if (!value || !out) {
+        return -1;
+    }
+    char *end = NULL;
+    unsigned long val = strtoul(value, &end, 10);
+    if (end == value || *end != '\0') {
+        return -1;
+    }
+    *out = (size_t)val;
     return 0;
+}
+
+static int parse_double_arg(const char *value, double *out) {
+    if (!value || !out) {
+        return -1;
+    }
+    char *end = NULL;
+    double val = strtod(value, &end);
+    if (end == value || *end != '\0') {
+        return -1;
+    }
+    *out = val;
+    return 0;
+}
+
+static int parse_threshold_override(bench_options_t *opts, const char *spec) {
+    if (!opts || !spec) {
+        return -1;
+    }
+    const char *colon = strchr(spec, ':');
+    if (!colon || colon == spec) {
+        return -1;
+    }
+    size_t name_len = (size_t)(colon - spec);
+    char name[sizeof(opts->overrides[0].name)];
+    if (name_len == 0 || name_len >= sizeof(name)) {
+        return -1;
+    }
+    memcpy(name, spec, name_len);
+    name[name_len] = '\0';
+
+    int has_p95 = 0;
+    double p95 = 0.0;
+    int has_p99 = 0;
+    double p99 = 0.0;
+
+    const char *cursor = colon + 1;
+    while (*cursor) {
+        const char *comma = strchr(cursor, ',');
+        size_t segment_len = comma ? (size_t)(comma - cursor) : strlen(cursor);
+        if (segment_len == 0) {
+            return -1;
+        }
+        if (segment_len >= sizeof(name)) {
+            return -1;
+        }
+        char segment[sizeof(name)];
+        memcpy(segment, cursor, segment_len);
+        segment[segment_len] = '\0';
+
+        if (segment_len > 4 && strncmp(segment, "p95=", 4) == 0) {
+            double value = 0.0;
+            if (parse_double_arg(segment + 4, &value) != 0) {
+                return -1;
+            }
+            has_p95 = 1;
+            p95 = value;
+        } else if (segment_len > 4 && strncmp(segment, "p99=", 4) == 0) {
+            double value = 0.0;
+            if (parse_double_arg(segment + 4, &value) != 0) {
+                return -1;
+            }
+            has_p99 = 1;
+            p99 = value;
+        } else {
+            return -1;
+        }
+        if (!comma) {
+            break;
+        }
+        cursor = comma + 1;
+    }
+
+    if (!has_p95 && !has_p99) {
+        return -1;
+    }
+    return bench_options_add_threshold_override(opts, name, has_p95, p95, has_p99, p99);
+}
+
+static int run_bench(const kolibri_config_t *cfg, int argc, char **argv) {
+    bench_options_t opts;
+    bench_options_init(&opts);
+    opts.output_path = "logs/bench_latest.json";
+
+    for (int i = 0; i < argc; ++i) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--iterations") == 0) {
+            if (i + 1 >= argc || parse_size_t_arg(argv[i + 1], &opts.iterations) != 0) {
+                log_error("invalid value for --iterations");
+                return 1;
+            }
+            i++;
+        } else if (strcmp(arg, "--warmup") == 0) {
+            if (i + 1 >= argc || parse_size_t_arg(argv[i + 1], &opts.warmup) != 0) {
+                log_error("invalid value for --warmup");
+                return 1;
+            }
+            i++;
+        } else if (strcmp(arg, "--output") == 0) {
+            if (i + 1 >= argc) {
+                log_error("--output requires a path");
+                return 1;
+            }
+            opts.output_path = argv[i + 1];
+            i++;
+        } else if (strcmp(arg, "--no-output") == 0) {
+            opts.output_path = NULL;
+        } else if (strcmp(arg, "--profile") == 0) {
+            opts.include_profile = 1;
+        } else if (strcmp(arg, "--no-profile") == 0) {
+            opts.include_profile = 0;
+        } else if (strcmp(arg, "--threshold") == 0) {
+            if (i + 1 >= argc) {
+                log_error("--threshold requires a spec like name:p95=...,p99=...");
+                return 1;
+            }
+            if (parse_threshold_override(&opts, argv[i + 1]) != 0) {
+                log_error("invalid threshold override: %s", argv[i + 1]);
+                return 1;
+            }
+            i++;
+        } else {
+            log_warn("unknown bench option: %s", arg);
+        }
+    }
+
+    if (opts.iterations == 0) {
+        log_error("--iterations must be greater than zero");
+        return 1;
+    }
+
+    return bench_run_all(cfg, &opts);
 }
 
 int main(int argc, char **argv) {
@@ -320,15 +461,17 @@ int main(int argc, char **argv) {
     }
 
     kolibri_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
     if (config_load("cfg/kolibri.jsonc", &cfg) != 0) {
         log_warn("could not read cfg/kolibri.jsonc, using defaults");
     }
 
     if (argc > 1 && strcmp(argv[1], "--bench") == 0) {
+        log_set_file(NULL);
         if (log_fp) {
             fclose(log_fp);
         }
-        return run_bench();
+        return run_bench(&cfg, argc - 2, argv + 2);
     }
 
     if (argc > 1 && strcmp(argv[1], "--chat") == 0) {
