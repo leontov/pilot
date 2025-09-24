@@ -1,8 +1,10 @@
 /* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
 
 #include "vm/vm.h"
+#include "fkv/fkv.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,12 +140,67 @@ static void test_halt(void) {
     assert(trace.entries[1].opcode == 0x12);
 }
 
+static void test_read_fkv_negative_operand(void) {
+    fkv_shutdown();
+    assert(fkv_init() == 0);
+
+    struct byte_buffer bb = {0};
+    assert(emit_push_number(&bb, 0) == 0);
+    assert(emit_push_number(&bb, 1) == 0);
+    assert(bb_push(&bb, 0x03) == 0); // SUB10 -> -1
+    assert(bb_push(&bb, 0x0C) == 0); // READ_FKV
+
+    uint64_t result = 0;
+    vm_status_t status;
+    assert(run_program(&bb, &result, &status) == 0);
+    assert(status == VM_ERR_INVALID_OPCODE);
+    assert(result == UINT64_MAX);
+
+    uint8_t probe_key[] = {0};
+    fkv_iter_t it = {0};
+    assert(fkv_get_prefix(probe_key, sizeof(probe_key), &it, 1) == 0);
+    assert(it.count == 0);
+    fkv_iter_free(&it);
+
+    free(bb.data);
+    fkv_shutdown();
+}
+
+static void test_write_fkv_negative_operand(void) {
+    fkv_shutdown();
+    assert(fkv_init() == 0);
+
+    struct byte_buffer bb = {0};
+    assert(emit_push_number(&bb, 0) == 0);
+    assert(emit_push_number(&bb, 1) == 0);
+    assert(bb_push(&bb, 0x03) == 0); // SUB10 -> -1 (key)
+    assert(emit_push_number(&bb, 5) == 0); // value 5
+    assert(bb_push(&bb, 0x0D) == 0); // WRITE_FKV
+
+    uint64_t result = 0;
+    vm_status_t status;
+    assert(run_program(&bb, &result, &status) == 0);
+    assert(status == VM_ERR_INVALID_OPCODE);
+    assert(result == 5);
+
+    uint8_t probe_key[] = {0};
+    fkv_iter_t it = {0};
+    assert(fkv_get_prefix(probe_key, sizeof(probe_key), &it, 1) == 0);
+    assert(it.count == 0);
+    fkv_iter_free(&it);
+
+    free(bb.data);
+    fkv_shutdown();
+}
+
 int main(void) {
     test_random_deterministic();
     test_add();
     test_mul();
     test_div_zero();
     test_halt();
+    test_read_fkv_negative_operand();
+    test_write_fkv_negative_operand();
     printf("vm tests passed\n");
     return 0;
 }
