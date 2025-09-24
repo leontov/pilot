@@ -20,7 +20,6 @@ SRC := \
   src/util/config.c \
   src/vm/vm.c \
   src/fkv/fkv.c \
-
   src/kolibri_ai.c \
   src/http/http_server.c \
   src/http/http_routes.c \
