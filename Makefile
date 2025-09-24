@@ -4,7 +4,7 @@ CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
 
-LDFLAGS := -lpthread -lm -luuid -lcrypto -lcurl
+LDFLAGS := -lpthread -lm -lcrypto -lcurl
 
 
 BUILD_DIR := build/obj
