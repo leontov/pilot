@@ -42,14 +42,13 @@ static uint64_t submitted_program_counter = 0;
 static pthread_mutex_t dialog_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t dialog_exchange_counter = 0;
 
-
 typedef struct {
     char *program_id;
-} submitted_program_t;
+} submitted_program_id_t;
 
-static submitted_program_t *submitted_programs = NULL;
-static size_t submitted_program_count = 0;
-static size_t submitted_program_capacity = 0;
+static submitted_program_id_t *submitted_program_ids = NULL;
+static size_t submitted_program_id_count = 0;
+static size_t submitted_program_id_capacity = 0;
 static size_t next_program_id = 1;
 
 static char *duplicate_string(const char *src) {
@@ -91,31 +90,32 @@ static void remember_program_id(const char *program_id) {
     if (!program_id) {
         return;
     }
-    if (submitted_program_count == submitted_program_capacity) {
-        size_t new_capacity = submitted_program_capacity ? submitted_program_capacity * 2 : 8;
-        submitted_program_t *tmp = realloc(submitted_programs, new_capacity * sizeof(*tmp));
+    if (submitted_program_id_count == submitted_program_id_capacity) {
+        size_t new_capacity = submitted_program_id_capacity ? submitted_program_id_capacity * 2 : 8;
+        submitted_program_id_t *tmp = realloc(submitted_program_ids, new_capacity * sizeof(*tmp));
         if (!tmp) {
             return;
         }
-        submitted_programs = tmp;
-        for (size_t i = submitted_program_capacity; i < new_capacity; ++i) {
-            submitted_programs[i].program_id = NULL;
+        submitted_program_ids = tmp;
+        for (size_t i = submitted_program_id_capacity; i < new_capacity; ++i) {
+            submitted_program_ids[i].program_id = NULL;
         }
-        submitted_program_capacity = new_capacity;
+        submitted_program_id_capacity = new_capacity;
     }
     char *copy = duplicate_string(program_id);
     if (!copy) {
         return;
     }
-    submitted_programs[submitted_program_count++].program_id = copy;
+    submitted_program_ids[submitted_program_id_count++].program_id = copy;
 }
 
 static int program_was_submitted(const char *program_id) {
     if (!program_id) {
         return 0;
     }
-    for (size_t i = 0; i < submitted_program_count; ++i) {
-        if (submitted_programs[i].program_id && strcmp(submitted_programs[i].program_id, program_id) == 0) {
+    for (size_t i = 0; i < submitted_program_id_count; ++i) {
+        if (submitted_program_ids[i].program_id &&
+            strcmp(submitted_program_ids[i].program_id, program_id) == 0) {
             return 1;
         }
     }
@@ -123,14 +123,20 @@ static int program_was_submitted(const char *program_id) {
 }
 
 static void free_submitted_programs(void) {
-    for (size_t i = 0; i < submitted_program_count; ++i) {
-        free(submitted_programs[i].program_id);
-        submitted_programs[i].program_id = NULL;
+    for (size_t i = 0; i < submitted_program_id_count; ++i) {
+        free(submitted_program_ids[i].program_id);
+        submitted_program_ids[i].program_id = NULL;
     }
+    free(submitted_program_ids);
+    submitted_program_ids = NULL;
+    submitted_program_id_count = 0;
+    submitted_program_id_capacity = 0;
+
     free(submitted_programs);
     submitted_programs = NULL;
     submitted_program_count = 0;
     submitted_program_capacity = 0;
+    submitted_program_counter = 0;
 }
 
 static const char *memmem_const(const char *haystack, size_t haystack_len, const char *needle, size_t needle_len) {
@@ -972,40 +978,88 @@ static int handle_dialog(const kolibri_config_t *cfg,
 
 }
 
-static int handle_vm_run(const kolibri_config_t *cfg,
-                         const char *body,
-
-                         http_response_t *resp) {
-    if (!cfg || !body) {
-        return respond_error(resp, 400, "bad_request", "missing body");
+static int parse_vm_program(const char *body,
+                            uint8_t **out_code,
+                            size_t *out_len,
+                            char *error,
+                            size_t error_size) {
+    if (!body || !out_code || !out_len) {
+        if (error && error_size > 0) {
+            snprintf(error, error_size, "missing body");
+        }
+        return -1;
     }
+
     char program_expr[256];
-    program_expr[0] = '\0';
-    uint8_t *bytecode = NULL;
-    size_t bytecode_len = 0;
     if (json_extract_string(body, "program", program_expr, sizeof(program_expr)) == 0 ||
         json_extract_string(body, "formula", program_expr, sizeof(program_expr)) == 0 ||
         json_extract_string(body, "expression", program_expr, sizeof(program_expr)) == 0) {
-        if (formula_vm_compile_from_text(program_expr, &bytecode, &bytecode_len) != 0) {
-            return respond_error(resp, 400, "bad_request", "unable to compile program");
+        if (formula_vm_compile_from_text(program_expr, out_code, out_len) != 0) {
+            if (error && error_size > 0) {
+                snprintf(error, error_size, "unable to compile program");
+            }
+            return -1;
         }
-    } else if (json_extract_uint8_array(body, "bytecode", &bytecode, &bytecode_len) != 0) {
-        return respond_error(resp, 400, "bad_request", "program field missing");
+        return 0;
+    }
+
+    if (json_extract_uint8_array(body, "bytecode", out_code, out_len) == 0) {
+        return 0;
+    }
+
+    if (parse_program_array(body, out_code, out_len) == 0) {
+        return 0;
+    }
+
+    if (error && error_size > 0) {
+        snprintf(error, error_size, "program field missing");
+    }
+    return -1;
+}
+
+static int handle_vm_run(const kolibri_config_t *cfg,
+                         const char *body,
+                         size_t body_len,
+                         http_response_t *resp) {
+    (void)body_len;
+    if (!cfg || !resp) {
+        return -1;
+    }
+
+    char error[64];
+    uint8_t *program = NULL;
+    size_t program_len = 0;
+    if (parse_vm_program(body, &program, &program_len, error, sizeof(error)) != 0) {
+        return respond_error(resp, 400, "bad_request", error);
     }
 
     vm_limits_t limits = {
         .max_steps = cfg->vm.max_steps ? cfg->vm.max_steps : 512,
         .max_stack = cfg->vm.max_stack ? cfg->vm.max_stack : 128,
     };
+
+    uint64_t override = 0;
     uint32_t gas_limit = 0;
+    if (parse_json_uint_field(body, "max_steps", &override) == 0 && override > 0) {
+        limits.max_steps = (uint32_t)override;
+    }
+    if (parse_json_uint_field(body, "max_stack", &override) == 0 && override > 0) {
+        limits.max_stack = (uint32_t)override;
+    }
     if (json_extract_uint32(body, "gas_limit", &gas_limit) == 0 && gas_limit > 0) {
         limits.max_steps = gas_limit;
     }
+    if (limits.max_steps == 0) {
+        limits.max_steps = 256;
+    }
+    if (limits.max_stack == 0) {
+        limits.max_stack = 64;
+    }
 
-    prog_t prog = {.code = bytecode, .len = bytecode_len};
+    prog_t prog = {.code = program, .len = program_len};
     vm_result_t result = {0};
     int rc = vm_run(&prog, &limits, NULL, &result);
-    free(bytecode);
+    free(program);
     if (rc != 0 || result.status != VM_OK) {
         return respond_error(resp, 400, "vm_error", "virtual machine rejected program");
     }
@@ -1013,8 +1067,7 @@ static int handle_vm_run(const kolibri_config_t *cfg,
     char buffer[256];
     snprintf(buffer,
              sizeof(buffer),
-             "{\"result\":\"%llu\",\"stack\":[\"%llu\"],\"trace\":{\"steps\":[]},"
-             "\"gas_used\":%u}",
+             "{\"result\":\"%llu\",\"stack\":[\"%llu\"],\"trace\":{\"steps\":[]},\"gas_used\":%u}",
              (unsigned long long)result.result,
              (unsigned long long)result.result,
              result.steps);
@@ -1023,57 +1076,6 @@ static int handle_vm_run(const kolibri_config_t *cfg,
 
 static int parse_query_param(const char *path, const char *name, char *out, size_t out_size) {
     if (!path || !name || !out || out_size == 0) {
-
-                         size_t body_len,
-                         http_response_t *resp) {
-    (void)body_len;
-    if (!cfg || !body || !resp) {
-        return -1;
-    }
-    uint8_t *program = NULL;
-    size_t program_len = 0;
-    if (parse_program_array(body, &program, &program_len) != 0) {
-        return respond_json(resp, "{\"error\":\"invalid_program\"}", 400);
-    }
-    vm_limits_t limits = {.max_steps = cfg->vm.max_steps, .max_stack = cfg->vm.max_stack};
-    uint64_t override = 0;
-    if (parse_json_uint_field(body, "max_steps", &override) == 0) {
-        limits.max_steps = (uint32_t)override;
-    }
-    if (parse_json_uint_field(body, "max_stack", &override) == 0) {
-        limits.max_stack = (uint32_t)override;
-    }
-    if (limits.max_steps == 0) {
-        limits.max_steps = 256;
-    }
-    if (limits.max_stack == 0) {
-        limits.max_stack = 64;
-    }
-    prog_t prog = {.code = program, .len = program_len};
-    vm_result_t result = {0};
-    int rc = vm_run(&prog, &limits, NULL, &result);
-    free(program);
-    if (rc != 0) {
-        return respond_json(resp, "{\"error\":\"vm_failure\"}", 500);
-    }
-    char buffer[256];
-    snprintf(buffer,
-             sizeof(buffer),
-             "{\"status\":%d,\"result\":%llu,\"steps\":%u,\"halted\":%s}",
-             result.status,
-             (unsigned long long)result.result,
-             result.steps,
-             result.halted ? "true" : "false");
-    return respond_json(resp, buffer, 200);
-}
-
-static char hex_from_digit(uint8_t digit) {
-    return (char)((digit < 10) ? ('0' + digit) : ('a' + (digit - 10)));
-}
-
-static int handle_fkv_get(const char *path, http_response_t *resp) {
-    if (!path || !resp) {
-
         return -1;
     }
     const char *query = strchr(path, '?');
@@ -1083,29 +1085,41 @@ static int handle_fkv_get(const char *path, http_response_t *resp) {
     query++;
     size_t name_len = strlen(name);
     while (*query) {
-        if (strncmp(query, name, name_len) == 0 && query[name_len] == '=') {
-            query += name_len + 1;
-            size_t i = 0;
-            while (*query && *query != '&' && i + 1 < out_size) {
-                out[i++] = *query++;
+        const char *param_end = strchr(query, '&');
+        if (!param_end) {
+            param_end = query + strlen(query);
+        }
+        if ((size_t)(param_end - query) > name_len && strncmp(query, name, name_len) == 0 &&
+            query[name_len] == '=') {
+            const char *value_start = query + name_len + 1;
+            size_t value_len = (size_t)(param_end - value_start);
+            if (value_len == 0) {
+                return -1;
             }
-            out[i] = '\0';
-            return i > 0 ? 0 : -1;
+            if (value_len >= out_size) {
+                value_len = out_size - 1;
+            }
+            memcpy(out, value_start, value_len);
+            out[value_len] = '\0';
+            return 0;
         }
-        while (*query && *query != '&') {
-            query++;
+        if (*param_end == '\0') {
+            break;
         }
-        if (*query == '&') {
-            query++;
-        }
+        query = param_end + 1;
     }
     return -1;
+}
+
+static char hex_from_digit(uint8_t digit) {
+    return (char)((digit < 10) ? ('0' + digit) : ('a' + (digit - 10)));
 }
 
 static int handle_fkv_get(const char *path, http_response_t *resp) {
     if (!path) {
         return respond_error(resp, 400, "bad_request", "missing path");
     }
+
     char prefix_raw[128];
     if (parse_query_param(path, "prefix", prefix_raw, sizeof(prefix_raw)) != 0) {
         return respond_error(resp, 400, "bad_request", "prefix parameter required");
@@ -1115,36 +1129,11 @@ static int handle_fkv_get(const char *path, http_response_t *resp) {
     if (digits_from_string(prefix_raw, digits, &digits_len, sizeof(digits)) != 0) {
         return respond_error(resp, 400, "bad_request", "prefix must be decimal digits");
     }
+
     char limit_raw[32];
     size_t limit = 32;
     if (parse_query_param(path, "limit", limit_raw, sizeof(limit_raw)) == 0) {
         limit = strtoul(limit_raw, NULL, 10);
-
-        return respond_json(resp, "{\"error\":\"missing_query\"}", 400);
-    }
-    query++;
-    const char *prefix_param = strstr(query, "prefix=");
-    if (!prefix_param) {
-        return respond_json(resp, "{\"error\":\"missing_prefix\"}", 400);
-    }
-    prefix_param += strlen("prefix=");
-    char prefix[64];
-    size_t prefix_len = 0;
-    while (prefix_len + 1 < sizeof(prefix) && prefix_param[prefix_len] &&
-           prefix_param[prefix_len] != '&') {
-        prefix[prefix_len] = prefix_param[prefix_len];
-        prefix_len++;
-    }
-    prefix[prefix_len] = '\0';
-    if (prefix_len == 0) {
-        return respond_json(resp, "{\"error\":\"invalid_prefix\"}", 400);
-    }
-    size_t limit = 8;
-    const char *limit_param = strstr(query, "limit=");
-    if (limit_param) {
-        limit_param += strlen("limit=");
-        limit = (size_t)strtoul(limit_param, NULL, 10);
-
         if (limit == 0) {
             limit = 1;
         }
@@ -1161,6 +1150,7 @@ static int handle_fkv_get(const char *path, http_response_t *resp) {
         status = respond_error(resp, 500, "internal_error", "allocation failure");
         goto cleanup;
     }
+
     int first_value = 1;
     int first_program = 1;
     for (size_t i = 0; i < iter.count; ++i) {
@@ -1173,26 +1163,29 @@ static int handle_fkv_get(const char *path, http_response_t *resp) {
         if (digits_to_string(entry->value, entry->value_len, value_str, sizeof(value_str)) != 0) {
             continue;
         }
-        if (entry->type == FKV_ENTRY_TYPE_VALUE) {
-            if (!first_value && json_buffer_append(&buf, ",") != 0) {
-                status = respond_error(resp, 500, "internal_error", "allocation failure");
-                goto cleanup;
-            }
-            first_value = 0;
-            if (json_buffer_append(&buf, "{\"key\":\"") != 0 ||
-                json_buffer_append_escaped(&buf, key_str, strlen(key_str)) != 0 ||
-                json_buffer_append(&buf, "\",\"value\":\"") != 0 ||
-                json_buffer_append_escaped(&buf, value_str, strlen(value_str)) != 0 ||
-                json_buffer_append(&buf, "\"}") != 0) {
-                status = respond_error(resp, 500, "internal_error", "allocation failure");
-                goto cleanup;
-            }
+        if (entry->type != FKV_ENTRY_TYPE_VALUE) {
+            continue;
+        }
+        if (!first_value && json_buffer_append(&buf, ",") != 0) {
+            status = respond_error(resp, 500, "internal_error", "allocation failure");
+            goto cleanup;
+        }
+        first_value = 0;
+        if (json_buffer_append(&buf, "{\"key\":\"") != 0 ||
+            json_buffer_append_escaped(&buf, key_str, strlen(key_str)) != 0 ||
+            json_buffer_append(&buf, "\",\"value\":\"") != 0 ||
+            json_buffer_append_escaped(&buf, value_str, strlen(value_str)) != 0 ||
+            json_buffer_append(&buf, "\"}") != 0) {
+            status = respond_error(resp, 500, "internal_error", "allocation failure");
+            goto cleanup;
         }
     }
+
     if (json_buffer_append(&buf, "],\"programs\":[") != 0) {
         status = respond_error(resp, 500, "internal_error", "allocation failure");
         goto cleanup;
     }
+
     for (size_t i = 0; i < iter.count; ++i) {
         fkv_entry_t *entry = &iter.entries[i];
         if (entry->type != FKV_ENTRY_TYPE_PROGRAM) {
@@ -1220,10 +1213,12 @@ static int handle_fkv_get(const char *path, http_response_t *resp) {
             goto cleanup;
         }
     }
+
     if (json_buffer_append(&buf, "]}") != 0) {
         status = respond_error(resp, 500, "internal_error", "allocation failure");
         goto cleanup;
     }
+
     status = respond_json(resp, buf.data ? buf.data : "{\"values\":[],\"programs\":[]}", 200);
 
 cleanup:
@@ -1333,64 +1328,6 @@ static int handle_chain_submit(const char *body, http_response_t *resp) {
              height,
              entry->formula.id);
     return respond_json(resp, buffer, 200);
-
-    uint8_t digits[64];
-    size_t digits_len = 0;
-    for (size_t i = 0; i < prefix_len; ++i) {
-        if (!isdigit((unsigned char)prefix[i])) {
-            return respond_json(resp, "{\"error\":\"invalid_prefix\"}", 400);
-        }
-        digits[digits_len++] = (uint8_t)(prefix[i] - '0');
-    }
-    fkv_iter_t it = {0};
-    if (fkv_get_prefix(digits, digits_len, &it, limit) != 0) {
-        return respond_json(resp, "{\"error\":\"fkv_failure\"}", 500);
-    }
-    char *json = NULL;
-    size_t len = 0;
-    size_t cap = 0;
-    append_char(&json, &len, &cap, '{');
-    append_format(&json, &len, &cap, "\"prefix\":\"%s\",\"entries\":[", prefix);
-    for (size_t i = 0; i < it.count; ++i) {
-        if (i > 0) {
-            append_char(&json, &len, &cap, ',');
-        }
-        char key_buf[128];
-        char val_buf[128];
-        size_t key_written = 0;
-        size_t val_written = 0;
-        for (size_t j = 0; j < it.entries[i].key_len && key_written + 1 < sizeof(key_buf); ++j) {
-            key_buf[key_written++] = (char)('0' + it.entries[i].key[j]);
-        }
-        key_buf[key_written] = '\0';
-        for (size_t j = 0; j < it.entries[i].value_len && val_written + 1 < sizeof(val_buf); ++j) {
-            uint8_t digit = it.entries[i].value[j];
-            if (digit <= 9) {
-                val_buf[val_written++] = (char)('0' + digit);
-            } else {
-                val_buf[val_written++] = hex_from_digit(digit);
-            }
-        }
-        val_buf[val_written] = '\0';
-        append_format(&json,
-                      &len,
-                      &cap,
-                      "{\"key\":\"%s\",\"value\":\"%s\",\"type\":%d}",
-                      key_buf,
-                      val_buf,
-                      (int)it.entries[i].type);
-    }
-    append_char(&json, &len, &cap, ']');
-    append_char(&json, &len, &cap, '}');
-    fkv_iter_free(&it);
-    if (!json) {
-        return respond_json(resp, "{\"error\":\"oom\"}", 500);
-    }
-    int rc = respond_json(resp, json, 200);
-    free(json);
-    return rc;
-
-
 }
 
 static int handle_health(http_response_t *resp) {
@@ -1431,67 +1368,116 @@ static int handle_metrics(http_response_t *resp) {
     return rc;
 }
 
-static int handle_program_submit(const char *body, size_t body_len, http_response_t *resp) {
-    if (!routes_blockchain) {
-        return respond_json(resp, "{\"error\":\"blockchain_unavailable\"}", 503);
-    }
-    size_t program_len = 0;
-    if (parse_bytecode_count(body, body_len, &program_len) != 0) {
-        return respond_json(resp, "{\"error\":\"invalid_program\"}", 400);
-    }
+typedef int (*route_handler_fn)(const kolibri_config_t *cfg,
+                                const char *path,
+                                const char *body,
+                                size_t body_len,
+                                http_response_t *resp);
 
-    Formula formula;
-    memset(&formula, 0, sizeof(formula));
-    snprintf(formula.id, sizeof(formula.id), "program-%zu", next_program_id);
-    formula.effectiveness = program_len > 0 ? 0.5 + 0.5 * ((double)program_len / (double)(program_len + 10)) : 0.5;
-    formula.created_at = time(NULL);
-    formula.representation = FORMULA_REPRESENTATION_TEXT;
-    formula.type = FORMULA_LINEAR;
-    snprintf(formula.content, sizeof(formula.content), "bytecode:%zu", program_len);
-
-    Formula *formulas[1] = {&formula};
-    bool added = blockchain_add_block(routes_blockchain, formulas, 1);
-    if (!added) {
-        return respond_json(resp, "{\"error\":\"blockchain_rejected\"}", 500);
-    }
-
-    double poe = 0.0;
-    double mdl = 0.0;
-    double score = blockchain_score_formula(&formula, &poe, &mdl);
-
-    char response[256];
-    int written = snprintf(response,
-                           sizeof(response),
-                           "{\"program_id\":\"%s\",\"PoE\":%.3f,\"MDL\":%.3f,\"score\":%.3f}",
-                           formula.id,
-                           poe,
-                           mdl,
-                           score);
-    if (written < 0) {
-        return respond_json(resp, "{\"error\":\"internal_error\"}", 500);
-    }
-
-    remember_program_id(formula.id);
-    next_program_id++;
-    return respond_json(resp, response, 200);
+static int route_handle_health(const kolibri_config_t *cfg,
+                               const char *path,
+                               const char *body,
+                               size_t body_len,
+                               http_response_t *resp) {
+    (void)cfg;
+    (void)path;
+    (void)body;
+    (void)body_len;
+    return handle_health(resp);
 }
 
-static int handle_chain_submit(const char *body, size_t body_len, http_response_t *resp) {
-    char program_id[128];
-    if (extract_string_field(body, body_len, "\"program_id\"", program_id, sizeof(program_id)) != 0) {
-        return respond_json(resp, "{\"status\":\"not_found\"}", 404);
-    }
+static int route_handle_metrics(const kolibri_config_t *cfg,
+                                const char *path,
+                                const char *body,
+                                size_t body_len,
+                                http_response_t *resp) {
+    (void)cfg;
+    (void)path;
+    (void)body;
+    (void)body_len;
+    return handle_metrics(resp);
+}
 
-    if (program_was_submitted(program_id)) {
-        char response[256];
-        snprintf(response,
-                 sizeof(response),
-                 "{\"status\":\"accepted\",\"program_id\":\"%s\"}",
-                 program_id);
-        return respond_json(resp, response, 200);
-    }
+static int route_handle_fkv_get(const kolibri_config_t *cfg,
+                                const char *path,
+                                const char *body,
+                                size_t body_len,
+                                http_response_t *resp) {
+    (void)cfg;
+    (void)body;
+    (void)body_len;
+    return handle_fkv_get(path, resp);
+}
 
-    return respond_json(resp, "{\"status\":\"not_found\"}", 404);
+static int route_handle_dialog(const kolibri_config_t *cfg,
+                               const char *path,
+                               const char *body,
+                               size_t body_len,
+                               http_response_t *resp) {
+    (void)path;
+    return handle_dialog(cfg, body, body_len, resp);
+}
+
+static int route_handle_vm_run(const kolibri_config_t *cfg,
+                               const char *path,
+                               const char *body,
+                               size_t body_len,
+                               http_response_t *resp) {
+    (void)path;
+    return handle_vm_run(cfg, body, body_len, resp);
+}
+
+static int route_handle_program_submit(const kolibri_config_t *cfg,
+                                       const char *path,
+                                       const char *body,
+                                       size_t body_len,
+                                       http_response_t *resp) {
+    (void)path;
+    (void)body_len;
+    return handle_program_submit(cfg, body, resp);
+}
+
+static int route_handle_chain_submit(const kolibri_config_t *cfg,
+                                     const char *path,
+                                     const char *body,
+                                     size_t body_len,
+                                     http_response_t *resp) {
+    (void)cfg;
+    (void)path;
+    (void)body_len;
+    return handle_chain_submit(body, resp);
+}
+
+typedef struct {
+    const char *method;
+    const char *path;
+    int prefix;
+    route_handler_fn handler;
+} http_route_entry_t;
+
+static const http_route_entry_t HTTP_ROUTES[] = {
+    {"GET", "/api/v1/health", 0, route_handle_health},
+    {"GET", "/api/v1/metrics", 0, route_handle_metrics},
+    {"GET", "/api/v1/fkv/get", 1, route_handle_fkv_get},
+    {"POST", "/api/v1/dialog", 0, route_handle_dialog},
+    {"POST", "/api/v1/vm/run", 0, route_handle_vm_run},
+    {"POST", "/api/v1/program/submit", 0, route_handle_program_submit},
+    {"POST", "/api/v1/chain/submit", 0, route_handle_chain_submit},
+};
+
+static int route_path_matches(const http_route_entry_t *route, const char *path) {
+    if (!route || !path) {
+        return 0;
+    }
+    if (!route->prefix) {
+        return strcmp(path, route->path) == 0;
+    }
+    size_t len = strlen(route->path);
+    if (strncmp(path, route->path, len) != 0) {
+        return 0;
+    }
+    char tail = path[len];
+    return tail == '\0' || tail == '?' || tail == '/';
 }
 
 int http_handle_request(const kolibri_config_t *cfg,
@@ -1503,46 +1489,19 @@ int http_handle_request(const kolibri_config_t *cfg,
     if (!method || !path || !resp) {
         return -1;
     }
-    if (strcmp(method, "GET") == 0 && strcmp(path, "/api/v1/health") == 0) {
-        return handle_health(resp);
+
+    for (size_t i = 0; i < sizeof(HTTP_ROUTES) / sizeof(HTTP_ROUTES[0]); ++i) {
+        const http_route_entry_t *route = &HTTP_ROUTES[i];
+        if (strcmp(method, route->method) != 0) {
+            continue;
+        }
+        if (!route_path_matches(route, path)) {
+            continue;
+        }
+        return route->handler(cfg, path, body, body_len, resp);
     }
-    if (strcmp(method, "GET") == 0 && strcmp(path, "/api/v1/metrics") == 0) {
-        return handle_metrics(resp);
-    }
-    if (strncmp(path, "/api/v1/fkv/get", strlen("/api/v1/fkv/get")) == 0 && strcmp(method, "GET") == 0) {
-        return handle_fkv_get(path, resp);
-    }
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/dialog") == 0) {
-        return handle_dialog(cfg, body, body_len, resp);
-    }
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/vm/run") == 0) {
-        return handle_vm_run(cfg, body, body_len, resp);
-    }
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/vm/run") == 0) {
-        return handle_vm_run(cfg, body, resp);
-    }
-    size_t fkv_len = strlen("/api/v1/fkv/get");
-    if (strcmp(method, "GET") == 0 && strncmp(path, "/api/v1/fkv/get", fkv_len) == 0 &&
-        (path[fkv_len] == '\0' || path[fkv_len] == '?')) {
-        return handle_fkv_get(path, resp);
-    }
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/program/submit") == 0) {
-        return handle_program_submit(cfg, body, resp);
-    }
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/chain/submit") == 0) {
-        return handle_chain_submit(body, resp);
-    }
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/program/submit") == 0) {
-        return handle_program_submit(body, body_len, resp);
-    }
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/api/v1/chain/submit") == 0) {
-        return handle_chain_submit(body, body_len, resp);
-    }
-    const char *not_found = "{\"error\":\"not_found\"}";
-    return respond_json(resp, not_found, 404);
 
     return respond_json(resp, "{\"error\":\"not_found\"}", 404);
-
 }
 
 void http_response_free(http_response_t *resp) {

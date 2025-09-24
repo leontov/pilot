@@ -20,7 +20,7 @@ jobs:
       - name: Run performance benchmarks
         run: ./kolibri.sh bench --output logs/ci_bench.json
       - name: Upload benchmark report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bench-report
           path: logs/ci_bench.json
