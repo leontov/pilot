@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "synthesis/search.h"
 
@@ -21,6 +22,15 @@ typedef struct {
     char host[64];
     uint16_t port;
     uint32_t max_body_size;
+    bool enable_tls;
+    bool require_client_auth;
+    uint32_t key_rotation_interval_sec;
+    char tls_cert_path[256];
+    char tls_key_path[256];
+    char tls_client_ca_path[256];
+    char jwt_issuer[128];
+    char jwt_audience[128];
+    char jwt_key_path[256];
 } http_config_t;
 
 typedef struct {
@@ -41,6 +51,14 @@ typedef struct {
     uint32_t seed;
     ai_persistence_config_t ai;
     KolibriAISelfplayConfig selfplay;
+#define SECURITY_SIGNER_ID_DIGITS 16
+    struct {
+        char node_private_key_path[256];
+        char node_public_key_path[256];
+        char swarm_trust_store[256];
+        uint32_t rotation_interval_sec;
+        char signer_id[SECURITY_SIGNER_ID_DIGITS + 1];
+    } security;
 } kolibri_config_t;
 
 int config_load(const char *path, kolibri_config_t *cfg);

@@ -30,6 +30,11 @@ Kolibri Ω is a decimal-native intelligence node that eschews neural weights in 
 ```bash
 ./kolibri.sh up    # build everything and start the node on http://localhost:9000
 ./kolibri.sh stop  # gracefully stop the node
+./kolibri.sh docker # build the hardened Docker image with TLS artifacts baked in
+./kolibri.sh sign   # sign the native binaries with the configured code-signing key
+./kolibri.sh sbom   # emit an SPDX-compatible SBOM (requires syft or docker sbom)
+./kolibri.sh deps   # run dependency and supply-chain checks (npm audit et al.)
+./kolibri.sh deploy # assemble dist/kolibri-node.tar.gz for air-gapped delivery
 ./kolibri.sh bench # execute deterministic performance suites (placeholder in Sprint A)
 ./kolibri.sh clean # remove artefacts, snapshots, logs
 ```
@@ -47,7 +52,8 @@ All investor demos assume `./kolibri.sh up` has been executed on a clean checkou
 * **Performance:** Δ-VM programs ≤ 256 steps execute with P95 latency < 50 ms. F-KV prefix lookups P95 < 10 ms.
 * **Stability:** 24 h burn-in without ASAN/UBSAN errors is tracked in CI.
 * **Determinism:** Every dialog or program run provides a full JSON trace for replay.
-* **Security:** Ed25519 signatures for blocks, HMAC-SHA256 for integrity, sandboxed VM without external calls.
+* **Security:** Ed25519 signatures for blocks, Ed25519-signed swarm frames, TLS 1.2+ with optional mTLS, JWT bearer auth with rotating secrets, sandboxed VM without external calls.
+* **Supply Chain:** Code-signing, SBOM generation, dependency audits, and reproducible Docker images are first-class targets in the Makefile.
 
 ## Release Deliverables
 * Δ-VM v2 interpreter and unit tests
@@ -56,6 +62,14 @@ All investor demos assume `./kolibri.sh up` has been executed on a clean checkou
 * Kolibri Studio v1 with Dialogue and Memory tabs (Sprint B extends further)
 * `kolibri.sh` orchestration script
 * Documentation bundle: README Pro (this file), Whitepaper, API Spec, Demo Playbook
+
+## Security Automation & Compliance
+* **Transport Hardening:** HTTP listener now defaults to TLS, supports mTLS via `cfg.http.tls_client_ca_path`, and enforces JWT Bearer tokens (`cfg.http.jwt_key_path`, issuer/audience claims).
+* **Key Management:** `config.security` allows pointing to Ed25519 key material with automatic rotation windows; private keys are loaded via the in-process key manager.
+* **Digital Signatures:** Swarm frames and blockchain blocks are signed/verified with Ed25519. Signatures appear in all serialized frames and block records.
+* **Pipeline Tasks:** `make docker-build`, `make sign-binaries`, `make sbom`, `make deps-check`, and `make deploy` automate containerization, binary signing, SBOM export, dependency scans, and deployment packaging.
+* **Fuzzing & Scanning Hooks:** CI triggers the existing fuzz suites and dependency scans; the README documents manual entry points for incident rehearsals.
+* **Disaster Recovery Runbooks:** Deployment bundles include signed binaries, TLS assets, configs, and SBOMs, enabling rapid rebuilds in controlled environments.
 
 ## KPI Dashboard
 | KPI | Target | Status |

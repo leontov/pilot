@@ -123,3 +123,14 @@ void http_routes_set_start_time(uint64_t ms_since_epoch) {
 void http_routes_set_blockchain(Blockchain *chain) {
     routes_blockchain = chain;
 }
+
+int http_route_requires_auth(const char *method, const char *path) {
+    if (!method || !path) {
+        return 1;
+    }
+    if (strcmp(method, "GET") == 0 &&
+        (strcmp(path, "/api/v1/health") == 0 || strcmp(path, "/api/v1/metrics") == 0)) {
+        return 0;
+    }
+    return 1;
+}

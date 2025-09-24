@@ -1,12 +1,16 @@
 #include "protocol/swarm.h"
+#include "util/log.h"
 
 #include <ctype.h>
 #include <math.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <string.h>
 
 #define SWARM_PROTOCOL_VERSION_WIDTH 4
 #define SWARM_FRAME_CODE_WIDTH 2
+#define SWARM_SIGNATURE_DIGITS (SWARM_SIGNATURE_BYTES * 3)
 
 #define HELLO_VERSION_WIDTH 2
 #define HELLO_SERVICES_WIDTH 4
@@ -120,6 +124,283 @@ static int frame_type_from_code(uint64_t code, SwarmFrameType *type_out) {
         }
     }
     return -1;
+}
+
+static void log_evp_error(const char *context) {
+    unsigned long err = 0;
+    while ((err = ERR_get_error()) != 0) {
+        log_error("%s: %s", context, ERR_error_string(err, NULL));
+    }
+}
+
+static int signature_to_digits(const unsigned char *sig, size_t sig_len, char *out, size_t out_size) {
+    if (!sig || !out || sig_len == 0 || out_size < sig_len * 3) {
+        return -1;
+    }
+    for (size_t i = 0; i < sig_len; ++i) {
+        int written = snprintf(out + i * 3, out_size - i * 3, "%03u", sig[i]);
+        if (written != 3) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int digits_to_signature(const char *digits,
+                               size_t digits_len,
+                               unsigned char *out,
+                               size_t out_size,
+                               size_t *written) {
+    if (!digits || !out || digits_len == 0 || digits_len % 3 != 0) {
+        return -1;
+    }
+    size_t byte_count = digits_len / 3;
+    if (byte_count > out_size) {
+        return -1;
+    }
+    for (size_t i = 0; i < byte_count; ++i) {
+        char d0 = digits[i * 3];
+        char d1 = digits[i * 3 + 1];
+        char d2 = digits[i * 3 + 2];
+        if (d0 < '0' || d0 > '9' || d1 < '0' || d1 > '9' || d2 < '0' || d2 > '9') {
+            return -1;
+        }
+        unsigned value = (unsigned)(d0 - '0') * 100u +
+                         (unsigned)(d1 - '0') * 10u +
+                         (unsigned)(d2 - '0');
+        if (value > 255u) {
+            return -1;
+        }
+        out[i] = (unsigned char)value;
+    }
+    if (written) {
+        *written = byte_count;
+    }
+    return 0;
+}
+
+static int swarm_frame_write_payload(const SwarmFrame *frame, char *out, size_t out_size, size_t *offset_out) {
+    if (!frame || !out) {
+        return -1;
+    }
+    size_t offset = 0;
+    int rc = write_digits(out + offset, out_size - offset, SWARM_PROTOCOL_VERSION_WIDTH, SWARM_PROTOCOL_VERSION);
+    if (rc < 0) {
+        return -1;
+    }
+    offset += (size_t)rc;
+
+    uint8_t code = kFrameCode[frame->type];
+    rc = write_digits(out + offset, out_size - offset, SWARM_FRAME_CODE_WIDTH, code);
+    if (rc < 0) {
+        return -1;
+    }
+    offset += (size_t)rc;
+
+    switch (frame->type) {
+        case SWARM_FRAME_HELLO: {
+            rc = write_digits(out + offset, out_size - offset, HELLO_VERSION_WIDTH, frame->payload.hello.version);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            if (!digits_only(frame->payload.hello.node_id, SWARM_NODE_ID_DIGITS)) {
+                return -1;
+            }
+            if (out_size - offset < SWARM_NODE_ID_DIGITS) return -1;
+            memcpy(out + offset, frame->payload.hello.node_id, SWARM_NODE_ID_DIGITS);
+            offset += SWARM_NODE_ID_DIGITS;
+            rc = write_digits(out + offset, out_size - offset, HELLO_SERVICES_WIDTH, frame->payload.hello.services);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, HELLO_REPUTATION_WIDTH, frame->payload.hello.reputation);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            break;
+        }
+        case SWARM_FRAME_PING: {
+            rc = write_digits(out + offset, out_size - offset, PING_NONCE_WIDTH, frame->payload.ping.nonce);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, PING_LATENCY_WIDTH, frame->payload.ping.latency_hint_ms);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            break;
+        }
+        case SWARM_FRAME_PROGRAM_OFFER: {
+            if (!digits_only(frame->payload.program_offer.program_id, SWARM_PROGRAM_ID_DIGITS)) {
+                return -1;
+            }
+            if (out_size - offset < SWARM_PROGRAM_ID_DIGITS) return -1;
+            memcpy(out + offset, frame->payload.program_offer.program_id, SWARM_PROGRAM_ID_DIGITS);
+            offset += SWARM_PROGRAM_ID_DIGITS;
+            rc = write_digits(out + offset, out_size - offset, PROGRAM_POE_WIDTH, frame->payload.program_offer.poe_milli);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, PROGRAM_MDL_WIDTH, frame->payload.program_offer.mdl_score);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, PROGRAM_GAS_WIDTH, frame->payload.program_offer.gas_used);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            break;
+        }
+        case SWARM_FRAME_BLOCK_OFFER: {
+            if (!digits_only(frame->payload.block_offer.block_id, SWARM_BLOCK_ID_DIGITS)) {
+                return -1;
+            }
+            if (out_size - offset < SWARM_BLOCK_ID_DIGITS) return -1;
+            memcpy(out + offset, frame->payload.block_offer.block_id, SWARM_BLOCK_ID_DIGITS);
+            offset += SWARM_BLOCK_ID_DIGITS;
+            rc = write_digits(out + offset, out_size - offset, BLOCK_HEIGHT_WIDTH, frame->payload.block_offer.height);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, BLOCK_POE_WIDTH, frame->payload.block_offer.poe_milli);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, BLOCK_PROGRAM_COUNT_WIDTH, frame->payload.block_offer.program_count);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            break;
+        }
+        case SWARM_FRAME_FKV_DELTA: {
+            if (!digits_only(frame->payload.fkv_delta.prefix, SWARM_PREFIX_DIGITS)) {
+                return -1;
+            }
+            if (out_size - offset < SWARM_PREFIX_DIGITS) return -1;
+            memcpy(out + offset, frame->payload.fkv_delta.prefix, SWARM_PREFIX_DIGITS);
+            offset += SWARM_PREFIX_DIGITS;
+            rc = write_digits(out + offset, out_size - offset, FKV_ENTRY_COUNT_WIDTH, frame->payload.fkv_delta.entry_count);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, FKV_SIZE_WIDTH, frame->payload.fkv_delta.compressed_size);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, FKV_CHECKSUM_WIDTH, frame->payload.fkv_delta.checksum);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
+            break;
+        }
+        default:
+            return -1;
+    }
+
+    if (offset_out) {
+        *offset_out = offset;
+    }
+    return 0;
+}
+
+static int swarm_frame_parse_payload(const char *data, size_t len, SwarmFrame *frame, size_t *offset_out) {
+    if (!data || !frame || len < SWARM_PROTOCOL_VERSION_WIDTH + SWARM_FRAME_CODE_WIDTH) {
+        return -1;
+    }
+    uint64_t proto = 0;
+    if (read_digits(data, SWARM_PROTOCOL_VERSION_WIDTH, &proto) != 0) {
+        return -1;
+    }
+    if (proto != SWARM_PROTOCOL_VERSION) {
+        return -1;
+    }
+    uint64_t code = 0;
+    if (read_digits(data + SWARM_PROTOCOL_VERSION_WIDTH, SWARM_FRAME_CODE_WIDTH, &code) != 0) {
+        return -1;
+    }
+    SwarmFrameType type;
+    if (frame_type_from_code(code, &type) != 0) {
+        return -1;
+    }
+    frame->type = type;
+    size_t offset = SWARM_PROTOCOL_VERSION_WIDTH + SWARM_FRAME_CODE_WIDTH;
+
+    switch (type) {
+        case SWARM_FRAME_HELLO: {
+            uint64_t value = 0;
+            if (offset + HELLO_VERSION_WIDTH + SWARM_NODE_ID_DIGITS + HELLO_SERVICES_WIDTH + HELLO_REPUTATION_WIDTH > len) {
+                return -1;
+            }
+            if (read_digits(data + offset, HELLO_VERSION_WIDTH, &value) != 0) return -1;
+            frame->payload.hello.version = (uint16_t)value;
+            offset += HELLO_VERSION_WIDTH;
+            memcpy(frame->payload.hello.node_id, data + offset, SWARM_NODE_ID_DIGITS);
+            frame->payload.hello.node_id[SWARM_NODE_ID_DIGITS] = '\0';
+            offset += SWARM_NODE_ID_DIGITS;
+            if (read_digits(data + offset, HELLO_SERVICES_WIDTH, &value) != 0) return -1;
+            frame->payload.hello.services = (uint16_t)value;
+            offset += HELLO_SERVICES_WIDTH;
+            if (read_digits(data + offset, HELLO_REPUTATION_WIDTH, &value) != 0) return -1;
+            frame->payload.hello.reputation = (uint16_t)value;
+            offset += HELLO_REPUTATION_WIDTH;
+            break;
+        }
+        case SWARM_FRAME_PING: {
+            uint64_t value = 0;
+            if (offset + PING_NONCE_WIDTH + PING_LATENCY_WIDTH > len) return -1;
+            if (read_digits(data + offset, PING_NONCE_WIDTH, &value) != 0) return -1;
+            frame->payload.ping.nonce = (uint32_t)value;
+            offset += PING_NONCE_WIDTH;
+            if (read_digits(data + offset, PING_LATENCY_WIDTH, &value) != 0) return -1;
+            frame->payload.ping.latency_hint_ms = (uint32_t)value;
+            offset += PING_LATENCY_WIDTH;
+            break;
+        }
+        case SWARM_FRAME_PROGRAM_OFFER: {
+            uint64_t value = 0;
+            if (offset + SWARM_PROGRAM_ID_DIGITS + PROGRAM_POE_WIDTH + PROGRAM_MDL_WIDTH + PROGRAM_GAS_WIDTH > len) return -1;
+            memcpy(frame->payload.program_offer.program_id, data + offset, SWARM_PROGRAM_ID_DIGITS);
+            frame->payload.program_offer.program_id[SWARM_PROGRAM_ID_DIGITS] = '\0';
+            offset += SWARM_PROGRAM_ID_DIGITS;
+            if (read_digits(data + offset, PROGRAM_POE_WIDTH, &value) != 0) return -1;
+            frame->payload.program_offer.poe_milli = (uint16_t)value;
+            offset += PROGRAM_POE_WIDTH;
+            if (read_digits(data + offset, PROGRAM_MDL_WIDTH, &value) != 0) return -1;
+            frame->payload.program_offer.mdl_score = (uint16_t)value;
+            offset += PROGRAM_MDL_WIDTH;
+            if (read_digits(data + offset, PROGRAM_GAS_WIDTH, &value) != 0) return -1;
+            frame->payload.program_offer.gas_used = (uint32_t)value;
+            offset += PROGRAM_GAS_WIDTH;
+            break;
+        }
+        case SWARM_FRAME_BLOCK_OFFER: {
+            uint64_t value = 0;
+            if (offset + SWARM_BLOCK_ID_DIGITS + BLOCK_HEIGHT_WIDTH + BLOCK_POE_WIDTH + BLOCK_PROGRAM_COUNT_WIDTH > len) return -1;
+            memcpy(frame->payload.block_offer.block_id, data + offset, SWARM_BLOCK_ID_DIGITS);
+            frame->payload.block_offer.block_id[SWARM_BLOCK_ID_DIGITS] = '\0';
+            offset += SWARM_BLOCK_ID_DIGITS;
+            if (read_digits(data + offset, BLOCK_HEIGHT_WIDTH, &value) != 0) return -1;
+            frame->payload.block_offer.height = (uint32_t)value;
+            offset += BLOCK_HEIGHT_WIDTH;
+            if (read_digits(data + offset, BLOCK_POE_WIDTH, &value) != 0) return -1;
+            frame->payload.block_offer.poe_milli = (uint16_t)value;
+            offset += BLOCK_POE_WIDTH;
+            if (read_digits(data + offset, BLOCK_PROGRAM_COUNT_WIDTH, &value) != 0) return -1;
+            frame->payload.block_offer.program_count = (uint16_t)value;
+            offset += BLOCK_PROGRAM_COUNT_WIDTH;
+            break;
+        }
+        case SWARM_FRAME_FKV_DELTA: {
+            uint64_t value = 0;
+            if (offset + SWARM_PREFIX_DIGITS + FKV_ENTRY_COUNT_WIDTH + FKV_SIZE_WIDTH + FKV_CHECKSUM_WIDTH > len) return -1;
+            memcpy(frame->payload.fkv_delta.prefix, data + offset, SWARM_PREFIX_DIGITS);
+            frame->payload.fkv_delta.prefix[SWARM_PREFIX_DIGITS] = '\0';
+            offset += SWARM_PREFIX_DIGITS;
+            if (read_digits(data + offset, FKV_ENTRY_COUNT_WIDTH, &value) != 0) return -1;
+            frame->payload.fkv_delta.entry_count = (uint16_t)value;
+            offset += FKV_ENTRY_COUNT_WIDTH;
+            if (read_digits(data + offset, FKV_SIZE_WIDTH, &value) != 0) return -1;
+            frame->payload.fkv_delta.compressed_size = (uint32_t)value;
+            offset += FKV_SIZE_WIDTH;
+            if (read_digits(data + offset, FKV_CHECKSUM_WIDTH, &value) != 0) return -1;
+            frame->payload.fkv_delta.checksum = (uint16_t)value;
+            offset += FKV_CHECKSUM_WIDTH;
+            break;
+        }
+        default:
+            return -1;
+    }
+
+    if (offset_out) {
+        *offset_out = offset;
+    }
+    return 0;
 }
 
 void swarm_rate_limiter_init(SwarmRateLimiter *limiter, uint64_t now_ms) {
@@ -296,108 +577,28 @@ int swarm_frame_serialize(const SwarmFrame *frame, char *out, size_t out_size, s
         return -1;
     }
     size_t offset = 0;
-    int rc = write_digits(out + offset, out_size - offset, SWARM_PROTOCOL_VERSION_WIDTH, SWARM_PROTOCOL_VERSION);
-    if (rc < 0) {
+    if (swarm_frame_write_payload(frame, out, out_size, &offset) != 0) {
         return -1;
     }
-    offset += (size_t)rc;
-
-    uint8_t code = kFrameCode[frame->type];
-    rc = write_digits(out + offset, out_size - offset, SWARM_FRAME_CODE_WIDTH, code);
-    if (rc < 0) {
+    if (frame->auth.signer_id[0] == '\0' || frame->auth.signature_len == 0) {
         return -1;
     }
-    offset += (size_t)rc;
-
-    switch (frame->type) {
-        case SWARM_FRAME_HELLO: {
-            rc = write_digits(out + offset, out_size - offset, HELLO_VERSION_WIDTH, frame->payload.hello.version);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            if (!digits_only(frame->payload.hello.node_id, SWARM_NODE_ID_DIGITS)) {
-                return -1;
-            }
-            if (out_size - offset < SWARM_NODE_ID_DIGITS) return -1;
-            memcpy(out + offset, frame->payload.hello.node_id, SWARM_NODE_ID_DIGITS);
-            offset += SWARM_NODE_ID_DIGITS;
-            rc = write_digits(out + offset, out_size - offset, HELLO_SERVICES_WIDTH, frame->payload.hello.services);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, HELLO_REPUTATION_WIDTH, frame->payload.hello.reputation);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            break;
-        }
-        case SWARM_FRAME_PING: {
-            rc = write_digits(out + offset, out_size - offset, PING_NONCE_WIDTH, frame->payload.ping.nonce);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, PING_LATENCY_WIDTH, frame->payload.ping.latency_hint_ms);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            break;
-        }
-        case SWARM_FRAME_PROGRAM_OFFER: {
-            if (!digits_only(frame->payload.program_offer.program_id, SWARM_PROGRAM_ID_DIGITS)) {
-                return -1;
-            }
-            if (out_size - offset < SWARM_PROGRAM_ID_DIGITS) return -1;
-            memcpy(out + offset, frame->payload.program_offer.program_id, SWARM_PROGRAM_ID_DIGITS);
-            offset += SWARM_PROGRAM_ID_DIGITS;
-            rc = write_digits(out + offset, out_size - offset, PROGRAM_POE_WIDTH, frame->payload.program_offer.poe_milli);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, PROGRAM_MDL_WIDTH, frame->payload.program_offer.mdl_score);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, PROGRAM_GAS_WIDTH, frame->payload.program_offer.gas_used);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            break;
-        }
-        case SWARM_FRAME_BLOCK_OFFER: {
-            if (!digits_only(frame->payload.block_offer.block_id, SWARM_BLOCK_ID_DIGITS)) {
-                return -1;
-            }
-            if (out_size - offset < SWARM_BLOCK_ID_DIGITS) return -1;
-            memcpy(out + offset, frame->payload.block_offer.block_id, SWARM_BLOCK_ID_DIGITS);
-            offset += SWARM_BLOCK_ID_DIGITS;
-            rc = write_digits(out + offset, out_size - offset, BLOCK_HEIGHT_WIDTH, frame->payload.block_offer.height);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, BLOCK_POE_WIDTH, frame->payload.block_offer.poe_milli);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, BLOCK_PROGRAM_COUNT_WIDTH, frame->payload.block_offer.program_count);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            break;
-        }
-        case SWARM_FRAME_FKV_DELTA: {
-            if (!digits_only(frame->payload.fkv_delta.prefix, SWARM_PREFIX_DIGITS)) {
-                return -1;
-            }
-            if (out_size - offset < SWARM_PREFIX_DIGITS) return -1;
-            memcpy(out + offset, frame->payload.fkv_delta.prefix, SWARM_PREFIX_DIGITS);
-            offset += SWARM_PREFIX_DIGITS;
-            rc = write_digits(out + offset, out_size - offset, FKV_ENTRY_COUNT_WIDTH, frame->payload.fkv_delta.entry_count);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, FKV_SIZE_WIDTH, frame->payload.fkv_delta.compressed_size);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            rc = write_digits(out + offset, out_size - offset, FKV_CHECKSUM_WIDTH, frame->payload.fkv_delta.checksum);
-            if (rc < 0) return -1;
-            offset += (size_t)rc;
-            break;
-        }
-        default:
-            return -1;
-    }
-
-    if (offset >= out_size) {
+    if (!digits_only(frame->auth.signer_id, SWARM_NODE_ID_DIGITS)) {
         return -1;
     }
+    size_t required = offset + SWARM_NODE_ID_DIGITS + frame->auth.signature_len * 3 + 1;
+    if (required > out_size) {
+        return -1;
+    }
+    memcpy(out + offset, frame->auth.signer_id, SWARM_NODE_ID_DIGITS);
+    offset += SWARM_NODE_ID_DIGITS;
+    if (signature_to_digits(frame->auth.signature,
+                            frame->auth.signature_len,
+                            out + offset,
+                            out_size - offset) != 0) {
+        return -1;
+    }
+    offset += frame->auth.signature_len * 3;
     out[offset] = '\0';
     if (written) {
         *written = offset;
@@ -406,118 +607,127 @@ int swarm_frame_serialize(const SwarmFrame *frame, char *out, size_t out_size, s
 }
 
 int swarm_frame_parse(const char *data, size_t len, SwarmFrame *frame) {
-    if (!data || !frame || len < (SWARM_PROTOCOL_VERSION_WIDTH + SWARM_FRAME_CODE_WIDTH)) {
+    if (!data || !frame || len < (SWARM_PROTOCOL_VERSION_WIDTH + SWARM_FRAME_CODE_WIDTH + SWARM_NODE_ID_DIGITS + 3)) {
         return -1;
     }
     if (!digits_only(data, len)) {
         return -1;
     }
-    uint64_t proto = 0;
-    if (read_digits(data, SWARM_PROTOCOL_VERSION_WIDTH, &proto) != 0) {
+    size_t payload_len = 0;
+    if (swarm_frame_parse_payload(data, len, frame, &payload_len) != 0) {
         return -1;
     }
-    if (proto != SWARM_PROTOCOL_VERSION) {
+    if (payload_len + SWARM_NODE_ID_DIGITS > len) {
         return -1;
     }
-    uint64_t code = 0;
-    if (read_digits(data + SWARM_PROTOCOL_VERSION_WIDTH, SWARM_FRAME_CODE_WIDTH, &code) != 0) {
+    memcpy(frame->auth.signer_id, data + payload_len, SWARM_NODE_ID_DIGITS);
+    frame->auth.signer_id[SWARM_NODE_ID_DIGITS] = '\0';
+    size_t signature_digits = len - payload_len - SWARM_NODE_ID_DIGITS;
+    if (signature_digits == 0 || signature_digits % 3 != 0) {
         return -1;
     }
-    SwarmFrameType type;
-    if (frame_type_from_code(code, &type) != 0) {
+    size_t sig_len = 0;
+    if (digits_to_signature(data + payload_len + SWARM_NODE_ID_DIGITS,
+                             signature_digits,
+                             frame->auth.signature,
+                             sizeof(frame->auth.signature),
+                             &sig_len) != 0) {
         return -1;
     }
-    frame->type = type;
-    size_t offset = SWARM_PROTOCOL_VERSION_WIDTH + SWARM_FRAME_CODE_WIDTH;
-
-    switch (type) {
-        case SWARM_FRAME_HELLO: {
-            uint64_t value = 0;
-            if (offset + HELLO_VERSION_WIDTH + SWARM_NODE_ID_DIGITS + HELLO_SERVICES_WIDTH + HELLO_REPUTATION_WIDTH > len) {
-                return -1;
-            }
-            if (read_digits(data + offset, HELLO_VERSION_WIDTH, &value) != 0) return -1;
-            frame->payload.hello.version = (uint16_t)value;
-            offset += HELLO_VERSION_WIDTH;
-            memcpy(frame->payload.hello.node_id, data + offset, SWARM_NODE_ID_DIGITS);
-            frame->payload.hello.node_id[SWARM_NODE_ID_DIGITS] = '\0';
-            offset += SWARM_NODE_ID_DIGITS;
-            if (read_digits(data + offset, HELLO_SERVICES_WIDTH, &value) != 0) return -1;
-            frame->payload.hello.services = (uint16_t)value;
-            offset += HELLO_SERVICES_WIDTH;
-            if (read_digits(data + offset, HELLO_REPUTATION_WIDTH, &value) != 0) return -1;
-            frame->payload.hello.reputation = (uint16_t)value;
-            offset += HELLO_REPUTATION_WIDTH;
-            break;
-        }
-        case SWARM_FRAME_PING: {
-            uint64_t value = 0;
-            if (offset + PING_NONCE_WIDTH + PING_LATENCY_WIDTH > len) return -1;
-            if (read_digits(data + offset, PING_NONCE_WIDTH, &value) != 0) return -1;
-            frame->payload.ping.nonce = (uint32_t)value;
-            offset += PING_NONCE_WIDTH;
-            if (read_digits(data + offset, PING_LATENCY_WIDTH, &value) != 0) return -1;
-            frame->payload.ping.latency_hint_ms = (uint32_t)value;
-            offset += PING_LATENCY_WIDTH;
-            break;
-        }
-        case SWARM_FRAME_PROGRAM_OFFER: {
-            uint64_t value = 0;
-            if (offset + SWARM_PROGRAM_ID_DIGITS + PROGRAM_POE_WIDTH + PROGRAM_MDL_WIDTH + PROGRAM_GAS_WIDTH > len) return -1;
-            memcpy(frame->payload.program_offer.program_id, data + offset, SWARM_PROGRAM_ID_DIGITS);
-            frame->payload.program_offer.program_id[SWARM_PROGRAM_ID_DIGITS] = '\0';
-            offset += SWARM_PROGRAM_ID_DIGITS;
-            if (read_digits(data + offset, PROGRAM_POE_WIDTH, &value) != 0) return -1;
-            frame->payload.program_offer.poe_milli = (uint16_t)value;
-            offset += PROGRAM_POE_WIDTH;
-            if (read_digits(data + offset, PROGRAM_MDL_WIDTH, &value) != 0) return -1;
-            frame->payload.program_offer.mdl_score = (uint16_t)value;
-            offset += PROGRAM_MDL_WIDTH;
-            if (read_digits(data + offset, PROGRAM_GAS_WIDTH, &value) != 0) return -1;
-            frame->payload.program_offer.gas_used = (uint32_t)value;
-            offset += PROGRAM_GAS_WIDTH;
-            break;
-        }
-        case SWARM_FRAME_BLOCK_OFFER: {
-            uint64_t value = 0;
-            if (offset + SWARM_BLOCK_ID_DIGITS + BLOCK_HEIGHT_WIDTH + BLOCK_POE_WIDTH + BLOCK_PROGRAM_COUNT_WIDTH > len) return -1;
-            memcpy(frame->payload.block_offer.block_id, data + offset, SWARM_BLOCK_ID_DIGITS);
-            frame->payload.block_offer.block_id[SWARM_BLOCK_ID_DIGITS] = '\0';
-            offset += SWARM_BLOCK_ID_DIGITS;
-            if (read_digits(data + offset, BLOCK_HEIGHT_WIDTH, &value) != 0) return -1;
-            frame->payload.block_offer.height = (uint32_t)value;
-            offset += BLOCK_HEIGHT_WIDTH;
-            if (read_digits(data + offset, BLOCK_POE_WIDTH, &value) != 0) return -1;
-            frame->payload.block_offer.poe_milli = (uint16_t)value;
-            offset += BLOCK_POE_WIDTH;
-            if (read_digits(data + offset, BLOCK_PROGRAM_COUNT_WIDTH, &value) != 0) return -1;
-            frame->payload.block_offer.program_count = (uint16_t)value;
-            offset += BLOCK_PROGRAM_COUNT_WIDTH;
-            break;
-        }
-        case SWARM_FRAME_FKV_DELTA: {
-            uint64_t value = 0;
-            if (offset + SWARM_PREFIX_DIGITS + FKV_ENTRY_COUNT_WIDTH + FKV_SIZE_WIDTH + FKV_CHECKSUM_WIDTH > len) return -1;
-            memcpy(frame->payload.fkv_delta.prefix, data + offset, SWARM_PREFIX_DIGITS);
-            frame->payload.fkv_delta.prefix[SWARM_PREFIX_DIGITS] = '\0';
-            offset += SWARM_PREFIX_DIGITS;
-            if (read_digits(data + offset, FKV_ENTRY_COUNT_WIDTH, &value) != 0) return -1;
-            frame->payload.fkv_delta.entry_count = (uint16_t)value;
-            offset += FKV_ENTRY_COUNT_WIDTH;
-            if (read_digits(data + offset, FKV_SIZE_WIDTH, &value) != 0) return -1;
-            frame->payload.fkv_delta.compressed_size = (uint32_t)value;
-            offset += FKV_SIZE_WIDTH;
-            if (read_digits(data + offset, FKV_CHECKSUM_WIDTH, &value) != 0) return -1;
-            frame->payload.fkv_delta.checksum = (uint16_t)value;
-            offset += FKV_CHECKSUM_WIDTH;
-            break;
-        }
-        default:
-            return -1;
-    }
-
-    if (offset != len) {
-        return -1;
-    }
+    frame->auth.signature_len = sig_len;
     return 0;
+}
+
+int swarm_frame_sign(SwarmFrame *frame,
+                     const unsigned char *private_key,
+                     size_t private_len,
+                     const char *signer_id) {
+    if (!frame || !private_key || private_len == 0 || !signer_id) {
+        return -1;
+    }
+    if (!digits_only(signer_id, SWARM_NODE_ID_DIGITS)) {
+        log_error("swarm: signer id must contain %u digits", SWARM_NODE_ID_DIGITS);
+        return -1;
+    }
+    char buffer[SWARM_MAX_FRAME_SIZE];
+    size_t payload_len = 0;
+    if (swarm_frame_write_payload(frame, buffer, sizeof(buffer), &payload_len) != 0) {
+        return -1;
+    }
+    EVP_PKEY *pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, private_key, private_len);
+    if (!pkey) {
+        log_evp_error("swarm: failed to load private key");
+        return -1;
+    }
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+    int rc = 0;
+    size_t sig_len = sizeof(frame->auth.signature);
+    if (EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey) != 1) {
+        log_evp_error("swarm: DigestSignInit failed");
+        rc = -1;
+        goto done;
+    }
+    if (EVP_DigestSign(ctx,
+                        frame->auth.signature,
+                        &sig_len,
+                        (const unsigned char *)buffer,
+                        payload_len) != 1) {
+        log_evp_error("swarm: DigestSign failed");
+        rc = -1;
+        goto done;
+    }
+    frame->auth.signature_len = sig_len;
+    memcpy(frame->auth.signer_id, signer_id, SWARM_NODE_ID_DIGITS);
+    frame->auth.signer_id[SWARM_NODE_ID_DIGITS] = '\0';
+
+done:
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return rc;
+}
+
+int swarm_frame_verify(const SwarmFrame *frame,
+                       const unsigned char *public_key,
+                       size_t public_len) {
+    if (!frame || !public_key || public_len == 0 || frame->auth.signature_len == 0) {
+        return -1;
+    }
+    char buffer[SWARM_MAX_FRAME_SIZE];
+    size_t payload_len = 0;
+    if (swarm_frame_write_payload(frame, buffer, sizeof(buffer), &payload_len) != 0) {
+        return -1;
+    }
+    EVP_PKEY *pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, public_key, public_len);
+    if (!pkey) {
+        log_evp_error("swarm: failed to load public key");
+        return -1;
+    }
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        EVP_PKEY_free(pkey);
+        return -1;
+    }
+    int rc = 0;
+    if (EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey) != 1) {
+        log_evp_error("swarm: DigestVerifyInit failed");
+        rc = -1;
+        goto done;
+    }
+    if (EVP_DigestVerify(ctx,
+                          frame->auth.signature,
+                          frame->auth.signature_len,
+                          (const unsigned char *)buffer,
+                          payload_len) != 1) {
+        log_evp_error("swarm: signature verification failed");
+        rc = -1;
+    }
+
+done:
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return rc;
 }

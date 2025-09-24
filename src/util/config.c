@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +19,15 @@ static void set_defaults(kolibri_config_t *cfg) {
     strncpy(cfg->http.host, "0.0.0.0", sizeof(cfg->http.host) - 1);
     cfg->http.port = 9000;
     cfg->http.max_body_size = 1024 * 1024;
+    cfg->http.enable_tls = false;
+    cfg->http.require_client_auth = false;
+    cfg->http.key_rotation_interval_sec = 3600;
+    cfg->http.tls_cert_path[0] = '\0';
+    cfg->http.tls_key_path[0] = '\0';
+    cfg->http.tls_client_ca_path[0] = '\0';
+    cfg->http.jwt_issuer[0] = '\0';
+    cfg->http.jwt_audience[0] = '\0';
+    cfg->http.jwt_key_path[0] = '\0';
 
     cfg->vm.max_steps = 2048;
     cfg->vm.max_stack = 128;
@@ -38,6 +48,12 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->search.max_coefficient = 9;
     cfg->search.max_formula_length = 32;
     cfg->search.base_effectiveness = 0.5;
+
+    cfg->security.node_private_key_path[0] = '\0';
+    cfg->security.node_public_key_path[0] = '\0';
+    cfg->security.swarm_trust_store[0] = '\0';
+    cfg->security.rotation_interval_sec = 3600;
+    cfg->security.signer_id[0] = '\0';
 }
 
 static void skip_ws(json_cursor_t *cur) {
@@ -54,6 +70,8 @@ static int consume_char(json_cursor_t *cur, char expected) {
     cur->cur++;
     return 0;
 }
+
+static int skip_literal(json_cursor_t *cur, const char *literal);
 
 static int parse_string(json_cursor_t *cur, char *out, size_t out_size) {
     skip_ws(cur);
@@ -124,6 +142,23 @@ static int parse_uint(json_cursor_t *cur, uint64_t *out) {
     }
     *out = value;
     return 0;
+}
+
+static int parse_bool(json_cursor_t *cur, bool *out) {
+    skip_ws(cur);
+    if (skip_literal(cur, "true") == 0) {
+        if (out) {
+            *out = true;
+        }
+        return 0;
+    }
+    if (skip_literal(cur, "false") == 0) {
+        if (out) {
+            *out = false;
+        }
+        return 0;
+    }
+    return -1;
 }
 
 static int parse_double(json_cursor_t *cur, double *out) {
@@ -306,6 +341,48 @@ static int parse_http_object(json_cursor_t *cur, kolibri_config_t *cfg, int *see
                 return -1;
             }
             cfg->http.max_body_size = (uint32_t)value;
+        } else if (strcmp(key, "enable_tls") == 0) {
+            bool flag = false;
+            if (parse_bool(cur, &flag) != 0) {
+                return -1;
+            }
+            cfg->http.enable_tls = flag;
+        } else if (strcmp(key, "require_client_auth") == 0) {
+            bool flag = false;
+            if (parse_bool(cur, &flag) != 0) {
+                return -1;
+            }
+            cfg->http.require_client_auth = flag;
+        } else if (strcmp(key, "key_rotation_interval_sec") == 0) {
+            uint64_t value = 0;
+            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                return -1;
+            }
+            cfg->http.key_rotation_interval_sec = (uint32_t)value;
+        } else if (strcmp(key, "tls_cert_path") == 0) {
+            if (parse_string(cur, cfg->http.tls_cert_path, sizeof(cfg->http.tls_cert_path)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "tls_key_path") == 0) {
+            if (parse_string(cur, cfg->http.tls_key_path, sizeof(cfg->http.tls_key_path)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "tls_client_ca_path") == 0) {
+            if (parse_string(cur, cfg->http.tls_client_ca_path, sizeof(cfg->http.tls_client_ca_path)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "jwt_issuer") == 0) {
+            if (parse_string(cur, cfg->http.jwt_issuer, sizeof(cfg->http.jwt_issuer)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "jwt_audience") == 0) {
+            if (parse_string(cur, cfg->http.jwt_audience, sizeof(cfg->http.jwt_audience)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "jwt_key_path") == 0) {
+            if (parse_string(cur, cfg->http.jwt_key_path, sizeof(cfg->http.jwt_key_path)) != 0) {
+                return -1;
+            }
         } else {
             if (skip_value(cur) != 0) {
                 return -1;
@@ -327,6 +404,87 @@ static int parse_http_object(json_cursor_t *cur, kolibri_config_t *cfg, int *see
     }
     *seen = 1;
     return 0;
+}
+
+static int parse_security_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen) {
+    if (consume_char(cur, '{') != 0) {
+        return -1;
+    }
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
+            if (seen) {
+                *seen = 1;
+            }
+            return 0;
+        }
+        char key[64];
+        if (parse_string(cur, key, sizeof(key)) != 0) {
+            return -1;
+        }
+        if (consume_char(cur, ':') != 0) {
+            return -1;
+        }
+        if (strcmp(key, "node_private_key_path") == 0) {
+            if (parse_string(cur,
+                             cfg->security.node_private_key_path,
+                             sizeof(cfg->security.node_private_key_path)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "node_public_key_path") == 0) {
+            if (parse_string(cur,
+                             cfg->security.node_public_key_path,
+                             sizeof(cfg->security.node_public_key_path)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "swarm_trust_store") == 0) {
+            if (parse_string(cur,
+                             cfg->security.swarm_trust_store,
+                             sizeof(cfg->security.swarm_trust_store)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "rotation_interval_sec") == 0) {
+            uint64_t value = 0;
+            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                return -1;
+            }
+            cfg->security.rotation_interval_sec = (uint32_t)value;
+        } else if (strcmp(key, "signer_id") == 0) {
+            if (parse_string(cur,
+                             cfg->security.signer_id,
+                             sizeof(cfg->security.signer_id)) != 0) {
+                return -1;
+            }
+            size_t len = strlen(cfg->security.signer_id);
+            if (len != SECURITY_SIGNER_ID_DIGITS) {
+                return -1;
+            }
+            for (size_t i = 0; i < len; ++i) {
+                if (!isdigit((unsigned char)cfg->security.signer_id[i])) {
+                    return -1;
+                }
+            }
+        } else {
+            if (skip_value(cur) != 0) {
+                return -1;
+            }
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == '}') {
+            cur->cur++;
+            if (seen) {
+                *seen = 1;
+            }
+            return 0;
+        }
+        return -1;
+    }
+    return -1;
 }
 
 static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen) {
@@ -613,6 +771,7 @@ int config_load(const char *path, kolibri_config_t *cfg) {
     int saw_http = 0;
     int saw_vm = 0;
     int saw_seed = 0;
+    int saw_security = 0;
 
     while (*cur.cur) {
         skip_ws(&cur);
@@ -669,6 +828,12 @@ int config_load(const char *path, kolibri_config_t *cfg) {
             }
         } else if (strcmp(key, "search") == 0) {
             if (parse_search_object(&cur, &tmp) != 0) {
+                free(buffer);
+                errno = EINVAL;
+                return -1;
+            }
+        } else if (strcmp(key, "security") == 0) {
+            if (parse_security_object(&cur, &tmp, &saw_security) != 0) {
                 free(buffer);
                 errno = EINVAL;
                 return -1;

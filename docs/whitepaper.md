@@ -36,29 +36,31 @@ Kolibri Ω is organised as a stack of modular subsystems communicating over deci
 
 ### 2.4 Proof-of-Use Blockchain
 * **Block Structure:** `{ prev_hash, time10, program_ids[], PoE_stats, MDL_delta, nonce }`.
-* **Consensus Rule:** Blocks must demonstrate PoE ≥ τ and valid Ed25519 signatures. Nodes perform replay to verify Δ-VM execution before accepting blocks.
+* **Consensus Rule:** Blocks must demonstrate PoE ≥ τ and valid Ed25519 signatures anchored to rotating node identities. Nodes perform replay to verify Δ-VM execution before accepting blocks.
 * **Replication:** Gossip protocol with CRDT OR-Set ensures eventual convergence. Reputation scores penalise spam offers.
 
 ### 2.5 Swarm Protocol
-* **Frames:** `HELLO`, `PING`, `PROGRAM_OFFER`, `BLOCK_OFFER`, `FKV_DELTA` encoded as decimal strings.
+* **Frames:** `HELLO`, `PING`, `PROGRAM_OFFER`, `BLOCK_OFFER`, `FKV_DELTA` encoded as decimal strings with attached Ed25519 signatures and signer identifiers.
 * **Traffic Control:** Token-bucket rate limiting, peer scoring, and TTLs prevent abuse.
-* **Security:** HMAC-SHA256 integrity, mandatory TLS for inter-site links, sandboxed ingress pipeline.
+* **Security:** HMAC-SHA256 integrity, mandatory TLS/mTLS for inter-site links, JWT-enforced HTTP access, sandboxed ingress pipeline.
 
 ### 2.6 Interfaces
-* **HTTP API v1:** REST endpoints for dialogue, VM execution, memory, program submission, chain submission, health, and metrics.
+* **HTTP API v1:** REST endpoints for dialogue, VM execution, memory, program submission, chain submission, health, and metrics. All endpoints are served over TLS 1.2+, honour optional mTLS, and require JWT Bearer tokens.
 * **Kolibri Studio:** React/Vite SPA with tabs for Dialogue, Memory, Programs, Synthesis, Blockchain, Cluster, Benchmarks. Provides investor-friendly dashboards and trace visualisation.
 
 ## 3. Implementation Footprint
 * **Language:** C for core runtime; TypeScript/React for Studio.
 * **Binary Size:** Target ≤ 50 MB including VM, F-KV, HTTP layer, and static assets.
-* **Build System:** CMake/Make orchestrated via `kolibri.sh` for turnkey demos.
-* **CI/CD:** Linting, unit tests (VM, F-KV), fuzz harnesses, integration suites (Sprint B+).
+* **Build System:** CMake/Make orchestrated via `kolibri.sh` for turnkey demos; dedicated targets for Docker images, SBOMs, dependency audits, code-signing, and deployment bundles.
+* **CI/CD:** Linting, unit tests (VM, F-KV), fuzz harnesses, integration suites (Sprint B+), automated SBOM publication, dependency scanning, and security policy enforcement.
 
 ## 4. Security Model
 1. **Sandboxed VM:** No system calls, no floating-point operations, deterministic randomness via decimal RNG.
-2. **Cryptography:** Ed25519 keys for signing; HMAC-SHA256 for message integrity; TLS for transport.
-3. **Data Governance:** Namespaced F-KV entries separate episodic, semantic, procedural knowledge. Access requires proper prefixes and capability checks.
-4. **Auditability:** Full trace logs, block history verification, deterministic replay harness.
+2. **Cryptography:** Ed25519 keys for signing frames and blocks, HMAC-SHA256 for message integrity, TLS 1.2+ with mTLS for transport, JWT with issuer/audience validation for HTTP auth.
+3. **Key Management:** On-disk Ed25519 key material is loaded through a rotating key manager (configurable via `config.security`), ensuring periodic refresh without downtime.
+4. **Supply Chain:** Makefile targets produce signed binaries, SBOMs, and deployment bundles; dependency audits surface vulnerable packages prior to release.
+5. **Data Governance:** Namespaced F-KV entries separate episodic, semantic, procedural knowledge. Access requires proper prefixes and capability checks.
+6. **Auditability:** Full trace logs, block history verification, deterministic replay harness, and documented disaster recovery runbooks.
 
 ## 5. Performance Benchmarks
 * **Δ-VM Latency:** P95 < 50 ms for 256-step programs on reference hardware (x86‑64, 3.4 GHz).

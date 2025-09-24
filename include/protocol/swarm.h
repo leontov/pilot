@@ -21,6 +21,13 @@ typedef enum {
 #define SWARM_PREFIX_DIGITS 12
 
 #define SWARM_MAX_FRAME_SIZE 128
+#define SWARM_SIGNATURE_BYTES 64
+
+typedef struct {
+    char signer_id[SWARM_NODE_ID_DIGITS + 1];
+    unsigned char signature[SWARM_SIGNATURE_BYTES];
+    size_t signature_len;
+} SwarmFrameSignature;
 
 typedef struct {
     uint16_t version;
@@ -64,6 +71,7 @@ typedef struct {
         SwarmBlockOfferPayload block_offer;
         SwarmFkvDeltaPayload fkv_delta;
     } payload;
+    SwarmFrameSignature auth;
 } SwarmFrame;
 
 typedef struct {
@@ -110,5 +118,12 @@ void swarm_peer_report_violation(SwarmPeerState *peer, SwarmFrameType type);
 
 int swarm_frame_serialize(const SwarmFrame *frame, char *out, size_t out_size, size_t *written);
 int swarm_frame_parse(const char *data, size_t len, SwarmFrame *frame);
+int swarm_frame_sign(SwarmFrame *frame,
+                     const unsigned char *private_key,
+                     size_t private_len,
+                     const char *signer_id);
+int swarm_frame_verify(const SwarmFrame *frame,
+                       const unsigned char *public_key,
+                       size_t public_len);
 
 #endif // KOLIBRI_PROTOCOL_SWARM_H

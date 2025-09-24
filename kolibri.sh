@@ -46,12 +46,48 @@ stop_node() {
   fi
 }
 
+build_docker_image() {
+  make -C "$ROOT_DIR" docker-build
+}
+
+sign_binaries() {
+  make -C "$ROOT_DIR" sign-binaries
+}
+
+generate_sbom() {
+  make -C "$ROOT_DIR" sbom
+}
+
+dependency_check() {
+  make -C "$ROOT_DIR" deps-check
+}
+
+deploy_bundle() {
+  make -C "$ROOT_DIR" deploy
+  echo "Deployment artifacts available in $ROOT_DIR/dist" >&2
+}
+
 case "${1:-}" in
   up)
     start_node
     ;;
   stop)
     stop_node
+    ;;
+  docker)
+    build_docker_image
+    ;;
+  sign)
+    sign_binaries
+    ;;
+  sbom)
+    generate_sbom
+    ;;
+  deps)
+    dependency_check
+    ;;
+  deploy)
+    deploy_bundle
     ;;
   bench)
     make -C "$ROOT_DIR" bench
@@ -61,7 +97,7 @@ case "${1:-}" in
     make -C "$ROOT_DIR" clean
     ;;
   *)
-    echo "Usage: $0 {up|stop|bench|clean}"
+    echo "Usage: $0 {up|stop|docker|sign|sbom|deps|deploy|bench|clean}"
     exit 1
     ;;
  esac

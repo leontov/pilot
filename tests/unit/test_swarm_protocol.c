@@ -6,6 +6,18 @@
 #include <stdio.h>
 #include <string.h>
 
+static const unsigned char kTestPrivateKey[32] = {
+    0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
+    0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+    0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
+    0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60};
+
+static const unsigned char kTestPublicKey[32] = {
+    0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7,
+    0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
+    0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25,
+    0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a};
+
 static void test_hello_roundtrip(void) {
     SwarmFrame frame = {0};
     frame.type = SWARM_FRAME_HELLO;
@@ -13,6 +25,8 @@ static void test_hello_roundtrip(void) {
     memcpy(frame.payload.hello.node_id, "0000000000004242", SWARM_NODE_ID_DIGITS + 1);
     frame.payload.hello.services = 42;
     frame.payload.hello.reputation = 620;
+    assert(swarm_frame_sign(&frame, kTestPrivateKey, sizeof(kTestPrivateKey), "0000000000000001") == 0);
+    assert(swarm_frame_verify(&frame, kTestPublicKey, sizeof(kTestPublicKey)) == 0);
 
     char encoded[SWARM_MAX_FRAME_SIZE];
     size_t written = 0;
@@ -22,6 +36,8 @@ static void test_hello_roundtrip(void) {
 
     SwarmFrame parsed = {0};
     assert(swarm_frame_parse(encoded, written, &parsed) == 0);
+    assert(strcmp(parsed.auth.signer_id, "0000000000000001") == 0);
+    assert(swarm_frame_verify(&parsed, kTestPublicKey, sizeof(kTestPublicKey)) == 0);
     assert(parsed.type == SWARM_FRAME_HELLO);
     assert(parsed.payload.hello.version == frame.payload.hello.version);
     assert(strcmp(parsed.payload.hello.node_id, frame.payload.hello.node_id) == 0);
@@ -66,12 +82,15 @@ static void test_fkv_delta_roundtrip(void) {
     frame.payload.fkv_delta.entry_count = 12;
     frame.payload.fkv_delta.compressed_size = 4096;
     frame.payload.fkv_delta.checksum = 1234;
+    assert(swarm_frame_sign(&frame, kTestPrivateKey, sizeof(kTestPrivateKey), "0000000000000002") == 0);
 
     char encoded[SWARM_MAX_FRAME_SIZE];
     size_t written = 0;
     assert(swarm_frame_serialize(&frame, encoded, sizeof(encoded), &written) == 0);
     SwarmFrame parsed = {0};
     assert(swarm_frame_parse(encoded, written, &parsed) == 0);
+    assert(strcmp(parsed.auth.signer_id, "0000000000000002") == 0);
+    assert(swarm_frame_verify(&parsed, kTestPublicKey, sizeof(kTestPublicKey)) == 0);
     assert(parsed.type == SWARM_FRAME_FKV_DELTA);
     assert(strcmp(parsed.payload.fkv_delta.prefix, frame.payload.fkv_delta.prefix) == 0);
     assert(parsed.payload.fkv_delta.entry_count == frame.payload.fkv_delta.entry_count);

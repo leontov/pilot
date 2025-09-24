@@ -324,10 +324,22 @@ int main(int argc, char **argv) {
         log_warn("could not read cfg/kolibri.jsonc, using defaults");
     }
 
+    if (cfg.security.signer_id[0] &&
+        cfg.security.node_private_key_path[0] &&
+        cfg.security.node_public_key_path[0]) {
+        if (blockchain_security_init(cfg.security.signer_id,
+                                     cfg.security.node_private_key_path,
+                                     cfg.security.node_public_key_path,
+                                     cfg.security.rotation_interval_sec) != 0) {
+            log_error("failed to initialize blockchain key management");
+        }
+    }
+
     if (argc > 1 && strcmp(argv[1], "--bench") == 0) {
         if (log_fp) {
             fclose(log_fp);
         }
+        blockchain_security_shutdown();
         return run_bench();
     }
 
@@ -337,10 +349,12 @@ int main(int argc, char **argv) {
             if (log_fp) {
                 fclose(log_fp);
             }
+            blockchain_security_shutdown();
             return 1;
         }
         int rc = run_chat(&cfg);
         fkv_shutdown();
+        blockchain_security_shutdown();
         if (log_fp) {
             fclose(log_fp);
         }
@@ -352,6 +366,7 @@ int main(int argc, char **argv) {
         if (log_fp) {
             fclose(log_fp);
         }
+        blockchain_security_shutdown();
         return 1;
     }
 
@@ -361,6 +376,7 @@ int main(int argc, char **argv) {
     if (http_server_start(&cfg) != 0) {
         log_error("failed to start HTTP server");
         fkv_shutdown();
+        blockchain_security_shutdown();
         if (log_fp) {
             fclose(log_fp);
         }
@@ -373,6 +389,7 @@ int main(int argc, char **argv) {
 
     http_server_stop();
     fkv_shutdown();
+    blockchain_security_shutdown();
     if (log_fp) {
         fclose(log_fp);
     }

@@ -5,12 +5,16 @@
 #include "http/http_server.h"
 
 #include "http/http_routes.h"
+#include "util/jwt.h"
+#include "util/key_manager.h"
 #include "util/log.h"
 #include "vm/vm.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -22,13 +26,19 @@
 #include <time.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <strings.h>
+#include <sys/stat.h>
 
 #define RECV_BUFFER 8192
 
 typedef struct client_task_s {
     int client_fd;
+    SSL *ssl;
     struct client_task_s *next;
 } client_task_t;
+
+static ssize_t connection_recv(client_task_t *task, void *buf, size_t len);
+static ssize_t connection_send(client_task_t *task, const void *buf, size_t len);
 
 typedef struct {
     int sockfd;
@@ -43,6 +53,13 @@ typedef struct {
     pthread_cond_t queue_cond;
     client_task_t *queue_head;
     client_task_t *queue_tail;
+    SSL_CTX *ssl_ctx;
+    pthread_mutex_t tls_mutex;
+    time_t last_tls_reload;
+    time_t cert_mtime;
+    time_t key_mtime;
+    key_file_t jwt_secret;
+    int jwt_ready;
 } server_state_t;
 
 static server_state_t server = {
@@ -57,6 +74,12 @@ static server_state_t server = {
     .queue_cond = PTHREAD_COND_INITIALIZER,
     .queue_head = NULL,
     .queue_tail = NULL,
+    .ssl_ctx = NULL,
+    .tls_mutex = PTHREAD_MUTEX_INITIALIZER,
+    .last_tls_reload = 0,
+    .cert_mtime = 0,
+    .key_mtime = 0,
+    .jwt_ready = 0,
 };
 
 static int create_listen_socket(const char *host, uint16_t port) {
@@ -96,6 +119,111 @@ static int create_listen_socket(const char *host, uint16_t port) {
     return sockfd;
 }
 
+static void log_openssl_error(const char *context) {
+    unsigned long err = 0;
+    while ((err = ERR_get_error()) != 0) {
+        log_error("%s: %s", context, ERR_error_string(err, NULL));
+    }
+}
+
+static int get_file_mtime(const char *path, time_t *mtime_out) {
+    struct stat st = {0};
+    if (stat(path, &st) != 0) {
+        log_error("http: failed to stat %s: %s", path, strerror(errno));
+        return -1;
+    }
+    if (mtime_out) {
+        *mtime_out = st.st_mtime;
+    }
+    return 0;
+}
+
+static int tls_reload_context(time_t cert_mtime, time_t key_mtime) {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) {
+        log_openssl_error("http: SSL_CTX_new failed");
+        return -1;
+    }
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    if (SSL_CTX_use_certificate_file(ctx, server.cfg.http.tls_cert_path, SSL_FILETYPE_PEM) <= 0) {
+        log_openssl_error("http: failed to load certificate");
+        SSL_CTX_free(ctx);
+        return -1;
+    }
+    if (SSL_CTX_use_PrivateKey_file(ctx, server.cfg.http.tls_key_path, SSL_FILETYPE_PEM) <= 0) {
+        log_openssl_error("http: failed to load private key");
+        SSL_CTX_free(ctx);
+        return -1;
+    }
+    if (!SSL_CTX_check_private_key(ctx)) {
+        log_error("http: TLS private key mismatch");
+        SSL_CTX_free(ctx);
+        return -1;
+    }
+    if (server.cfg.http.require_client_auth) {
+        if (server.cfg.http.tls_client_ca_path[0] == '\0') {
+            log_error("http: client auth required but no CA path provided");
+            SSL_CTX_free(ctx);
+            return -1;
+        }
+        if (SSL_CTX_load_verify_locations(ctx, server.cfg.http.tls_client_ca_path, NULL) != 1) {
+            log_openssl_error("http: failed to load client CA");
+            SSL_CTX_free(ctx);
+            return -1;
+        }
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+        SSL_CTX_set_verify_depth(ctx, 4);
+    }
+
+    pthread_mutex_lock(&server.tls_mutex);
+    if (server.ssl_ctx) {
+        SSL_CTX_free(server.ssl_ctx);
+    }
+    server.ssl_ctx = ctx;
+    server.last_tls_reload = time(NULL);
+    server.cert_mtime = cert_mtime;
+    server.key_mtime = key_mtime;
+    pthread_mutex_unlock(&server.tls_mutex);
+    log_info("http: TLS context reloaded");
+    return 0;
+}
+
+static int tls_ensure_context(void) {
+    if (!server.cfg.http.enable_tls) {
+        return 0;
+    }
+    if (server.cfg.http.tls_cert_path[0] == '\0' || server.cfg.http.tls_key_path[0] == '\0') {
+        log_error("http: TLS enabled but certificate or key path missing");
+        return -1;
+    }
+    time_t cert_mtime = 0;
+    time_t key_mtime = 0;
+    if (get_file_mtime(server.cfg.http.tls_cert_path, &cert_mtime) != 0 ||
+        get_file_mtime(server.cfg.http.tls_key_path, &key_mtime) != 0) {
+        return -1;
+    }
+
+    int need_reload = 0;
+    pthread_mutex_lock(&server.tls_mutex);
+    if (!server.ssl_ctx) {
+        need_reload = 1;
+    } else {
+        time_t now = time(NULL);
+        if ((server.cfg.http.key_rotation_interval_sec > 0 &&
+             now - server.last_tls_reload >= (time_t)server.cfg.http.key_rotation_interval_sec) ||
+            cert_mtime != server.cert_mtime ||
+            key_mtime != server.key_mtime) {
+            need_reload = 1;
+        }
+    }
+    pthread_mutex_unlock(&server.tls_mutex);
+
+    if (need_reload) {
+        return tls_reload_context(cert_mtime, key_mtime);
+    }
+    return 0;
+}
+
 static const char *find_header(const char *haystack, const char *needle) {
     size_t nlen = strlen(needle);
     for (const char *p = haystack; *p; ++p) {
@@ -110,7 +238,7 @@ static const char *find_header(const char *haystack, const char *needle) {
     return NULL;
 }
 
-static int read_request(int client,
+static int read_request(client_task_t *task,
                         char **out_buffer,
                         size_t *out_len,
                         size_t *out_header_len,
@@ -142,7 +270,7 @@ static int read_request(int client,
             capacity = new_capacity;
         }
 
-        ssize_t n = recv(client, buffer + total, capacity - total, 0);
+        ssize_t n = connection_recv(task, buffer + total, capacity - total);
         if (n <= 0) {
             free(buffer);
             return -1;
@@ -230,7 +358,7 @@ static const char *status_reason(int status) {
     }
 }
 
-static void send_response(int client, const http_response_t *resp) {
+static void send_response(client_task_t *task, const http_response_t *resp) {
     int status = resp->status ? resp->status : 200;
     const char *reason = status_reason(status);
     char header[256];
@@ -240,33 +368,97 @@ static void send_response(int client, const http_response_t *resp) {
              reason,
              resp->content_type[0] ? resp->content_type : "application/json",
              resp->len);
-    send(client, header, strlen(header), 0);
+    connection_send(task, header, strlen(header));
     if (resp->data && resp->len > 0) {
-        send(client, resp->data, resp->len, 0);
+        connection_send(task, resp->data, resp->len);
     }
 }
 
-static void send_payload_too_large(int client) {
+static void send_payload_too_large(client_task_t *task) {
     http_response_t resp = {0};
     resp.status = 413;
     snprintf(resp.content_type, sizeof(resp.content_type), "application/json");
     resp.data = strdup("{\"error\":\"payload too large\"}");
     resp.len = strlen(resp.data);
-    send_response(client, &resp);
+    send_response(task, &resp);
     http_response_free(&resp);
 }
 
-static void handle_client(int client) {
+static void send_unauthorized(client_task_t *task) {
+    const char body[] = "{\"error\":\"unauthorized\"}";
+    char header[512];
+    int len = snprintf(header,
+                       sizeof(header),
+                       "HTTP/1.1 401 Unauthorized\r\n"
+                       "Content-Type: application/json\r\n"
+                       "Content-Length: %zu\r\n"
+                       "Connection: close\r\n"
+                       "WWW-Authenticate: Bearer realm=\"Kolibri\"\r\n\r\n",
+                       sizeof(body) - 1);
+    connection_send(task, header, (size_t)len);
+    connection_send(task, body, sizeof(body) - 1);
+}
+
+static int find_header_value(const char *headers,
+                             size_t header_len,
+                             const char *name,
+                             char *out,
+                             size_t out_size) {
+    if (!headers || !name || !out || out_size == 0) {
+        return -1;
+    }
+    const char *cur = headers;
+    const char *end = headers + header_len;
+    size_t name_len = strlen(name);
+    while (cur < end) {
+        const char *line_end = memchr(cur, '\n', (size_t)(end - cur));
+        size_t line_len = line_end ? (size_t)(line_end - cur) : (size_t)(end - cur);
+        if (line_len == 0) {
+            if (!line_end) {
+                break;
+            }
+            cur = line_end + 1;
+            continue;
+        }
+        const char *colon = memchr(cur, ':', line_len);
+        if (colon) {
+            size_t key_len = (size_t)(colon - cur);
+            while (key_len > 0 && isspace((unsigned char)cur[key_len - 1])) {
+                key_len--;
+            }
+            size_t skip = 1;
+            while (skip < line_len && isspace((unsigned char)colon[skip])) {
+                skip++;
+            }
+            if (key_len == name_len && strncasecmp(cur, name, name_len) == 0) {
+                size_t value_len = line_len - (colon - cur) - skip;
+                if (value_len >= out_size) {
+                    return -1;
+                }
+                memcpy(out, colon + skip, value_len);
+                out[value_len] = '\0';
+                return 0;
+            }
+        }
+        if (!line_end) {
+            break;
+        }
+        cur = line_end + 1;
+    }
+    return -1;
+}
+
+static void handle_client(client_task_t *task) {
     char *buffer = NULL;
     size_t received = 0;
     size_t header_len = 0;
-    int rc = read_request(client,
+    int rc = read_request(task,
                           &buffer,
                           &received,
                           &header_len,
                           server.cfg.http.max_body_size);
     if (rc == -2) {
-        send_payload_too_large(client);
+        send_payload_too_large(task);
         return;
     }
     if (rc != 0) {
@@ -289,9 +481,51 @@ static void handle_client(int client) {
     char *body = buffer + header_len;
 
     if (server.cfg.http.max_body_size > 0 && body_len > server.cfg.http.max_body_size) {
-        send_payload_too_large(client);
+        send_payload_too_large(task);
         free(buffer);
         return;
+    }
+
+    int require_auth = http_route_requires_auth(method, path);
+    if (require_auth) {
+        char auth_header[512];
+        if (find_header_value(buffer, header_len, "authorization", auth_header, sizeof(auth_header)) != 0) {
+            send_unauthorized(task);
+            free(buffer);
+            return;
+        }
+        const char *bearer = NULL;
+        if (strncasecmp(auth_header, "Bearer ", 7) == 0) {
+            bearer = auth_header + 7;
+        }
+        if (!bearer || bearer[0] == '\0') {
+            send_unauthorized(task);
+            free(buffer);
+            return;
+        }
+        if (!server.jwt_ready) {
+            send_unauthorized(task);
+            free(buffer);
+            return;
+        }
+        const unsigned char *secret = NULL;
+        size_t secret_len = 0;
+        if (key_file_get(&server.jwt_secret, &secret, &secret_len) != 0) {
+            log_error("http: failed to load JWT secret");
+            send_unauthorized(task);
+            free(buffer);
+            return;
+        }
+        if (jwt_verify_hs256(bearer,
+                             secret,
+                             secret_len,
+                             server.cfg.http.jwt_issuer,
+                             server.cfg.http.jwt_audience,
+                             NULL) != 0) {
+            send_unauthorized(task);
+            free(buffer);
+            return;
+        }
     }
 
     http_response_t resp = {0};
@@ -301,7 +535,7 @@ static void handle_client(int client) {
         resp.data = strdup("{\"error\":\"internal\"}");
         resp.len = strlen(resp.data);
     }
-    send_response(client, &resp);
+    send_response(task, &resp);
     http_response_free(&resp);
     free(buffer);
 }
@@ -317,7 +551,7 @@ static size_t determine_worker_count(void) {
     return (size_t)nproc;
 }
 
-static void enqueue_client(int client_fd) {
+static void enqueue_client(int client_fd, SSL *ssl) {
     client_task_t *task = malloc(sizeof(client_task_t));
     if (!task) {
         log_error("Failed to allocate client task");
@@ -325,6 +559,7 @@ static void enqueue_client(int client_fd) {
         return;
     }
     task->client_fd = client_fd;
+    task->ssl = ssl;
     task->next = NULL;
 
     pthread_mutex_lock(&server.queue_mutex);
@@ -349,6 +584,51 @@ static client_task_t *dequeue_client(void) {
     return task;
 }
 
+static void connection_close(client_task_t *task) {
+    if (!task) {
+        return;
+    }
+    if (task->ssl) {
+        SSL_shutdown(task->ssl);
+        SSL_free(task->ssl);
+        task->ssl = NULL;
+    }
+    if (task->client_fd >= 0) {
+        close(task->client_fd);
+        task->client_fd = -1;
+    }
+}
+
+static ssize_t connection_recv(client_task_t *task, void *buf, size_t len) {
+    if (task->ssl) {
+        int rc = SSL_read(task->ssl, buf, (int)len);
+        if (rc <= 0) {
+            int err = SSL_get_error(task->ssl, rc);
+            if (err == SSL_ERROR_ZERO_RETURN) {
+                return 0;
+            }
+            log_error("http: SSL_read failed: %d", err);
+            return -1;
+        }
+        return rc;
+    }
+    ssize_t n = recv(task->client_fd, buf, len, 0);
+    return n;
+}
+
+static ssize_t connection_send(client_task_t *task, const void *buf, size_t len) {
+    if (task->ssl) {
+        int rc = SSL_write(task->ssl, buf, (int)len);
+        if (rc <= 0) {
+            int err = SSL_get_error(task->ssl, rc);
+            log_error("http: SSL_write failed: %d", err);
+            return -1;
+        }
+        return rc;
+    }
+    return send(task->client_fd, buf, len, 0);
+}
+
 static void *worker_loop(void *arg) {
     (void)arg;
     for (;;) {
@@ -365,10 +645,20 @@ static void *worker_loop(void *arg) {
         if (!task) {
             continue;
         }
+        if (task->ssl) {
+            if (SSL_accept(task->ssl) <= 0) {
+                log_openssl_error("http: TLS handshake failed");
+                connection_close(task);
+                free(task);
+                continue;
+            }
+        }
         int client = task->client_fd;
+        SSL *ssl = task->ssl;
         free(task);
-        handle_client(client);
-        close(client);
+        client_task_t local = {.client_fd = client, .ssl = ssl, .next = NULL};
+        handle_client(&local);
+        connection_close(&local);
     }
     return NULL;
 }
@@ -404,7 +694,38 @@ static void *accept_loop(void *arg) {
             break;
         }
         pthread_mutex_unlock(&server.queue_mutex);
-        enqueue_client(client);
+        SSL *ssl = NULL;
+        if (server.cfg.http.enable_tls) {
+            if (tls_ensure_context() != 0) {
+                close(client);
+                continue;
+            }
+            SSL_CTX *ctx = NULL;
+            pthread_mutex_lock(&server.tls_mutex);
+            ctx = server.ssl_ctx;
+            if (ctx) {
+                SSL_CTX_up_ref(ctx);
+            }
+            pthread_mutex_unlock(&server.tls_mutex);
+            if (!ctx) {
+                close(client);
+                continue;
+            }
+            ssl = SSL_new(ctx);
+            SSL_CTX_free(ctx);
+            if (!ssl) {
+                log_openssl_error("http: SSL_new failed");
+                close(client);
+                continue;
+            }
+            if (SSL_set_fd(ssl, client) != 1) {
+                log_openssl_error("http: SSL_set_fd failed");
+                SSL_free(ssl);
+                close(client);
+                continue;
+            }
+        }
+        enqueue_client(client, ssl);
     }
     return NULL;
 }
@@ -426,6 +747,36 @@ int http_server_start(const kolibri_config_t *cfg) {
     server.stop_workers = 0;
     server.running = 1;
     server.cfg = *cfg;
+    if (server.cfg.http.enable_tls) {
+        SSL_load_error_strings();
+        OpenSSL_add_ssl_algorithms();
+        if (tls_ensure_context() != 0) {
+            close(server.sockfd);
+            server.sockfd = -1;
+            server.running = 0;
+            return -1;
+        }
+    } else {
+        pthread_mutex_lock(&server.tls_mutex);
+        if (server.ssl_ctx) {
+            SSL_CTX_free(server.ssl_ctx);
+            server.ssl_ctx = NULL;
+        }
+        pthread_mutex_unlock(&server.tls_mutex);
+    }
+    if (server.jwt_ready) {
+        key_file_deinit(&server.jwt_secret);
+        server.jwt_ready = 0;
+    }
+    if (server.cfg.http.jwt_key_path[0]) {
+        if (key_file_init(&server.jwt_secret,
+                          server.cfg.http.jwt_key_path,
+                          server.cfg.http.key_rotation_interval_sec) == 0) {
+            server.jwt_ready = 1;
+        } else {
+            log_error("http: failed to initialize JWT secret manager");
+        }
+    }
     size_t worker_count = determine_worker_count();
     pthread_t *workers = calloc(worker_count, sizeof(pthread_t));
     if (!workers) {
@@ -515,4 +866,14 @@ void http_server_stop(void) {
 
     server.stop_accept = 0;
     server.stop_workers = 0;
+    if (server.jwt_ready) {
+        key_file_deinit(&server.jwt_secret);
+        server.jwt_ready = 0;
+    }
+    pthread_mutex_lock(&server.tls_mutex);
+    if (server.ssl_ctx) {
+        SSL_CTX_free(server.ssl_ctx);
+        server.ssl_ctx = NULL;
+    }
+    pthread_mutex_unlock(&server.tls_mutex);
 }

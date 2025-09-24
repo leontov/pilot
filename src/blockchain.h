@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include "formula_advanced.h"
+#include "protocol/swarm.h"
 
 typedef struct {
     Formula** formulas;
@@ -20,6 +21,9 @@ typedef struct {
     double mdl_average;
     double score_sum;
     double score_average;
+    char signer_id[SWARM_NODE_ID_DIGITS + 1];
+    unsigned char signature[SWARM_SIGNATURE_BYTES];
+    size_t signature_len;
 } Block;
 
 typedef struct {
@@ -44,5 +48,10 @@ double blockchain_score_formula(const Formula* formula, double* poe_out, double*
 
 // Освобождение ресурсов
 void blockchain_destroy(Blockchain* chain);
+int blockchain_security_init(const char *signer_id,
+                             const char *private_key_path,
+                             const char *public_key_path,
+                             uint32_t rotation_interval_sec);
+void blockchain_security_shutdown(void);
 
 #endif // BLOCKCHAIN_H
