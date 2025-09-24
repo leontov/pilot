@@ -23,7 +23,7 @@
 #define KOLIBRI_AI_LEARNING_DATA_DEFAULT "data/kolibri_ai_learning.jsonl"
 #endif
 
-static void formula_collection_reset_top(FormulaCollection* collection) {
+void formula_collection_reset_top(FormulaCollection* collection) {
     if (!collection) {
         return;
     }
@@ -33,7 +33,7 @@ static void formula_collection_reset_top(FormulaCollection* collection) {
     collection->best_count = 0;
 }
 
-static void formula_collection_consider_index(FormulaCollection* collection, size_t index) {
+void formula_collection_consider_index(FormulaCollection* collection, size_t index) {
     if (!collection || index >= collection->count) {
         return;
     }
@@ -75,7 +75,7 @@ static void formula_collection_consider_index(FormulaCollection* collection, siz
     }
 }
 
-static void formula_collection_recompute_top(FormulaCollection* collection) {
+void formula_collection_recompute_top(FormulaCollection* collection) {
     if (!collection) {
         return;
     }

@@ -26,6 +26,9 @@ Formula* formula_collection_find(FormulaCollection* collection, const char* id);
 size_t formula_collection_get_top(const FormulaCollection* collection,
                                   const Formula** out_formulas,
                                   size_t max_results);
+void formula_collection_reset_top(FormulaCollection* collection);
+void formula_collection_consider_index(FormulaCollection* collection, size_t index);
+void formula_collection_recompute_top(FormulaCollection* collection);
 
 // Text-based formula utilities.
 int get_formula_type(const char* content);
