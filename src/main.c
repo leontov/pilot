@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "blockchain.h"
 #include "fkv/fkv.h"
 #include "http/http_routes.h"

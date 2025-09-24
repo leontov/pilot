@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024 Кочуров Владислав Евгеньевич -->
+
 # Kolibri Ω
 
 Kolibri Ω is a numerical intelligence node built entirely around decimal programs and a compact execution runtime. This repository contains the first implementation stage (A) that provides the foundational components required to boot the node, execute decimal bytecode, and expose a minimal web/HTTP interface.

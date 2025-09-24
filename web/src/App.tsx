@@ -1,3 +1,5 @@
+// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { NotificationProvider } from "./components/NotificationCenter";
 import { ChainView } from "./views/ChainView";

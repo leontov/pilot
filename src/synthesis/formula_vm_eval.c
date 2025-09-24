@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "synthesis/formula_vm_eval.h"
 
 #include <ctype.h>

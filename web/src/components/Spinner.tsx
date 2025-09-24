@@ -1,3 +1,5 @@
+// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 import type { HTMLAttributes } from "react";
 
 export function Spinner({ className = "", ...rest }: HTMLAttributes<HTMLDivElement>) {

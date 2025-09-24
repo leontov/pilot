@@ -1,7 +1,10 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef FORMULA_H
 #define FORMULA_H
 
 #include "formula_core.h"
+#include "vm/vm.h"
 
 
 // High level categories used by legacy evaluators.
