@@ -1,7 +1,7 @@
 # Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
 CC ?= gcc
-CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
+CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -pthread
 
 
 LDFLAGS := -lpthread -lm -luuid -lcrypto -lcurl
@@ -21,11 +21,9 @@ SRC := \
   src/http/http_server.c \
   src/http/http_routes.c \
   src/blockchain.c \
-
   src/formula_runtime.c \
   src/synthesis/search.c \
-  src/synthesis/formula_vm_eval.c
-
+  src/synthesis/formula_vm_eval.c \
   src/formula_stub.c \
   src/protocol/swarm.c
 
@@ -35,9 +33,19 @@ TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/conf
 TEST_CONFIG_SRC := tests/unit/test_config.c src/util/config.c src/util/log.c
 
 TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c src/synthesis/search.c src/synthesis/formula_vm_eval.c src/vm/vm.c src/fkv/fkv.c
-
-TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c
 TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c
+TEST_HTTP_ROUTES_SRC := tests/unit/test_http_routes.c \
+  src/http/http_routes.c \
+  src/blockchain.c \
+  src/fkv/fkv.c \
+  src/vm/vm.c \
+  src/util/log.c \
+  src/util/config.c \
+  src/kolibri_ai.c \
+  src/formula_runtime.c \
+  src/synthesis/search.c \
+  src/synthesis/formula_vm_eval.c \
+  src/formula_stub.c
 
 
 
@@ -107,6 +115,14 @@ $(BUILD_DIR)/tests/unit/test_swarm_protocol: $(TEST_SWARM_PROTOCOL_SRC)
 	$(CC) $(CFLAGS) $(TEST_SWARM_PROTOCOL_SRC) -o $@ $(filter-out -ljson-c -luuid,$(LDFLAGS))
 
 test-swarm-protocol: $(BUILD_DIR)/tests/unit/test_swarm_protocol
+	$<
+
+$(BUILD_DIR)/tests/unit/test_http_routes: $(TEST_HTTP_ROUTES_SRC)
+	@mkdir -p $(BUILD_DIR)/tests/unit
+	$(CC) $(CFLAGS) $(TEST_HTTP_ROUTES_SRC) -o $@ $(LDFLAGS)
+
+
+test-http-routes: $(BUILD_DIR)/tests/unit/test_http_routes
 	$<
 
 bench: build

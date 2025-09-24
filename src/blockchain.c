@@ -125,7 +125,7 @@ double blockchain_score_formula(const Formula* formula, double* poe_out, double*
     return score;
 }
 
-static Formula* blockchain_clone_formula(const Formula* src) {
+__attribute__((unused)) static Formula* blockchain_clone_formula(const Formula* src) {
     if (!src) {
         return NULL;
     }

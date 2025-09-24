@@ -59,84 +59,89 @@ Initiate a decimal-first dialogue turn.
 ```
 
 ### POST /api/v1/vm/run
-Execute explicit Δ-VM bytecode.
+Execute explicit Δ-VM bytecode or compile a decimal expression on the fly.
 
 **Request**
 ```json
 {
   "program": "PUSHd 2; PUSHd 2; ADD10; HALT",
-  "input_stack": ["optional decimals"],
   "gas_limit": 1024
 }
 ```
 
+The field `program` may also be an array of opcode integers (0–255). When omitted the endpoint returns `400 bad_request`.
+
 **Response**
 ```json
 {
+  "status": "ok",
   "result": "4",
   "stack": ["4"],
-  "trace": { ... },
-  "gas_used": 4
+  "halted": true,
+  "steps": 4,
+  "gas_used": 4,
+  "program_source": "PUSHd 2; PUSHd 2; ADD10; HALT",
+  "trace": [
+    { "step": 0, "ip": 0, "opcode": 1, "stack_top": 2, "gas_left": 1024 },
+    { "step": 1, "ip": 1, "opcode": 1, "stack_top": 2, "gas_left": 1023 }
+  ]
 }
 ```
 
-Errors include `invalid_opcode`, `gas_exhausted`, `sandbox_violation`.
+Failures return the VM status in the `status` field (`invalid_opcode`, `div_by_zero`, `gas_exhausted`, …) while preserving a `200 OK` HTTP code.
 
 ### GET /api/v1/fkv/get
 Retrieve values matching a decimal prefix.
 
 **Query Parameters**
-* `prefix` (required): decimal namespace prefix, e.g. `S/geo/country/RU`.
+* `prefix` (required): decimal namespace prefix encoded as digits (e.g. `123`).
 * `limit` (optional): maximum entries to return (default 32).
 
 **Response**
 ```json
 {
   "values": [
-    { "key": "S/geo/country/RU", "value": "Москва", "poe": "0.99", "mdl": "8.1" }
+    { "key": "123", "value": "45" }
   ],
   "programs": [
-    { "program_id": "prog_12345", "score": "0.93" }
-  ],
-  "topk": [ ... ]
+    { "key": "880", "program": "987" }
+  ]
 }
 ```
 
+Missing prefixes return `400 bad_request`. Prefixes that match no entries respond with empty arrays and `200 OK`.
+
 ### POST /api/v1/program/submit
-Submit a candidate Δ-VM program for evaluation.
+Submit a candidate Δ-VM program for evaluation. The payload accepts either `program` (string or opcode array) or `bytecode` (opcode array). Unsupported payloads are rejected with `400 bad_request`.
 
 **Request**
 ```json
 {
-  "bytecode": "PUSHd 2; PUSHd 3; MUL10; HALT",
-  "metadata": {
-    "origin": "synthesis", "description": "multiply 2 and 3"
-  }
+  "program": "PUSHd 2; PUSHd 3; MUL10; HALT"
 }
 ```
 
 **Response**
 ```json
 {
-  "program_id": "prog_67890",
-  "poe": "0.95",
-  "mdl": "10.2",
-  "score": "0.71",
-  "accepted": true
+  "program_id": "program-42",
+  "poe": 0.94,
+  "mdl": 18.0,
+  "score": 0.76,
+  "accepted": true,
+  "vm_status": "ok"
 }
 ```
 
-On rejection the response includes `accepted: false` and `reasons: []` with MDL/PoE commentary.
+The endpoint stores accepted programs in-memory for later blockchain submission and updates the Kolibri AI library when available.
 
 ### POST /api/v1/chain/submit
-Publish a program ID for inclusion in the PoU blockchain.
+Publish a previously accepted program ID for inclusion in the PoU blockchain.
 
 **Request**
 ```json
 {
-  "program_id": "prog_67890",
-  "nonce": "123456",
-  "signature": "<Ed25519 signature>"
+  "program_id": "program-42"
 }
 ```
 
@@ -145,11 +150,14 @@ Publish a program ID for inclusion in the PoU blockchain.
 {
   "status": "accepted",
   "block_hash": "0009ABC...",
-  "height": 42
+  "height": 42,
+  "poe": 0.94,
+  "mdl": 18.0,
+  "score": 0.76
 }
 ```
 
-Failures may include `poe_below_threshold`, `invalid_signature`, `stale_parent`.
+If the program ID is unknown the server returns `404 not_found`. When the blockchain subsystem is not attached the endpoint returns `503 service_unavailable`.
 
 ### GET /api/v1/health
 Report readiness/liveness information.
