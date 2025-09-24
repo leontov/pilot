@@ -7,10 +7,10 @@
 #include <stdint.h>
 #include <time.h>
 
-#include "formula.h"
+#include "formula.h"           // Provides Formula and FormulaExperience.
 #include "formula_core.h"
 #include "synthesis/search.h"
-#include "synthesis/selfplay.h"
+#include "synthesis/selfplay.h"  // Provides KolibriSelfplayTask definition.
 #include "util/config.h"
 
 #ifdef __cplusplus

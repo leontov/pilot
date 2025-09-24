@@ -46,6 +46,7 @@
 - **Structure:** 10-ary trie with node buckets storing top-K (default 8) items sorted by PoE score. Nodes carry aggregated metrics (PoE mean, MDL delta, gas usage) and cross-links for sibling prefetching.
 - **APIs:**
   - `fkv_put(key, value, type, metadata)` — writes decimal-encoded value, updates PoE/MDL aggregates, returns `{version, gas_used}`.
+  - `fkv_put_scored(key, value, type, priority)` — injects explicit PoE/MDL composite score to steer top-K ranking per prefix.
   - `fkv_get_prefix(prefix, limit, type_filter)` — returns ordered list with latency target P95 < 10 ms and streaming pagination for long tails.
   - `fkv_topk_programs(prefix, k)` — fetches highest PoE procedural memories with optional freshness filter.
   - Admin endpoints: `fkv_compact`, `fkv_snapshot`, `fkv_stats` for observability and control.
@@ -69,7 +70,7 @@
 
 ## 5. HTTP API v1 & CLI
 - **Routes:**
-  - `GET /status` → node health, build hash, uptime, memory, peers, current KPI snapshot.
+  - `GET /status` → JSON payload with `uptime_ms`, F-KV root `topk_limit` + `root_entries[]` (digits + base64 payload), and embedded Kolibri AI planner metrics (`iterations`, `formula_count`, EMA scores). Served from the monitoring port (`http.port + 1000`).
   - `GET /metrics` → Prometheus exposition with VM/F-KV/Network counters.
   - `POST /run` → execute Δ-VM program; response includes `result`, `trace_url`, `gas_used`, `gas_limit`, `warnings[]`.
   - `POST /dialog` → conversation turn using VM-backed orchestrations with optional `context_id` for episodic threading.
