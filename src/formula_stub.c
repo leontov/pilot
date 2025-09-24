@@ -22,6 +22,17 @@ size_t formula_collection_get_top(const FormulaCollection *collection,
                                   const Formula **out_formulas,
                                   size_t max_results) WEAK_ATTR;
 
+static size_t stub_strnlen(const char *s, size_t max_len) {
+    size_t len = 0;
+    if (!s) {
+        return 0;
+    }
+    while (len < max_len && s[len] != '\0') {
+        ++len;
+    }
+    return len;
+}
+
 static void formula_copy_string(char *dest, size_t dest_size, const char *src) {
     if (!dest || dest_size == 0) {
         return;
@@ -30,7 +41,7 @@ static void formula_copy_string(char *dest, size_t dest_size, const char *src) {
         dest[0] = '\0';
         return;
     }
-    size_t len = strnlen(src, dest_size - 1);
+    size_t len = stub_strnlen(src, dest_size - 1);
     memcpy(dest, src, len);
     dest[len] = '\0';
 }
