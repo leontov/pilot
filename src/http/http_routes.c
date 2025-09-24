@@ -101,6 +101,25 @@ static void free_submitted_programs(void) {
     submitted_program_capacity = 0;
 }
 
+static const char *memmem_const(const char *haystack, size_t haystack_len, const char *needle, size_t needle_len) {
+    if (!haystack || !needle || needle_len == 0 || haystack_len < needle_len) {
+        return NULL;
+    }
+    for (size_t i = 0; i <= haystack_len - needle_len; ++i) {
+        if (memcmp(haystack + i, needle, needle_len) == 0) {
+            return haystack + i;
+        }
+    }
+    return NULL;
+}
+
+static const char *skip_ws(const char *ptr, const char *end) {
+    while (ptr < end && isspace((unsigned char)*ptr)) {
+        ++ptr;
+    }
+    return ptr;
+}
+
 static int parse_bytecode_count(const char *body, size_t body_len, size_t *out_count) {
     if (!body || !out_count) {
         return -1;
@@ -108,29 +127,44 @@ static int parse_bytecode_count(const char *body, size_t body_len, size_t *out_c
     if (body_len == 0) {
         body_len = strlen(body);
     }
-    const char *key_pos = strstr(body, "\"bytecode\"");
+    const char *end = body + body_len;
+    const char key[] = "\"bytecode\"";
+    const char *key_pos = memmem_const(body, body_len, key, sizeof(key) - 1);
     if (!key_pos) {
         return -1;
     }
-    const char *start = strchr(key_pos, '[');
-    if (!start) {
+    const char *ptr = key_pos + (sizeof(key) - 1);
+    ptr = skip_ws(ptr, end);
+    if (ptr >= end || *ptr != ':') {
         return -1;
     }
-    const char *end = strchr(start, ']');
-    if (!end || end <= start) {
+    ++ptr;
+    ptr = skip_ws(ptr, end);
+    if (ptr >= end || *ptr != '[') {
         return -1;
     }
+    ++ptr;
     size_t count = 0;
-    const char *ptr = start + 1;
+    int expect_value = 1;
     while (ptr < end) {
-        while (ptr < end && isspace((unsigned char)*ptr)) {
-            ++ptr;
-        }
+        ptr = skip_ws(ptr, end);
         if (ptr >= end) {
             break;
         }
-        if (*ptr == ',') {
+        if (*ptr == ']') {
+            if (expect_value && count == 0) {
+                return -1;
+            }
             ++ptr;
+            *out_count = count;
+            return 0;
+        }
+        if (!expect_value) {
+            if (*ptr != ',') {
+                return -1;
+            }
+            ++ptr;
+            expect_value = 1;
             continue;
         }
         if (!isdigit((unsigned char)*ptr)) {
@@ -140,17 +174,54 @@ static int parse_bytecode_count(const char *body, size_t body_len, size_t *out_c
             ++ptr;
         }
         ++count;
-        while (ptr < end && isspace((unsigned char)*ptr)) {
-            ++ptr;
-        }
-        if (ptr < end && *ptr == ',') {
-            ++ptr;
-        }
+        expect_value = 0;
     }
-    if (count == 0) {
-        return -1;
+    return -1;
+}
+
+static int json_unescape_into_buffer(const char *start,
+                                     const char *end,
+                                     char *out,
+                                     size_t out_len) {
+    size_t written = 0;
+    while (start < end) {
+        if (written + 1 >= out_len) {
+            return -1;
+        }
+        unsigned char ch = (unsigned char)*start++;
+        if (ch == '\\') {
+            if (start >= end) {
+                return -1;
+            }
+            unsigned char esc = (unsigned char)*start++;
+            switch (esc) {
+                case '"':
+                case '\\':
+                case '/':
+                    ch = esc;
+                    break;
+                case 'b':
+                    ch = '\b';
+                    break;
+                case 'f':
+                    ch = '\f';
+                    break;
+                case 'n':
+                    ch = '\n';
+                    break;
+                case 'r':
+                    ch = '\r';
+                    break;
+                case 't':
+                    ch = '\t';
+                    break;
+                default:
+                    return -1;
+            }
+        }
+        out[written++] = (char)ch;
     }
-    *out_count = count;
+    out[written] = '\0';
     return 0;
 }
 
@@ -161,33 +232,43 @@ static int extract_string_field(const char *body, size_t body_len, const char *k
     if (body_len == 0) {
         body_len = strlen(body);
     }
-    const char *key_pos = strstr(body, key);
+    const char *end = body + body_len;
+    size_t key_len = strlen(key);
+    const char *key_pos = memmem_const(body, body_len, key, key_len);
     if (!key_pos) {
         return -1;
     }
-    const char *colon = strchr(key_pos, ':');
-    if (!colon) {
-        return -1;
-    }
-    const char *ptr = colon + 1;
-    while (*ptr && isspace((unsigned char)*ptr)) {
-        ++ptr;
-    }
-    if (*ptr != '"') {
+    const char *ptr = key_pos + key_len;
+    ptr = skip_ws(ptr, end);
+    if (ptr >= end || *ptr != ':') {
         return -1;
     }
     ++ptr;
-    const char *end = strchr(ptr, '"');
-    if (!end) {
+    ptr = skip_ws(ptr, end);
+    if (ptr >= end || *ptr != '"') {
         return -1;
     }
-    size_t len = (size_t)(end - ptr);
-    if (len >= out_len) {
-        len = out_len - 1;
+    ++ptr;
+    const char *value_start = ptr;
+    while (ptr < end) {
+        if (*ptr == '\\') {
+            ++ptr;
+            if (ptr >= end) {
+                return -1;
+            }
+            ++ptr;
+            continue;
+        }
+        if (*ptr == '"') {
+            break;
+        }
+        ++ptr;
     }
-    memcpy(out, ptr, len);
-    out[len] = '\0';
-    return 0;
+    if (ptr >= end || *ptr != '"') {
+        return -1;
+    }
+    const char *value_end = ptr;
+    return json_unescape_into_buffer(value_start, value_end, out, out_len);
 }
 
 static int handle_health(http_response_t *resp) {
