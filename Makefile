@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Кочуров Владислав Евгеньевич
+# Copyright (c) 2025 Кочуров Владислав Евгеньевич
 
 CC ?= gcc
 
@@ -22,7 +22,6 @@ TARGET := $(BIN_DIR)/kolibri_node
 # удалён, поэтому список исходников соответствует актуальным модулям.
 SRC := \
     src/main.c \
-
     src/util/log.c \
     src/util/bench.c \
     src/util/config.c \
@@ -32,12 +31,11 @@ SRC := \
     src/kolibri_ai.c \
     src/http/http_server.c \
     src/http/http_routes.c \
-
+    src/http_status_server.c \
     src/blockchain.c \
     src/formula.c \
     src/formula_runtime.c \
     src/formula_stub.c \
-
     src/fkv/fkv.c \
     src/http/http_routes.c \
     src/http/http_server.c \
@@ -52,6 +50,7 @@ SRC := \
     src/util/log.c \
     src/vm/vm.c
     src/protocol/swarm.c
+
 
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)

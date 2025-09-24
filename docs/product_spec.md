@@ -70,7 +70,7 @@
 
 ## 5. HTTP API v1 & CLI
 - **Routes:**
-  - `GET /status` → node health, build hash, uptime, memory, peers, current KPI snapshot.
+  - `GET /status` → JSON payload with `uptime_ms`, F-KV root `topk_limit` + `root_entries[]` (digits + base64 payload), and embedded Kolibri AI planner metrics (`iterations`, `formula_count`, EMA scores). Served from the monitoring port (`http.port + 1000`).
   - `GET /metrics` → Prometheus exposition with VM/F-KV/Network counters.
   - `POST /run` → execute Δ-VM program; response includes `result`, `trace_url`, `gas_used`, `gas_limit`, `warnings[]`.
   - `POST /dialog` → conversation turn using VM-backed orchestrations with optional `context_id` for episodic threading.

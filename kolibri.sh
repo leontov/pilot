@@ -30,6 +30,7 @@ start_node() {
   "$NODE_BIN" >"$LOG_DIR/kolibri.log" 2>&1 &
   echo $! > "$PID_FILE"
   echo "Kolibri Ω node is running at http://localhost:9000"
+  echo "Status endpoint available at http://localhost:10000/status"
 }
 
 stop_node() {
