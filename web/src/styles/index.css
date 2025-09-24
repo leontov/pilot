@@ -232,6 +232,7 @@ body {
 .nav-link:focus-visible::after {
   opacity: 1;
   transform: scaleX(1);
+}
 
 .tab-navigation__button[aria-selected="true"] {
   background: var(--color-accent);
@@ -381,6 +382,7 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 16px;
+}
 
 .form-grid {
   display: grid;
@@ -791,6 +793,7 @@ body {
   background: color-mix(in srgb, var(--color-accent) 30%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
   color: var(--color-text);
+}
 
 .badge {
   display: inline-flex;
@@ -906,6 +909,7 @@ body {
 
 .faq-item[open] .faq-icon {
   transform: rotate(45deg);
+}
 
 .notification[data-type="success"] {
   border-color: color-mix(in srgb, var(--color-success) 45%, transparent);
@@ -963,6 +967,8 @@ body {
     flex-wrap: wrap;
     justify-content: center;
     text-align: center;
+  }
+}
 
 .segmented-control {
   display: inline-flex;
@@ -1428,21 +1434,19 @@ pre.output[aria-busy="true"]::after {
 }
 
 @media (max-width: 640px) {
-
   .landing-main {
     padding: 40px 20px 56px;
+  }
 
   .app-header {
     grid-template-columns: 1fr;
     align-items: stretch;
     gap: var(--space-md);
-
   }
 
   .landing-header {
     padding: 18px 20px;
   }
-
 
   .hero-cta {
     flex-direction: column;
@@ -1452,14 +1456,15 @@ pre.output[aria-busy="true"]::after {
   .cta-primary,
   .cta-secondary {
     width: 100%;
+  }
 
   .tab-navigation__list {
     overflow-x: auto;
     padding-bottom: 6px;
   }
+
   .tab-navigation__button {
     flex: 0 0 auto;
-
   }
 
   .metrics-grid {
