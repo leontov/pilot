@@ -145,7 +145,7 @@ static int compile_digits_sequence(const uint8_t *digits, size_t len, byte_buffe
         return -1;
     }
 
-    if (bb_push(bb, 0x0B) != 0) {
+    if (bb_push(bb, 0x12) != 0) {
         return -1;
     }
     return 0;

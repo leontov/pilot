@@ -21,6 +21,7 @@ static size_t safe_strnlen(const char *s, size_t max_len) {
 #define INITIAL_CAPACITY 16
 #define DIFFICULTY_TARGET "000" // Первые три символа должны быть нулями
 #define MAX_BLOCKCHAIN_SIZE 1000 // Максимальный размер блокчейна
+#define POU_MIN_POE_THRESHOLD 0.8
 
 static const char GENESIS_PREV_HASH[] =
     "0000000000000000000000000000000000000000000000000000000000000000";
@@ -125,10 +126,14 @@ double blockchain_score_formula(const Formula* formula, double* poe_out, double*
     return score;
 }
 
+
+__attribute__((unused)) static Formula* blockchain_clone_formula(const Formula* src) {
+
 #if defined(__GNUC__)
 __attribute__((unused))
 #endif
 static Formula* blockchain_clone_formula(const Formula* src) {
+
     if (!src) {
         return NULL;
     }
@@ -146,10 +151,84 @@ static Formula* blockchain_clone_formula(const Formula* src) {
     return clone;
 }
 
+static void blockchain_free_block(Block* block) {
+    if (!block) {
+        return;
+    }
+    if (block->owned_formulas) {
+        for (size_t j = 0; j < block->formula_count; ++j) {
+            formula_clear(&block->owned_formulas[j]);
+        }
+        free(block->owned_formulas);
+    }
+    free(block->formulas);
+    free(block);
+}
+
+static int blockchain_ensure_capacity(Blockchain* chain) {
+    if (!chain) {
+        return -1;
+    }
+    if (chain->block_count < chain->capacity) {
+        return 0;
+    }
+    size_t new_capacity = chain->capacity ? chain->capacity * 2 : INITIAL_CAPACITY;
+    Block** new_blocks = (Block**)realloc(chain->blocks, sizeof(Block*) * new_capacity);
+    if (!new_blocks) {
+        return -1;
+    }
+    chain->blocks = new_blocks;
+    chain->capacity = new_capacity;
+    return 0;
+}
+
+static Block* blockchain_clone_block(const Block* src) {
+    if (!src) {
+        return NULL;
+    }
+
+    Block* clone = (Block*)calloc(1, sizeof(Block));
+    if (!clone) {
+        return NULL;
+    }
+
+    clone->formula_count = src->formula_count;
+    if (clone->formula_count > 0) {
+        clone->formulas = (Formula**)calloc(clone->formula_count, sizeof(Formula*));
+        clone->owned_formulas = (Formula*)calloc(clone->formula_count, sizeof(Formula));
+        if (!clone->formulas || !clone->owned_formulas) {
+            blockchain_free_block(clone);
+            return NULL;
+        }
+        for (size_t i = 0; i < clone->formula_count; ++i) {
+            const Formula* src_formula = src->formulas[i];
+            if (src_formula) {
+                if (formula_copy(&clone->owned_formulas[i], src_formula) != 0) {
+                    blockchain_free_block(clone);
+                    return NULL;
+                }
+                clone->formulas[i] = &clone->owned_formulas[i];
+            }
+        }
+    }
+
+    memcpy(clone->prev_hash, src->prev_hash, sizeof(clone->prev_hash));
+    clone->timestamp = src->timestamp;
+    clone->nonce = src->nonce;
+    clone->poe_sum = src->poe_sum;
+    clone->poe_average = src->poe_average;
+    clone->mdl_sum = src->mdl_sum;
+    clone->mdl_average = src->mdl_average;
+    clone->score_sum = src->score_sum;
+    clone->score_average = src->score_average;
+
+    return clone;
+}
+
 Blockchain* blockchain_create(void) {
     Blockchain* chain = (Blockchain*)malloc(sizeof(Blockchain));
     if (!chain) return NULL;
-    
+
     chain->blocks = (Block**)malloc(sizeof(Block*) * INITIAL_CAPACITY);
     if (!chain->blocks) {
         free(chain);
@@ -164,18 +243,11 @@ Blockchain* blockchain_create(void) {
 
 bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
     if (!chain || !formulas || count == 0) return false;
-    
-    // Проверка необходимости расширения
-    if (chain->block_count >= chain->capacity) {
-        size_t new_capacity = chain->capacity * 2;
-        Block** new_blocks = (Block**)realloc(chain->blocks,
-                                            sizeof(Block*) * new_capacity);
-        if (!new_blocks) return false;
-        
-        chain->blocks = new_blocks;
-        chain->capacity = new_capacity;
+
+    if (blockchain_ensure_capacity(chain) != 0) {
+        return false;
     }
-    
+
     // Создание нового блока
     Block* block = (Block*)calloc(1, sizeof(Block));
     if (!block) return false;
@@ -201,13 +273,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 
         if (src) {
             if (formula_copy(dest, src) != 0) {
-                for (size_t j = 0; j < i; ++j) {
-                    formula_clear(&block->owned_formulas[j]);
-                }
-                formula_clear(dest);
-                free(block->owned_formulas);
-                free(block->formulas);
-                free(block);
+                blockchain_free_block(block);
                 return false;
             }
         }
@@ -252,14 +318,19 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
 
     // Установка времени создания
     block->timestamp = time(NULL);
-    
+
     // Получение предыдущего хэша
     if (chain->block_count > 0) {
         strcpy(block->prev_hash, blockchain_get_last_hash(chain));
     } else {
         strcpy(block->prev_hash, GENESIS_PREV_HASH);
     }
-    
+
+    if (block->poe_average < POU_MIN_POE_THRESHOLD) {
+        blockchain_free_block(block);
+        return false;
+    }
+
     // Майнинг блока (поиск подходящего nonce)
     char hash[65];
     block->nonce = 0;
@@ -267,7 +338,7 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
         block->nonce++;
         calculate_hash(block, hash);
     } while (strncmp(hash, DIFFICULTY_TARGET, strlen(DIFFICULTY_TARGET)) != 0);
-    
+
     // Добавление блока в цепочку
     chain->blocks[chain->block_count++] = block;
 
@@ -293,6 +364,10 @@ bool blockchain_verify(const Blockchain* chain) {
         calculate_hash(block, current_hash);
 
         if (strncmp(current_hash, DIFFICULTY_TARGET, strlen(DIFFICULTY_TARGET)) != 0) {
+            return false;
+        }
+
+        if (block->poe_average < POU_MIN_POE_THRESHOLD) {
             return false;
         }
 
@@ -331,22 +406,57 @@ void blockchain_destroy(Blockchain* chain) {
     if (!chain) return;
 
     for (size_t i = 0; i < chain->block_count; i++) {
-        Block* block = chain->blocks[i];
-        if (!block) {
-            continue;
-        }
-
-        if (block->owned_formulas) {
-            for (size_t j = 0; j < block->formula_count; ++j) {
-                formula_clear(&block->owned_formulas[j]);
-            }
-            free(block->owned_formulas);
-        }
-
-        free(block->formulas);
-        free(block);
+        blockchain_free_block(chain->blocks[i]);
     }
 
     free(chain->blocks);
     free(chain);
+}
+
+int blockchain_sync(Blockchain* dest, const Blockchain* src) {
+    if (!dest || !src) {
+        return -1;
+    }
+
+    if (dest->block_count > src->block_count) {
+        return -1;
+    }
+
+    size_t appended = 0;
+    for (size_t i = dest->block_count; i < src->block_count; ++i) {
+        const Block* src_block = src->blocks[i];
+        if (!src_block) {
+            return -1;
+        }
+        if (src_block->poe_average < POU_MIN_POE_THRESHOLD) {
+            return -1;
+        }
+
+        Block* clone = blockchain_clone_block(src_block);
+        if (!clone) {
+            return -1;
+        }
+
+        if (dest->block_count > 0) {
+            char prev_hash[65];
+            calculate_hash(dest->blocks[dest->block_count - 1], prev_hash);
+            if (strcmp(clone->prev_hash, prev_hash) != 0) {
+                blockchain_free_block(clone);
+                return -1;
+            }
+        } else if (strcmp(clone->prev_hash, GENESIS_PREV_HASH) != 0) {
+            blockchain_free_block(clone);
+            return -1;
+        }
+
+        if (blockchain_ensure_capacity(dest) != 0) {
+            blockchain_free_block(clone);
+            return -1;
+        }
+
+        dest->blocks[dest->block_count++] = clone;
+        appended++;
+    }
+
+    return (int)appended;
 }

@@ -27,8 +27,12 @@ Key subsystems delivered in this milestone:
 
 * **Δ-VM v2** – A decimal stack virtual machine with the initial opcode set (PUSHd–RET) and deterministic execution limits.
 * **Fractal KV (F-KV)** – An in-memory decimal trie with prefix lookup. Persistence hooks and compression points are stubbed for later milestones.
+
+* **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/vm/run`, `/api/v1/dialog`, `/api/v1/fkv/get`, `/api/v1/program/submit`, and `/api/v1/chain/submit`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
+
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/dialog`, `/api/v1/vm/run`, `/api/v1/fkv/get`, `/api/v1/program/submit`, and `/api/v1/chain/submit`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/metrics`, `/api/v1/vm/run`, `/api/v1/dialog`, and `/api/v1/fkv/get`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
+
 * **Web Studio** – Lightweight Vite + TypeScript SPA that connects to the HTTP API and renders console-style panels for dialog, VM trace, and memory previews.
 * **Runtime entrypoint** – `src/main.c` is the only native launcher; it wires VM execution, F-KV storage, Kolibri AI orchestration, and HTTP routing. The legacy UDP prototype from `src/kolibri_node_v1.c` has been removed to keep the build aligned with the current subsystems.【F:src/main.c†L1-L118】【F:CMakeLists.txt†L24-L41】
 
@@ -114,7 +118,11 @@ Requests to `/api/v1/fkv/get` or the CLI will surface entries in recency order b
 make test
 ```
 
+
+Unit tests cover the Δ-VM arithmetic instructions, the F-KV prefix lookup, and the HTTP routing surface (VM execution, memory reads, program submission, blockchain wiring).
+
 Unit tests cover the Δ-VM arithmetic instructions, the F-KV prefix lookup, and the HTTP routing layer (`make test-http-routes`).
+
 
 ## Roadmap
 
@@ -130,3 +138,16 @@ For investor-grade demonstrations and product validation scenarios, consult [`do
 * [Whitepaper](docs/whitepaper.md) – full architecture and research narrative for the decimal-first intelligence stack.
 * [HTTP API Specification](docs/api_spec.md) – endpoint catalogue, payload schemas, and operational policies for `/api/v1`.
 * [Technical overview](docs/architecture.md) – subsystem walkthrough linking source code and configuration surfaces.
+* [macOS application plan](docs/macos_app_plan.md) – scope and milestones for the native Kolibri Ω desktop companion.
+
+### macOS companion app
+
+An investor-friendly SwiftUI client lives in [`macos/KolibriOmegaApp`](macos/KolibriOmegaApp). The project is a Swift Package executable target that can be compiled into a `.app` bundle on macOS 13+:
+
+```
+cd macos/KolibriOmegaApp
+swift build --configuration release
+open .build/release/KolibriOmegaApp.app
+```
+
+The app ships with bundled mock data so it can demonstrate the dashboard, health monitor, dialog console, and F-KV explorer even when a Kolibri Ω node is not running locally. Point the client to a live node by updating `AppConfiguration.apiBaseURL`.
