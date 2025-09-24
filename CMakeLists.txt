@@ -48,6 +48,8 @@ set(SOURCES
         src/blockchain.c
         src/formula.c
         src/synthesis/search.c
+        src/protocol/swarm.c
+        src/protocol/swarm_node.c
 )
 
 # Создание исполняемого файла

@@ -10,6 +10,7 @@
 #include "http/http_server.h"
 #include "kolibri_ai.h"
 #include "synthesis/formula_vm_eval.h"
+#include "protocol/swarm_node.h"
 #include "util/config.h"
 #include "util/bench.h"
 #include "util/log.h"
@@ -1335,6 +1336,27 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    SwarmNode *swarm_node = NULL;
+    int swarm_thread_started = 0;
+    SwarmNodeOptions swarm_opts;
+    memset(&swarm_opts, 0, sizeof(swarm_opts));
+    uint64_t node_seed = cfg.seed ? cfg.seed : (uint64_t)time(NULL);
+    node_seed %= 10000000000000000ull;
+    snprintf(swarm_opts.node_id, sizeof(swarm_opts.node_id), "%016" PRIu64, node_seed);
+    swarm_opts.version = (uint16_t)SWARM_PROTOCOL_VERSION;
+    swarm_opts.services = 7; // HTTP + VM + F-KV
+    swarm_node = swarm_node_create(&swarm_opts);
+    if (swarm_node) {
+        if (swarm_node_start(swarm_node) == 0) {
+            swarm_thread_started = 1;
+            log_info("swarm runtime started for peer %s", swarm_opts.node_id);
+        } else {
+            log_warn("swarm runtime thread failed to start");
+        }
+    } else {
+        log_warn("swarm runtime initialization failed");
+    }
+
     KolibriAI *http_ai = kolibri_ai_create(&cfg);
     if (http_ai) {
         KolibriAISelfplayConfig sp = {
@@ -1359,6 +1381,12 @@ int main(int argc, char **argv) {
             kolibri_ai_destroy(http_ai);
             http_routes_set_ai(NULL);
         }
+        if (swarm_thread_started) {
+            swarm_node_stop(swarm_node);
+        }
+        if (swarm_node) {
+            swarm_node_destroy(swarm_node);
+        }
         fkv_shutdown();
         if (log_fp) {
             fclose(log_fp);
@@ -1371,6 +1399,12 @@ int main(int argc, char **argv) {
     }
 
     http_server_stop();
+    if (swarm_thread_started) {
+        swarm_node_stop(swarm_node);
+    }
+    if (swarm_node) {
+        swarm_node_destroy(swarm_node);
+    }
     if (http_ai) {
         kolibri_ai_stop(http_ai);
         kolibri_ai_destroy(http_ai);
