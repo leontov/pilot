@@ -567,7 +567,6 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [autoReplyIndex, setAutoReplyIndex] = useState(0);
-  const [activeTab, setActiveTab] = useState<TabId>(tabs[0].id);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -592,10 +591,6 @@ export default function App() {
   }, []);
 
   const content = useMemo(() => copy[language], [language]);
-  const active = useMemo(
-    () => tabs.find((tab) => tab.id === activeTab) ?? tabs[0],
-    [activeTab],
-  );
 
   const themeToggleLabel =
     theme === "light"
@@ -899,6 +894,22 @@ export default function App() {
                 aria-label={themeToggleLabel}
               >
                 {themeToggleText}
+              </button>
+              <button
+                type="button"
+                className="language-option"
+                aria-pressed={language === "en"}
+                onClick={() => switchLanguage("en")}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                className="language-option"
+                aria-pressed={language === "ru"}
+                onClick={() => switchLanguage("ru")}
+              >
+                Русский
               </button>
             </div>
           </header>
