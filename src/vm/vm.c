@@ -75,12 +75,12 @@ static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
     if (!digits || !len || *len == 0) {
         return -1;
     }
+
     if (value < 0) {
         return -1;
     }
 
     size_t capacity = *len;
-    size_t count = 0;
     if (value == 0) {
         if (capacity < 1) {
             return -1;
@@ -90,20 +90,17 @@ static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
         return 0;
     }
 
+    size_t pos = capacity;
     while (value > 0) {
-        if (count >= capacity) {
+        if (pos == 0) {
             return -1;
         }
-        digits[count++] = (uint8_t)(value % 10);
+        digits[--pos] = (uint8_t)(value % 10);
         value /= 10;
     }
 
-    for (size_t i = 0; i < count / 2; ++i) {
-        uint8_t tmp = digits[i];
-        digits[i] = digits[count - 1 - i];
-        digits[count - 1 - i] = tmp;
-    }
-
+    size_t count = capacity - pos;
+    memmove(digits, digits + pos, count);
     *len = count;
     return 0;
 }
