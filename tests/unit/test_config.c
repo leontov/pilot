@@ -36,14 +36,41 @@ static void test_config_valid(void) {
         "  // http configuration\n"
         "  \"http\": {\n"
         "    \"host\": \"127.0.0.1\",\n"
-        "    \"port\": 8080 /* comment */\n"
+        "    \"port\": 8080,\n"
+        "    \"port\": 9090, // duplicate should be ignored\n"
+        "    \"max_body_size\": 65536\n"
         "  },\n"
         "  \"vm\": {\n"
         "    \"max_steps\": 4096,\n"
         "    \"max_stack\": 256,\n"
-        "    \"trace_depth\": 32\n"
+        "    \"trace_depth\": 32,\n"
+        "    \"max_stack\": 1024 // duplicate ignored\n"
         "  },\n"
-        "  \"seed\": 777\n"
+        "  \"fkv\": {\n"
+        "    \"top_k\": 10,\n"
+        "    \"top_k\": 20\n"
+        "  },\n"
+        "  \"ai\": {\n"
+        "    \"snapshot_path\": \"data/custom_snapshot.json\",\n"
+        "    \"snapshot_path\": \"data/ignored.json\",\n"
+        "    \"snapshot_limit\": 4096\n"
+        "  },\n"
+        "  \"selfplay\": {\n"
+        "    \"tasks_per_iteration\": 16,\n"
+        "    \"tasks_per_iteration\": 32,\n"
+        "    \"max_difficulty\": 5\n"
+        "  },\n"
+        "  \"search\": {\n"
+        "    \"max_candidates\": 32,\n"
+        "    \"max_candidates\": 64,\n"
+        "    \"max_terms\": 12,\n"
+        "    \"max_coefficient\": 7,\n"
+        "    \"max_formula_length\": 48,\n"
+        "    \"base_effectiveness\": 0.75,\n"
+        "    \"base_effectiveness\": 0.1\n"
+        "  },\n"
+        "  \"seed\": 777,\n"
+        "  \"seed\": 555\n"
         "}\n";
 
     char *path = write_temp_file(content);
@@ -52,9 +79,20 @@ static void test_config_valid(void) {
     assert(config_load(path, &cfg) == 0);
     assert(strcmp(cfg.http.host, "127.0.0.1") == 0);
     assert(cfg.http.port == 8080);
+    assert(cfg.http.max_body_size == 65536);
     assert(cfg.vm.max_steps == 4096);
     assert(cfg.vm.max_stack == 256);
     assert(cfg.vm.trace_depth == 32);
+    assert(cfg.fkv.top_k == 10);
+    assert(strcmp(cfg.ai.snapshot_path, "data/custom_snapshot.json") == 0);
+    assert(cfg.ai.snapshot_limit == 4096);
+    assert(cfg.selfplay.tasks_per_iteration == 16);
+    assert(cfg.selfplay.max_difficulty == 5);
+    assert(cfg.search.max_candidates == 32);
+    assert(cfg.search.max_terms == 12);
+    assert(cfg.search.max_coefficient == 7);
+    assert(cfg.search.max_formula_length == 48);
+    assert(cfg.search.base_effectiveness == 0.75);
     assert(cfg.seed == 777);
     remove_temp_file(path);
 }

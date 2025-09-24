@@ -15,6 +15,14 @@
 #include <json-c/json.h>
 #include <stdint.h>
 
+#ifndef KOLIBRI_AI_LEARNING_DATA_ENV
+#define KOLIBRI_AI_LEARNING_DATA_ENV "KOLIBRI_AI_LEARNING_DATA"
+#endif
+
+#ifndef KOLIBRI_AI_LEARNING_DATA_DEFAULT
+#define KOLIBRI_AI_LEARNING_DATA_DEFAULT "data/kolibri_learning.jsonl"
+#endif
+
 static void formula_collection_reset_top(FormulaCollection* collection) {
     if (!collection) {
         return;
@@ -652,6 +660,10 @@ FormulaTrainingPipeline* formula_training_pipeline_create(size_t capacity) {
     pipeline->candidates.capacity = capacity;
     pipeline->candidates.count = 0;
     formula_training_metrics_reset(&pipeline->metrics);
+    pipeline->search_config = formula_search_config_default();
+    pipeline->mutation_config = formula_mutation_config_default();
+    pipeline->planner_config = formula_mcts_config_default();
+    pipeline->score_weights = formula_score_weights_default();
 
     return pipeline;
 }
@@ -930,6 +942,16 @@ void formula_training_pipeline_set_search_config(FormulaTrainingPipeline* pipeli
     } else {
         pipeline->search_config = formula_search_config_default();
     }
+
+    FormulaMutationConfig defaults = formula_mutation_config_default();
+    uint32_t limit = pipeline->search_config.max_candidates;
+    if (limit == 0) {
+        limit = defaults.max_mutations;
+    }
+    pipeline->mutation_config.max_mutations = limit;
+    if (pipeline->mutation_config.max_adjustment == 0) {
+        pipeline->mutation_config.max_adjustment = defaults.max_adjustment;
+    }
 }
 
 static void formula_training_pipeline_reset_candidates(FormulaTrainingPipeline* pipeline) {
@@ -1030,6 +1052,18 @@ static void formula_training_pipeline_add_from_search(FormulaTrainingPipeline* p
     };
 
     formula_search_enumerate(library, snapshot, &config, pipeline_search_emit, &ctx);
+
+    if (ctx.remaining > 0) {
+        FormulaMutationConfig mutation = pipeline->mutation_config;
+        if (mutation.max_mutations == 0 || mutation.max_mutations > ctx.remaining) {
+            mutation.max_mutations = (uint32_t)ctx.remaining;
+        }
+        formula_search_mutate(library,
+                               snapshot,
+                               &mutation,
+                               pipeline_search_emit,
+                               &ctx);
+    }
 }
 
 int formula_training_pipeline_prepare(FormulaTrainingPipeline* pipeline,
@@ -1145,6 +1179,7 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
     if (!pipeline) {
         return -1;
     }
+    (void)library;
 
     double preserved_mlp_loss = pipeline->metrics.last_mlp_loss;
     double preserved_transformer_loss = pipeline->metrics.last_transformer_loss;
@@ -1202,24 +1237,34 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
 
         double reward = 0.0;
         double accuracy = 0.0;
+        double combined_poe = 0.0;
+        double runtime_norm = 0.0;
         if (eval_rc == 0 && vm_out.status == VM_OK) {
-            double base = 0.6 * poe + 0.4 * dataset_score;
-            double penalty = 0.2 * mdl;
-            reward = fmax(0.0, fmin(1.0, base - penalty));
-            accuracy = (valid_targets > 0) ? best_dataset_score : poe;
+            combined_poe = (valid_targets > 0)
+                               ? (0.7 * poe + 0.3 * dataset_score)
+                               : poe;
+            runtime_norm = (double)vm_out.steps / 256.0;
+            double score = formula_search_compute_score(&pipeline->score_weights,
+                                                        combined_poe,
+                                                        mdl,
+                                                        runtime_norm,
+                                                        0.0);
+            reward = score;
+            accuracy = (valid_targets > 0) ? best_dataset_score : combined_poe;
         } else {
-            poe = 0.0;
+            combined_poe = 0.0;
             mdl = 1.0;
+            runtime_norm = 1.0;
         }
 
         double imitation = compute_memory_alignment(hypothesis, &pipeline->memory_snapshot);
-        double success = poe > 0.5 ? 1.0 : reward;
+        double success = reward > 0.6 ? 1.0 : reward;
 
         hypothesis->experience.reward = reward;
         hypothesis->experience.imitation_score = imitation;
         hypothesis->experience.accuracy = fmax(0.0, accuracy);
         hypothesis->experience.loss = fmax(0.0, 1.0 - reward);
-        hypothesis->experience.poe = poe;
+        hypothesis->experience.poe = combined_poe;
         hypothesis->experience.mdl = mdl;
         if (best_entry) {
             strncpy(hypothesis->experience.task_id,
@@ -1231,10 +1276,6 @@ int formula_training_pipeline_evaluate(FormulaTrainingPipeline* pipeline,
         }
 
         hypothesis->formula.effectiveness = reward;
-
-        if (library && poe > 0.55 && reward > 0.25) {
-            formula_collection_add(library, &hypothesis->formula);
-        }
 
         total_reward += reward;
         total_imitation += imitation;
