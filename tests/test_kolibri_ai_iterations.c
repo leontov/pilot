@@ -69,6 +69,9 @@ typedef struct {
 typedef struct {
     double average_reward;
     size_t formula_count;
+    size_t queue_depth;
+    size_t dataset_size;
+    double curriculum_temperature;
 } AISnapshot;
 
 static double parse_json_double(const char *json, const char *needle) {
@@ -93,6 +96,12 @@ static AISnapshot capture_ai_snapshot(KolibriAI *ai) {
         parse_json_double(state, "\"average_reward\":");
     snapshot.formula_count =
         parse_json_size(state, "\"formula_count\":");
+    snapshot.queue_depth =
+        parse_json_size(state, "\"queue_depth\":");
+    snapshot.dataset_size =
+        parse_json_size(state, "\"dataset_size\":");
+    snapshot.curriculum_temperature =
+        parse_json_double(state, "\"curriculum_temperature\":");
     free(state);
     return snapshot;
 }
@@ -148,6 +157,14 @@ int main(void) {
     KolibriAI *ai = kolibri_ai_create(NULL);
     assert(ai != NULL);
 
+    kolibri_config_t quiet_cfg = {0};
+    quiet_cfg.search = formula_search_config_default();
+    quiet_cfg.search.max_candidates = 0;
+    quiet_cfg.selfplay.tasks_per_iteration = 0;
+    quiet_cfg.selfplay.max_difficulty = 0;
+    quiet_cfg.ai.snapshot_limit = 128;
+    kolibri_ai_apply_config(ai, &quiet_cfg);
+
     FormulaTrainingPipeline *pipeline = formula_training_pipeline_create(4);
     assert(pipeline != NULL);
 
@@ -161,6 +178,10 @@ int main(void) {
     AISnapshot baseline = capture_ai_snapshot(ai);
     double previous_ai_average = baseline.average_reward;
     size_t previous_formula_count = baseline.formula_count;
+    assert(baseline.curriculum_temperature > 0.0);
+    assert(baseline.dataset_size <= quiet_cfg.ai.snapshot_limit);
+    assert(baseline.queue_depth <= quiet_cfg.selfplay.tasks_per_iteration +
+                                      quiet_cfg.search.max_candidates + 8);
     double previous_pipeline_average = 0.0;
     double previous_success_rate = 0.0;
 
@@ -176,6 +197,8 @@ int main(void) {
 
         assert(snapshot.formula_count == previous_formula_count + 1);
         assert(snapshot.average_reward - previous_ai_average > EPSILON);
+        assert(snapshot.curriculum_temperature > 0.0);
+        assert(snapshot.dataset_size <= quiet_cfg.ai.snapshot_limit);
         assert(pipeline->metrics.average_reward - previous_pipeline_average > EPSILON);
         assert(pipeline->metrics.success_rate - previous_success_rate > EPSILON);
 
@@ -191,5 +214,101 @@ int main(void) {
 
     formula_training_pipeline_destroy(pipeline);
     kolibri_ai_destroy(ai);
+
+    kolibri_config_t auto_cfg = {0};
+    auto_cfg.search = formula_search_config_default();
+    auto_cfg.search.max_candidates = 3;
+    auto_cfg.selfplay.tasks_per_iteration = 4;
+    auto_cfg.selfplay.max_difficulty = 3;
+    auto_cfg.ai.snapshot_limit = 64;
+    auto_cfg.seed = 1337;
+
+    KolibriAI *auto_ai = kolibri_ai_create(&auto_cfg);
+    assert(auto_ai != NULL);
+
+    char *baseline_state = kolibri_ai_serialize_state(auto_ai);
+    assert(baseline_state != NULL);
+    size_t baseline_formulas =
+        parse_json_size(baseline_state, "\"formula_count\":");
+    double baseline_reward =
+        parse_json_double(baseline_state, "\"average_reward\":");
+    free(baseline_state);
+
+    for (size_t iter = 0; iter < 12; ++iter) {
+        kolibri_ai_process_iteration(auto_ai);
+    }
+
+    char *post_state = kolibri_ai_serialize_state(auto_ai);
+    assert(post_state != NULL);
+    size_t evolved_formulas =
+        parse_json_size(post_state, "\"formula_count\":");
+    double evolved_reward =
+        parse_json_double(post_state, "\"average_reward\":");
+    size_t evolved_queue =
+        parse_json_size(post_state, "\"queue_depth\":");
+    double evolved_temp =
+        parse_json_double(post_state, "\"curriculum_temperature\":");
+    free(post_state);
+
+    assert(evolved_formulas >= baseline_formulas);
+    assert(evolved_reward + EPSILON >= baseline_reward);
+    assert(evolved_queue < 32);
+    assert(evolved_temp > 0.0 && evolved_temp < 2.0);
+
+    KolibriAISelfplayInteraction log_buffer[128];
+    size_t logged = kolibri_ai_get_interaction_log(auto_ai, log_buffer, 128);
+    assert(logged > 3);
+
+    size_t split = logged / 2;
+    if (split == 0) {
+        split = 1;
+    }
+    size_t tail = logged - split;
+    if (tail == 0) {
+        tail = 1;
+    }
+
+    double first_avg = 0.0;
+    for (size_t i = 0; i < split; ++i) {
+        first_avg += log_buffer[i].reward;
+    }
+    first_avg /= (double)split;
+
+    double second_avg = 0.0;
+    for (size_t i = split; i < logged; ++i) {
+        second_avg += log_buffer[i].reward;
+    }
+    second_avg /= (double)tail;
+    assert(second_avg + 1e-6 >= first_avg);
+
+    double log_avg = 0.0;
+    double max_reward = 0.0;
+    for (size_t i = 0; i < logged; ++i) {
+        log_avg += log_buffer[i].reward;
+        if (log_buffer[i].reward > max_reward) {
+            max_reward = log_buffer[i].reward;
+        }
+    }
+    log_avg /= (double)logged;
+    assert(max_reward + 1e-6 >= 0.6);
+
+    double max_error = 0.0;
+    double replay_avg = 0.0;
+    assert(kolibri_ai_replay_log(auto_ai, &max_error, &replay_avg) == 0);
+    assert(max_error < 1e-6);
+    assert(fabs(replay_avg - log_avg) < 1e-6);
+
+    char *snapshot = kolibri_ai_export_snapshot(auto_ai);
+    assert(snapshot != NULL);
+    KolibriAI *replica = kolibri_ai_create(&auto_cfg);
+    assert(replica != NULL);
+    assert(kolibri_ai_import_snapshot(replica, snapshot) == 0);
+    char *roundtrip = kolibri_ai_export_snapshot(replica);
+    assert(roundtrip != NULL);
+    assert(strcmp(snapshot, roundtrip) == 0);
+    free(snapshot);
+    free(roundtrip);
+    kolibri_ai_destroy(replica);
+    kolibri_ai_destroy(auto_ai);
     return 0;
 }

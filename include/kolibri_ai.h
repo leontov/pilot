@@ -93,6 +93,13 @@ int kolibri_ai_apply_reinforcement(KolibriAI *ai,
                                    const Formula *formula,
                                    const FormulaExperience *experience);
 
+size_t kolibri_ai_get_interaction_log(const KolibriAI *ai,
+                                      KolibriAISelfplayInteraction *buffer,
+                                      size_t max_entries);
+int kolibri_ai_replay_log(KolibriAI *ai,
+                          double *out_max_abs_error,
+                          double *out_average_reward);
+
 int kolibri_ai_add_formula(KolibriAI *ai, const Formula *formula);
 Formula *kolibri_ai_get_best_formula(KolibriAI *ai);
 
