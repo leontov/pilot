@@ -72,20 +72,7 @@ static int push(int64_t *stack, size_t *sp, size_t max_stack, int64_t v) {
 }
 
 static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
-    if (!digits || !len || *len == 0) {
-        return -1;
-    }
-
-    size_t n = (size_t)written;
-    if (n >= sizeof(buf) || n > *len) {
-
-        return -1;
-    }
-    for (size_t i = 0; i < n; ++i) {
-        if (buf[i] < '0' || buf[i] > '9') {
-
-    if (value < 0) {
-
+    if (!digits || !len || *len == 0 || value < 0) {
         return -1;
     }
 
@@ -93,7 +80,6 @@ static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
     size_t count = 0;
     if (value == 0) {
         if (capacity < 1) {
-
             return -1;
         }
         digits[0] = 0;
