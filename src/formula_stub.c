@@ -22,6 +22,19 @@ size_t formula_collection_get_top(const FormulaCollection *collection,
                                   const Formula **out_formulas,
                                   size_t max_results) WEAK_ATTR;
 
+static void formula_copy_string(char *dest, size_t dest_size, const char *src) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+    if (!src) {
+        dest[0] = '\0';
+        return;
+    }
+    size_t len = strnlen(src, dest_size - 1);
+    memcpy(dest, src, len);
+    dest[len] = '\0';
+}
+
 void formula_clear(Formula *formula) {
     if (!formula) {
         return;
@@ -52,8 +65,7 @@ int formula_copy(Formula *dest, const Formula *src) {
     dest->type = src->type;
 
     if (src->representation == FORMULA_REPRESENTATION_TEXT) {
-        strncpy(dest->content, src->content, sizeof(dest->content) - 1);
-        dest->content[sizeof(dest->content) - 1] = '\0';
+        formula_copy_string(dest->content, sizeof(dest->content), src->content);
     } else if (src->representation == FORMULA_REPRESENTATION_ANALYTIC) {
         dest->coeff_count = src->coeff_count;
         if (src->coeff_count > 0 && src->coefficients) {

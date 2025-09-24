@@ -6,13 +6,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "formula_core.h"
+#include "formula.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-struct FormulaMemorySnapshot;
 
 typedef struct {
     uint32_t max_candidates;
@@ -27,7 +25,7 @@ FormulaSearchConfig formula_search_config_default(void);
 typedef int (*formula_search_emit_fn)(const Formula *formula, void *user_data);
 
 size_t formula_search_enumerate(const FormulaCollection *library,
-                                const struct FormulaMemorySnapshot *memory,
+                                const FormulaMemorySnapshot *memory,
                                 const FormulaSearchConfig *config,
                                 formula_search_emit_fn emit,
                                 void *user_data);
