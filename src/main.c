@@ -139,6 +139,7 @@ static int digits_from_number(uint64_t value, uint8_t *out, size_t capacity, siz
 }
 
 static int try_evaluate_expression(const kolibri_config_t *cfg,
+                                   vm_scheduler_t *scheduler,
                                    const char *input,
                                    uint64_t *out_value,
                                    uint32_t *out_steps) {
@@ -163,6 +164,7 @@ static int try_evaluate_expression(const kolibri_config_t *cfg,
     }
     free(digits);
 
+    prog_t prog = {.code = bytecode, .len = bytecode_len};
     vm_limits_t limits = {0};
     if (cfg) {
         limits.max_steps = cfg->vm.max_steps ? cfg->vm.max_steps : 256u;
@@ -172,12 +174,36 @@ static int try_evaluate_expression(const kolibri_config_t *cfg,
         limits.max_stack = 64u;
     }
 
-    prog_t prog = {.code = bytecode, .len = bytecode_len};
     vm_result_t result = {0};
-    vm_run(&prog, &limits, NULL, &result);
+    int rc = -1;
+
+    if (scheduler) {
+        vm_context_t *ctx = NULL;
+        if (vm_scheduler_spawn(scheduler, &prog, &limits, 1, NULL, &result, &ctx) != 0) {
+            free(bytecode);
+            return -1;
+        }
+        while (!vm_context_finished(ctx)) {
+            if (vm_scheduler_step(scheduler) != 0) {
+                vm_scheduler_release(scheduler, ctx);
+                free(bytecode);
+                return -1;
+            }
+        }
+        vm_status_t status = vm_context_status(ctx);
+        vm_scheduler_release(scheduler, ctx);
+        if (status == VM_OK) {
+            rc = 0;
+        }
+    } else {
+        if (vm_run(&prog, &limits, NULL, &result) == 0 && result.status == VM_OK) {
+            rc = 0;
+        }
+    }
+
     free(bytecode);
 
-    if (result.status != VM_OK) {
+    if (rc != 0) {
         return -1;
     }
 
@@ -244,6 +270,19 @@ static int run_chat(const kolibri_config_t *cfg) {
         kolibri_ai_start(ai);
     }
 
+    vm_scheduler_t scheduler;
+    if (vm_scheduler_init(&scheduler,
+                          cfg ? cfg->vm.stack_pool_size : 4,
+                          cfg ? cfg->vm.max_stack : 128,
+                          cfg ? cfg->vm.gas_quantum : 64,
+                          cfg ? cfg->vm.max_contexts : 0) != 0) {
+        log_error("failed to initialize VM scheduler for CLI");
+        if (ai) {
+            kolibri_ai_destroy(ai);
+        }
+        return -1;
+    }
+
     printf("Kolibri CLI чат. Введите арифметику или задайте вопрос. 'exit' для выхода.\n");
 
     char *line = NULL;
@@ -269,7 +308,7 @@ static int run_chat(const kolibri_config_t *cfg) {
 
         uint64_t value = 0;
         uint32_t steps = 0;
-        if (try_evaluate_expression(cfg, line, &value, &steps) == 0) {
+        if (try_evaluate_expression(cfg, &scheduler, line, &value, &steps) == 0) {
             exchange_id++;
             uint8_t key_digits[32];
             size_t key_len = 0;
@@ -304,6 +343,7 @@ static int run_chat(const kolibri_config_t *cfg) {
     if (ai) {
         kolibri_ai_destroy(ai);
     }
+    vm_scheduler_destroy(&scheduler);
     return 0;
 }
 
@@ -355,11 +395,26 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    vm_scheduler_t scheduler;
+    if (vm_scheduler_init(&scheduler,
+                          cfg.vm.stack_pool_size,
+                          cfg.vm.max_stack,
+                          cfg.vm.gas_quantum,
+                          cfg.vm.max_contexts) != 0) {
+        log_error("failed to initialize VM scheduler");
+        fkv_shutdown();
+        if (log_fp) {
+            fclose(log_fp);
+        }
+        return 1;
+    }
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
-    if (http_server_start(&cfg) != 0) {
+    if (http_server_start(&cfg, &scheduler) != 0) {
         log_error("failed to start HTTP server");
+        vm_scheduler_destroy(&scheduler);
         fkv_shutdown();
         if (log_fp) {
             fclose(log_fp);
@@ -372,6 +427,7 @@ int main(int argc, char **argv) {
     }
 
     http_server_stop();
+    vm_scheduler_destroy(&scheduler);
     fkv_shutdown();
     if (log_fp) {
         fclose(log_fp);

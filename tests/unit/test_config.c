@@ -41,7 +41,10 @@ static void test_config_valid(void) {
         "  \"vm\": {\n"
         "    \"max_steps\": 4096,\n"
         "    \"max_stack\": 256,\n"
-        "    \"trace_depth\": 32\n"
+        "    \"trace_depth\": 32,\n"
+        "    \"gas_quantum\": 32,\n"
+        "    \"stack_pool_size\": 2,\n"
+        "    \"max_contexts\": 4\n"
         "  },\n"
         "  \"seed\": 777\n"
         "}\n";
@@ -55,6 +58,9 @@ static void test_config_valid(void) {
     assert(cfg.vm.max_steps == 4096);
     assert(cfg.vm.max_stack == 256);
     assert(cfg.vm.trace_depth == 32);
+    assert(cfg.vm.gas_quantum == 32);
+    assert(cfg.vm.stack_pool_size == 2);
+    assert(cfg.vm.max_contexts == 4);
     assert(cfg.seed == 777);
     remove_temp_file(path);
 }
@@ -79,6 +85,9 @@ static void test_config_missing_field(void) {
     assert(cfg.vm.max_steps == 2048);
     assert(cfg.vm.max_stack == 128);
     assert(cfg.vm.trace_depth == 64);
+    assert(cfg.vm.gas_quantum == 128);
+    assert(cfg.vm.stack_pool_size == 8);
+    assert(cfg.vm.max_contexts == 32);
     assert(cfg.seed == 1337);
     remove_temp_file(path);
 }

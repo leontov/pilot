@@ -39,6 +39,7 @@ typedef struct {
     int stop_accept;
     int stop_workers;
     kolibri_config_t cfg;
+    vm_scheduler_t *scheduler;
     pthread_mutex_t queue_mutex;
     pthread_cond_t queue_cond;
     client_task_t *queue_head;
@@ -295,7 +296,8 @@ static void handle_client(int client) {
     }
 
     http_response_t resp = {0};
-    if (http_handle_request(&server.cfg, method, path, body, body_len, &resp) != 0 && resp.status == 0) {
+    if (http_handle_request(&server.cfg, server.scheduler, method, path, body, body_len, &resp) != 0 &&
+        resp.status == 0) {
         resp.status = 500;
         snprintf(resp.content_type, sizeof(resp.content_type), "application/json");
         resp.data = strdup("{\"error\":\"internal\"}");
@@ -409,7 +411,7 @@ static void *accept_loop(void *arg) {
     return NULL;
 }
 
-int http_server_start(const kolibri_config_t *cfg) {
+int http_server_start(const kolibri_config_t *cfg, vm_scheduler_t *scheduler) {
     if (!cfg) {
         return -1;
     }
@@ -426,6 +428,7 @@ int http_server_start(const kolibri_config_t *cfg) {
     server.stop_workers = 0;
     server.running = 1;
     server.cfg = *cfg;
+    server.scheduler = scheduler;
     size_t worker_count = determine_worker_count();
     pthread_t *workers = calloc(worker_count, sizeof(pthread_t));
     if (!workers) {
@@ -515,4 +518,5 @@ void http_server_stop(void) {
 
     server.stop_accept = 0;
     server.stop_workers = 0;
+    server.scheduler = NULL;
 }

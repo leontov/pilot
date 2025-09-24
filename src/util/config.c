@@ -22,6 +22,9 @@ static void set_defaults(kolibri_config_t *cfg) {
     cfg->vm.max_steps = 2048;
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
+    cfg->vm.gas_quantum = 128;
+    cfg->vm.stack_pool_size = 8;
+    cfg->vm.max_contexts = 32;
 
     cfg->seed = 1337;
 
@@ -362,6 +365,12 @@ static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen)
         } else if (strcmp(key, "trace_depth") == 0) {
             cfg->vm.trace_depth = (uint32_t)value;
             saw_trace = 1;
+        } else if (strcmp(key, "gas_quantum") == 0) {
+            cfg->vm.gas_quantum = (uint32_t)value;
+        } else if (strcmp(key, "stack_pool_size") == 0) {
+            cfg->vm.stack_pool_size = (uint32_t)value;
+        } else if (strcmp(key, "max_contexts") == 0) {
+            cfg->vm.max_contexts = (uint32_t)value;
         } else {
             return -1;
         }

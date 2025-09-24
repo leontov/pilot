@@ -83,12 +83,14 @@ static int handle_dialog(const char *body, size_t body_len, http_response_t *res
 }
 
 int http_handle_request(const kolibri_config_t *cfg,
+                        vm_scheduler_t *scheduler,
                         const char *method,
                         const char *path,
                         const char *body,
                         size_t body_len,
                         http_response_t *resp) {
     (void)cfg;
+    (void)scheduler;
     if (!method || !path || !resp) {
         return -1;
     }

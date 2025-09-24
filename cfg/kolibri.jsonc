@@ -11,9 +11,10 @@
   "vm": {
     "max_steps": 2048,
     "max_stack": 128,
-    "trace_depth": 64
-  },
-
+    "trace_depth": 64,
+    "gas_quantum": 128,
+    "stack_pool_size": 8,
+    "max_contexts": 32
   },
   // PRNG seed for RANDOM10 opcode
   "seed": 1337,

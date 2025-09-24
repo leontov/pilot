@@ -27,6 +27,9 @@ typedef struct {
     uint32_t max_steps;
     uint32_t max_stack;
     uint32_t trace_depth;
+    uint32_t gas_quantum;
+    uint32_t stack_pool_size;
+    uint32_t max_contexts;
 } vm_config_t;
 
 typedef struct {

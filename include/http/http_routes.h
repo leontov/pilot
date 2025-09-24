@@ -8,6 +8,7 @@
 
 #include "blockchain.h"
 #include "util/config.h"
+#include "vm/vm.h"
 
 struct KolibriAI;
 
@@ -19,6 +20,7 @@ typedef struct {
 } http_response_t;
 
 int http_handle_request(const kolibri_config_t *cfg,
+                        vm_scheduler_t *scheduler,
                         const char *method,
                         const char *path,
                         const char *body,
