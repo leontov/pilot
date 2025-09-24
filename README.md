@@ -27,7 +27,7 @@ Key subsystems delivered in this milestone:
 
 * **Δ-VM v2** – A decimal stack virtual machine with the initial opcode set (PUSHd–RET) and deterministic execution limits.
 * **Fractal KV (F-KV)** – An in-memory decimal trie with prefix lookup. Persistence hooks and compression points are stubbed for later milestones.
-* **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/vm/run`, `/api/v1/dialog`, and `/api/v1/fkv/get`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
+* **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/metrics`, `/api/v1/vm/run`, `/api/v1/dialog`, and `/api/v1/fkv/get`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **Web Studio** – Lightweight Vite + TypeScript SPA that connects to the HTTP API and renders console-style panels for dialog, VM trace, and memory previews.
 
 ## Building and running
@@ -62,6 +62,15 @@ make build
 The CLI accepts decimal arithmetic expressions (e.g. `12+30/6`) and stores the results in the F-KV memory. Any other text prompt
 falls back to the current best formula discovered by the Kolibri AI core, which is useful for smoke-testing the synthesis loop.
 
+### HTTP API endpoints
+
+Kolibri Ω now exposes a richer JSON API that mirrors the CLI behaviour:
+
+* `GET /api/v1/health` – returns uptime information and whether a blockchain peer is attached.
+* `GET /api/v1/metrics` – surfaces the latest Kolibri AI planning metrics alongside request counters.
+* `POST /api/v1/dialog` – accepts `{ "input": "7+8" }`, executes the expression on the Δ-VM, stores the result in F-KV, nudges the AI curriculum, and responds with `{ "answer": "15", "status": "vm", "steps": 6, "stored": true }`. If the expression cannot be evaluated the handler falls back to the strongest known formula.
+* `POST /api/v1/vm/run` – executes raw decimal bytecode supplied via the `program` array and returns the VM status, result, and halt flag. Optional `max_steps`/`max_stack` keys override the config limits per request.
+* `GET /api/v1/fkv/get?prefix=...&limit=...` – performs a prefix lookup in the fractal memory and returns the top matches (keys and decimal values) for observability tooling.
 
 ## AI state persistence
 

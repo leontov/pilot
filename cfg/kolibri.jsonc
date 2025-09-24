@@ -13,10 +13,12 @@
     "max_stack": 128,
     "trace_depth": 64
   },
+
   // Default top-K value for F-KV trie nodes
   "fkv": {
     "top_k": 4
   },
+
   // PRNG seed for RANDOM10 opcode
   "seed": 1337,
   // Kolibri AI persistence

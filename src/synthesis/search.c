@@ -8,11 +8,12 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <uuid/uuid.h>
 
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
@@ -136,6 +137,48 @@ typedef struct {
     size_t limit;
 } search_context_t;
 
+static void generate_candidate_id(char *buffer, size_t size) {
+    if (!buffer || size == 0) {
+        return;
+    }
+
+    struct timespec ts;
+    unsigned long long timestamp_mix = 0;
+#if defined(CLOCK_REALTIME)
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        timestamp_mix = ((unsigned long long)ts.tv_sec << 32) ^
+                        (unsigned long long)ts.tv_nsec;
+    } else {
+        timestamp_mix = (unsigned long long)time(NULL);
+    }
+#else
+    timestamp_mix = (unsigned long long)time(NULL);
+#endif
+
+    static atomic_uint_fast64_t counter = 0;
+    uint64_t local_counter =
+        atomic_fetch_add_explicit(&counter, 1u, memory_order_relaxed) + 1u;
+
+    uint64_t mix = timestamp_mix ^ (local_counter << 16);
+    mix ^= (uint64_t)(uintptr_t)buffer;
+
+    if (size >= 37) {
+        uint32_t segment1 = (uint32_t)(mix & 0xffffffffu);
+        uint16_t segment2 = (uint16_t)((mix >> 32) & 0xffffu);
+        uint16_t segment3 = (uint16_t)((mix >> 48) & 0xffffu);
+        uint16_t segment4 =
+            (uint16_t)(((mix >> 20) ^ segment2 ^ segment3) & 0xffffu);
+        uint64_t segment5 =
+            ((timestamp_mix << 16) ^ local_counter ^ segment1) & 0xffffffffffffULL;
+
+        snprintf(buffer, size, "%08x-%04x-%04x-%04x-%012llx", segment1, segment2,
+                 segment3, segment4, (unsigned long long)segment5);
+    } else {
+        snprintf(buffer, size, "%016llx",
+                 (unsigned long long)(mix ^ (timestamp_mix << 8)));
+    }
+}
+
 static int emit_formula(search_context_t *ctx,
                         const int *coeffs,
                         size_t term_count) {
@@ -218,9 +261,7 @@ static int emit_formula(search_context_t *ctx,
     Formula candidate;
     memset(&candidate, 0, sizeof(candidate));
     candidate.representation = FORMULA_REPRESENTATION_TEXT;
-    uuid_t uuid;
-    uuid_generate(uuid);
-    uuid_unparse(uuid, candidate.id);
+    generate_candidate_id(candidate.id, sizeof(candidate.id));
     strncpy(candidate.content, expression, sizeof(candidate.content) - 1);
     candidate.created_at = time(NULL);
 

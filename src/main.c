@@ -357,11 +357,30 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    KolibriAI *http_ai = kolibri_ai_create(&cfg);
+    if (http_ai) {
+        KolibriAISelfplayConfig sp = {
+            .tasks_per_iteration = cfg.selfplay.tasks_per_iteration,
+            .max_difficulty = cfg.selfplay.max_difficulty,
+        };
+        kolibri_ai_set_selfplay_config(http_ai, &sp);
+        kolibri_ai_apply_config(http_ai, &cfg);
+        kolibri_ai_start(http_ai);
+        http_routes_set_ai(http_ai);
+    } else {
+        log_warn("HTTP AI subsystem unavailable");
+    }
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     if (http_server_start(&cfg) != 0) {
         log_error("failed to start HTTP server");
+        if (http_ai) {
+            kolibri_ai_stop(http_ai);
+            kolibri_ai_destroy(http_ai);
+            http_routes_set_ai(NULL);
+        }
         fkv_shutdown();
         if (log_fp) {
             fclose(log_fp);
@@ -374,6 +393,11 @@ int main(int argc, char **argv) {
     }
 
     http_server_stop();
+    if (http_ai) {
+        kolibri_ai_stop(http_ai);
+        kolibri_ai_destroy(http_ai);
+        http_routes_set_ai(NULL);
+    }
     fkv_shutdown();
     if (log_fp) {
         fclose(log_fp);
