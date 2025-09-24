@@ -25,6 +25,22 @@ static uint64_t current_time_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ull + ts.tv_nsec / 1000000ull;
 }
 
+static int vm_fkv_force_get_enabled = 0;
+static int vm_fkv_force_get_rc = 0;
+static int vm_fkv_force_put_enabled = 0;
+static int vm_fkv_force_put_rc = 0;
+
+void vm_force_fkv_errors(int get_enabled, int get_rc, int put_enabled, int put_rc) {
+    vm_fkv_force_get_enabled = get_enabled;
+    vm_fkv_force_get_rc = get_rc;
+    vm_fkv_force_put_enabled = put_enabled;
+    vm_fkv_force_put_rc = put_rc;
+}
+
+void vm_reset_fkv_errors(void) {
+    vm_force_fkv_errors(0, 0, 0, 0);
+}
+
 static void trace_add(vm_trace_t *trace, uint32_t step, uint32_t ip, uint8_t opcode, int64_t stack_top, uint32_t gas_left) {
     if (!trace || !trace->entries || trace->capacity == 0) {
         return;
@@ -56,45 +72,49 @@ static int push(int64_t *stack, size_t *sp, size_t max_stack, int64_t v) {
 }
 
 static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
-    if (!digits || !len) {
+    if (!digits || !len || *len == 0) {
         return -1;
     }
-    if (value < 0) {
-        return -1;
-    }
-    char buf[32];
-    int written = snprintf(buf, sizeof(buf), "%lld", (long long)value);
-    if (written <= 0) {
-        return -1;
-    }
+
     size_t n = (size_t)written;
     if (n >= sizeof(buf) || n > *len) {
         return -1;
     }
     for (size_t i = 0; i < n; ++i) {
         if (buf[i] < '0' || buf[i] > '9') {
-            return -1;
-        }
-        digits[i] = (uint8_t)(buf[i] - '0');
-    }
-    *len = n;
-    return 0;
-}
 
-static int validate_decimal_operand(int64_t value, size_t max_digits) {
     if (value < 0) {
         return -1;
     }
-    size_t digits = (value == 0) ? 1 : 0;
-    int64_t tmp = value;
-    while (tmp > 0) {
-        tmp /= 10;
-        digits++;
-        if (digits > max_digits) {
+
+    size_t capacity = *len;
+    size_t count = 0;
+    if (value == 0) {
+        if (capacity < 1) {
+
             return -1;
         }
+        digits[0] = 0;
+        *len = 1;
+        return 0;
     }
-    return (digits > max_digits) ? -1 : 0;
+
+    while (value > 0) {
+        if (count >= capacity) {
+            return -1;
+        }
+        digits[count++] = (uint8_t)(value % 10);
+        value /= 10;
+    }
+
+    for (size_t i = 0; i < count / 2; ++i) {
+        uint8_t tmp = digits[i];
+        digits[i] = digits[count - 1 - i];
+        digits[count - 1 - i] = tmp;
+    }
+
+    *len = count;
+    return 0;
 }
 
 int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result_t *out) {
@@ -294,23 +314,23 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 status = VM_ERR_STACK_UNDERFLOW;
                 goto done;
             }
-            int64_t key_num = stack[sp - 1];
+            int64_t key_value = pop(stack, &sp);
             uint8_t key_digits[32];
             size_t key_len = sizeof(key_digits);
-            int64_t key_value = stack[sp - 1];
-            if (validate_decimal_operand(key_value, key_len) != 0) {
-                status = VM_ERR_INVALID_OPCODE;
-                goto done;
-            }
-            (void)pop(stack, &sp);
-
             if (number_to_digits(key_value, key_digits, &key_len) != 0) {
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
-            pop(stack, &sp);
+
             fkv_iter_t it = {0};
-            if (fkv_get_prefix(key_digits, key_len, &it, 1) != 0 || it.count == 0) {
+            int rc = vm_fkv_force_get_enabled ? vm_fkv_force_get_rc
+                                              : fkv_get_prefix(key_digits, key_len, &it, 1);
+            if (rc != 0) {
+                fkv_iter_free(&it);
+                status = VM_ERR_INVALID_OPCODE;
+                goto done;
+            }
+            if (it.count == 0) {
                 fkv_iter_free(&it);
                 if (push(stack, &sp, max_stack, 0) != 0) {
                     status = VM_ERR_STACK_OVERFLOW;
@@ -335,48 +355,28 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 goto done;
             }
 
-            int64_t value_num = stack[sp - 1];
-            int64_t key_num = stack[sp - 2];
-            if (key_num < 0 || value_num < 0) {
-                status = VM_ERR_INVALID_OPCODE;
-                goto done;
-            }
-
-            int64_t value_value = stack[sp - 1];
-            int64_t key_value = stack[sp - 2];
+            int64_t value_value = pop(stack, &sp);
+            int64_t key_value = pop(stack, &sp);
 
             uint8_t key_digits[32];
             size_t key_len = sizeof(key_digits);
-            if (validate_decimal_operand(key_value, key_len) != 0) {
-                status = VM_ERR_INVALID_OPCODE;
-                goto done;
-            }
             if (number_to_digits(key_value, key_digits, &key_len) != 0) {
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
             uint8_t value_digits[32];
             size_t value_len = sizeof(value_digits);
-            if (validate_decimal_operand(value_value, value_len) != 0) {
-                status = VM_ERR_INVALID_OPCODE;
-                goto done;
-            }
             if (number_to_digits(value_value, value_digits, &value_len) != 0) {
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
 
-            (void)pop(stack, &sp);
-            (void)pop(stack, &sp);
-            if (fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE) != 0) {
+            int rc = vm_fkv_force_put_enabled ? vm_fkv_force_put_rc
+                                               : fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE);
+            if (rc != 0) {
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
-
-            pop(stack, &sp);
-            pop(stack, &sp);
-            fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE);
-
             break;
         }
         case 0x0E: { // HASH10

@@ -49,6 +49,9 @@ SRC := \
     src/util/json_compat.c \
     src/util/log.c \
     src/vm/vm.c
+    src/vm/vm.c \
+    src/protocol/swarm.c
+
 
 
 
