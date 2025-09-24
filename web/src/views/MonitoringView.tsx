@@ -1,6 +1,6 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   MonitoringAlert,
   MonitoringSnapshot,
@@ -9,6 +9,8 @@ import {
 import { DataTable } from "../components/DataTable";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
+import { AutoRefreshControl } from "../components/AutoRefreshControl";
+import { useLiveQuery } from "../hooks/useLiveQuery";
 
 function formatDuration(uptime?: number) {
   if (!uptime || uptime <= 0) {
@@ -32,26 +34,24 @@ function classifySeverity(severity: MonitoringAlert["severity"]) {
 
 export function MonitoringView() {
   const { notify } = useNotifications();
-  const [snapshot, setSnapshot] = useState<MonitoringSnapshot | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [isAcknowledging, setIsAcknowledging] = useState<Record<string, boolean>>({});
 
-  const refresh = async () => {
-    setIsLoading(true);
-    try {
-      const data = await apiClient.monitoringSnapshot();
-      setSnapshot(data);
-    } catch (error) {
+  const handleError = useCallback(
+    (error: unknown) => {
       const message = error instanceof Error ? error.message : "Неизвестная ошибка";
       notify({ title: "Не удалось обновить мониторинг", message, type: "error" });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+    [notify]
+  );
 
-  useEffect(() => {
-    void refresh();
-  }, []);
+  const fetchSnapshot = useCallback(() => apiClient.monitoringSnapshot(), []);
+
+  const { data: snapshot, refresh, isLoading, lastUpdated } = useLiveQuery<MonitoringSnapshot>({
+    fetcher: fetchSnapshot,
+    intervalMs: autoRefresh ? 15000 : 0,
+    onError: handleError
+  });
 
   const acknowledgeAlert = async (alertId: string) => {
     setIsAcknowledging((prev) => ({ ...prev, [alertId]: true }));
@@ -67,7 +67,10 @@ export function MonitoringView() {
     }
   };
 
-  const criticalAlerts = useMemo(() => snapshot?.alerts.filter((alert) => alert.severity === "critical") ?? [], [snapshot?.alerts]);
+  const criticalAlerts = useMemo(
+    () => snapshot?.alerts.filter((alert) => alert.severity === "critical") ?? [],
+    [snapshot?.alerts]
+  );
 
   return (
     <section className="view" aria-labelledby="monitoring-tab">
@@ -77,30 +80,39 @@ export function MonitoringView() {
             <h2>Мониторинг Kolibri Ω</h2>
             <p>Наблюдайте за здоровьем ядра, собирайте метрики и управляйте алертами.</p>
           </div>
-          <button type="button" className="inline" onClick={refresh} disabled={isLoading}>
-            {isLoading ? <Spinner /> : "Обновить"}
-          </button>
+          <div className="panel-tools">
+            <AutoRefreshControl
+              enabled={autoRefresh}
+              onToggle={(next) => setAutoRefresh(next)}
+              lastUpdated={lastUpdated}
+              intervalMs={autoRefresh ? 15000 : undefined}
+              isLoading={isLoading}
+            />
+            <button type="button" className="inline" onClick={() => void refresh()} disabled={isLoading}>
+              {isLoading ? <Spinner /> : "Обновить"}
+            </button>
+          </div>
         </header>
         <div className="metrics-grid">
           <div className="metric-card">
             <span>Аптайм</span>
-            <strong>{formatDuration(snapshot?.health.uptime)}</strong>
+            <strong>{formatDuration(snapshot?.health?.uptime)}</strong>
           </div>
           <div className="metric-card">
             <span>Память</span>
             <strong>
-              {snapshot?.health.memory.used != null && snapshot?.health.memory.total != null
+              {snapshot?.health?.memory?.used != null && snapshot?.health?.memory?.total != null
                 ? `${snapshot.health.memory.used}/${snapshot.health.memory.total} МБ`
                 : "—"}
             </strong>
           </div>
           <div className="metric-card">
             <span>Пиры онлайн</span>
-            <strong>{snapshot?.health.peers?.length ?? 0}</strong>
+            <strong>{snapshot?.health?.peers?.length ?? 0}</strong>
           </div>
           <div className="metric-card">
             <span>Активных задач</span>
-            <strong>{snapshot?.metrics.tasksInFlight ?? "—"}</strong>
+            <strong>{snapshot?.metrics?.tasksInFlight ?? "—"}</strong>
           </div>
         </div>
       </article>

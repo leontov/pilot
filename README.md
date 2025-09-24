@@ -51,6 +51,7 @@ The Studio dashboard exposes live control-plane operations beyond the classic di
 * **Monitoring** – One-click observability snapshot with alerts, PoU/MDL timeline, and health metrics from `/api/v1/control/monitoring`.
 * **Blockchain Explorer** – Submit programs to the knowledge chain and audit PoU/MDL deltas for the latest blocks.
 * **Cluster Manager** – Promote, quarantine, or disconnect peers using `/api/v1/control/cluster/peers/:id` while tracking latency and reputation.
+* All control-plane dashboards expose live auto-refresh controls with last-sync indicators so operators can stabilise polling cadence per environment.
 
 The UI automatically falls back to WebSockets when SSE is unavailable and can be driven entirely from Playwright-based end-to-end tests.
 

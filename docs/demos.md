@@ -47,12 +47,14 @@ Kolibri Studio now mirrors the control-plane surface of the node. Each tab has a
 * The **Задачи** tab lists active jobs from `/api/v1/control/tasks` (search, benchmarking, Δ-VM experiments).
 * Priorities can be bumped inline; cancelled tasks return into the queue immediately, mirroring the actual control-plane semantics.
 * Demo tip: create a synthetic task with payload `{ "program": [16,0,0,2] }` to prove that background Δ-VM runs honour the same gas limits as the interactive view.
+* Use the auto-refresh toggle to dial polling between bursts and steady-state demos; the header shows the last sync timestamp so you can narrate when updates land.
 
 ### Monitoring Dashboard
 
 * The **Мониторинг** tab aggregates `/api/v1/control/monitoring`: uptime, PoU/MDL alerts, metrics, and a unified timeline of synthesis and blockchain events.
 * Alerts can be acknowledged directly from the UI; the action maps to `POST /api/v1/control/monitoring/alerts/:id/ack`.
 * Use the timeline to narrate what happened during an overnight self-improvement sprint (blocks sealed, programs promoted, memory refactors).
+* Tip: throttle or boost the built-in auto-refresh depending on the backend’s load profile; the control widget shows both cadence and the most recent ingest time.
 
 ### Blockchain Explorer (PoU/MDL)
 

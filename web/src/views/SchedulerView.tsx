@@ -1,6 +1,6 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import {
   apiClient,
   ScheduledTask,
@@ -11,6 +11,8 @@ import {
 import { DataTable } from "../components/DataTable";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
+import { AutoRefreshControl } from "../components/AutoRefreshControl";
+import { useLiveQuery } from "../hooks/useLiveQuery";
 
 interface EditableTask extends ScheduledTask {
   effectivePriority: number;
@@ -49,32 +51,35 @@ function formatTimestamp(timestamp?: string) {
 
 export function SchedulerView() {
   const { notify } = useNotifications();
-  const [tasks, setTasks] = useState<EditableTask[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [name, setName] = useState("vm.run");
   const [priority, setPriority] = useState("5");
   const [schedule, setSchedule] = useState("immediate");
   const [payload, setPayload] = useState("{\n  \"program\": [16,0,0,2]\n}");
 
-  const activeTasks = useMemo(() => tasks.filter((task) => task.status === "running" || task.status === "queued"), [tasks]);
-
-  const refresh = async () => {
-    setIsLoading(true);
-    try {
-      const response = await apiClient.listTasks();
-      setTasks(mapTasks(response));
-    } catch (error) {
+  const handleError = useCallback(
+    (error: unknown) => {
       const message = error instanceof Error ? error.message : "Неизвестная ошибка";
       notify({ title: "Не удалось загрузить задачи", message, type: "error" });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+    [notify]
+  );
 
-  useEffect(() => {
-    void refresh();
-  }, []);
+  const fetchTasks = useCallback(() => apiClient.listTasks(), []);
+
+  const { data: rawTasks = [], refresh, isLoading, lastUpdated } = useLiveQuery<ScheduledTask[]>({
+    fetcher: fetchTasks,
+    intervalMs: autoRefresh ? 10000 : 0,
+    onError: handleError,
+    initialData: []
+  });
+
+  const tasks = useMemo(() => mapTasks(rawTasks), [rawTasks]);
+  const activeTasks = useMemo(
+    () => tasks.filter((task) => task.status === "running" || task.status === "queued"),
+    [tasks]
+  );
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -179,9 +184,18 @@ export function SchedulerView() {
             <h3>Очередь задач</h3>
             <p>Активные и завершённые задания control-plane.</p>
           </div>
-          <button type="button" className="inline" onClick={refresh} disabled={isLoading}>
-            {isLoading ? <Spinner /> : "Обновить"}
-          </button>
+          <div className="panel-tools">
+            <AutoRefreshControl
+              enabled={autoRefresh}
+              onToggle={(next) => setAutoRefresh(next)}
+              lastUpdated={lastUpdated}
+              intervalMs={autoRefresh ? 10000 : undefined}
+              isLoading={isLoading}
+            />
+            <button type="button" className="inline" onClick={() => void refresh()} disabled={isLoading}>
+              {isLoading ? <Spinner /> : "Обновить"}
+            </button>
+          </div>
         </header>
         <DataTable
           columns={[
