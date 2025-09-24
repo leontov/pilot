@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef FORMULA_VM_EVAL_H
 #define FORMULA_VM_EVAL_H
 

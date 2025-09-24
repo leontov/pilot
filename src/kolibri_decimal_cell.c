@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "kolibri_decimal_cell.h"
 
 #include <stdarg.h>

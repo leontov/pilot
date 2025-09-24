@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef FORMULA_CORE_H
 #define FORMULA_CORE_H
 

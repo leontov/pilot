@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "synthesis/selfplay.h"
 
 #include <stdio.h>

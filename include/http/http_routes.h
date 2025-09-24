@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef KOLIBRI_HTTP_ROUTES_H
 #define KOLIBRI_HTTP_ROUTES_H
 
