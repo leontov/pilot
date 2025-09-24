@@ -7,12 +7,23 @@ import { ClusterView } from "./views/ClusterView";
 import { DialogView } from "./views/DialogView";
 import { MemoryView } from "./views/MemoryView";
 import { ProgramsView } from "./views/ProgramsView";
+import { SchedulerView } from "./views/SchedulerView";
 import { StatusView } from "./views/StatusView";
 import { SynthView } from "./views/SynthView";
+import { MonitoringView } from "./views/MonitoringView";
 
 type ThemeMode = "light" | "dark";
 
-type TabId = "dialog" | "memory" | "programs" | "synth" | "chain" | "status" | "cluster";
+type TabId =
+  | "dialog"
+  | "memory"
+  | "programs"
+  | "scheduler"
+  | "synth"
+  | "chain"
+  | "monitoring"
+  | "status"
+  | "cluster";
 
 interface TabConfig {
   id: TabId;
@@ -24,8 +35,10 @@ const tabs: TabConfig[] = [
   { id: "dialog", label: "Диалог", render: () => <DialogView /> },
   { id: "memory", label: "Память", render: () => <MemoryView /> },
   { id: "programs", label: "Программы", render: () => <ProgramsView /> },
+  { id: "scheduler", label: "Задачи", render: () => <SchedulerView /> },
   { id: "synth", label: "Синтез", render: () => <SynthView /> },
   { id: "chain", label: "Блокчейн", render: () => <ChainView /> },
+  { id: "monitoring", label: "Мониторинг", render: () => <MonitoringView /> },
   { id: "status", label: "Статус", render: () => <StatusView /> },
   { id: "cluster", label: "Кластер", render: () => <ClusterView /> }
 ];

@@ -11,9 +11,29 @@ interface ChainEntry {
   programId: string;
 }
 
+interface ExplorerEntry extends ChainEntry {
+  poe?: number;
+  mdlDelta?: number;
+}
+
 function formatTimestamp(value: Date | string) {
   const date = value instanceof Date ? value : new Date(value);
-  return date.toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit", day: "2-digit", month: "2-digit" });
+  return date.toLocaleString("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    day: "2-digit",
+    month: "2-digit"
+  });
+}
+
+function computeAveragePoE(entries: ExplorerEntry[]): string {
+  const valid = entries.filter((entry): entry is ExplorerEntry & { poe: number } => typeof entry.poe === "number");
+  if (!valid.length) {
+    return "—";
+  }
+  const sum = valid.reduce((acc, entry) => acc + entry.poe, 0);
+  return (sum / valid.length).toFixed(3);
 }
 
 export function ChainView() {
@@ -23,6 +43,9 @@ export function ChainView() {
   const [history, setHistory] = useState<ChainEntry[]>([]);
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
+  const [explorer, setExplorer] = useState<ExplorerEntry[]>([]);
+  const [lastPoE, setLastPoE] = useState<number | null>(null);
+  const [lastMdlDelta, setLastMdlDelta] = useState<number | null>(null);
 
   const submitChain = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -40,6 +63,16 @@ export function ChainView() {
         programId: programId.trim()
       };
       setHistory((prev) => [entry, ...prev].slice(0, 10));
+      setExplorer((prev) => [
+        {
+          ...entry,
+          poe: response.poe,
+          mdlDelta: response.mdlDelta
+        },
+        ...prev
+      ].slice(0, 25));
+      setLastPoE(typeof response.poe === "number" ? response.poe : null);
+      setLastMdlDelta(typeof response.mdlDelta === "number" ? response.mdlDelta : null);
       notify({ title: "Кандидат отправлен в цепочку", message: response.status, type: "success", timeout: 2500 });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Неизвестная ошибка";
@@ -137,6 +170,43 @@ export function ChainView() {
               </li>
             ))}
           </ul>
+        )}
+      </article>
+      <article className="panel">
+        <header>
+          <h3>PoU / MDL мониторинг</h3>
+          <p>Анализ качества блоков и влияние на минимальную длину описания.</p>
+        </header>
+        <div className="metrics-grid">
+          <div className="metric-card">
+            <span>Последний PoU</span>
+            <strong>{lastPoE != null ? lastPoE.toFixed(3) : "—"}</strong>
+          </div>
+          <div className="metric-card">
+            <span>ΔMDL последнего блока</span>
+            <strong>{lastMdlDelta != null ? lastMdlDelta.toFixed(3) : "—"}</strong>
+          </div>
+          <div className="metric-card">
+            <span>Средний PoU (10)</span>
+            <strong>{computeAveragePoE(explorer.slice(0, 10))}</strong>
+          </div>
+        </div>
+        {explorer.length ? (
+          <ul className="history-list">
+            {explorer.map((entry) => (
+              <li key={`${entry.timestamp}-${entry.programId}-explorer`} className="history-item">
+                <header>
+                  <span>{entry.programId}</span>
+                  <time dateTime={entry.timestamp}>{entry.timestamp}</time>
+                </header>
+                {entry.response.blockId ? <p>Блок: {entry.response.blockId}</p> : null}
+                {typeof entry.poe === "number" ? <p>PoU: {entry.poe.toFixed(3)}</p> : null}
+                {typeof entry.mdlDelta === "number" ? <p>ΔMDL: {entry.mdlDelta.toFixed(3)}</p> : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="empty-state">Блоки ещё не отправлялись.</div>
         )}
       </article>
     </section>

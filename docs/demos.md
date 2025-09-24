@@ -32,6 +32,50 @@ Wrap up with a KPI recap referencing the dashboard in the README Pro (`docs/read
 
 For convenience, similar scenarios are grouped. The "Studio" column below highlights the relevant tab, while the "API" column lists the key endpoint(s).
 
+## Studio UX Guides
+
+Kolibri Studio now mirrors the control-plane surface of the node. Each tab has a recommended storytelling flow for demos and QA rehearsals.
+
+### Δ-VM Trace Editor
+
+* Use the **Программы** tab to run deterministic bytecode and to spin up streaming traces via `POST /api/v1/vm/stream`.
+* The editor supports SSE and WebSocket fallback; if a browser blocks EventSource, the UI transparently upgrades to WebSocket.
+* Encourage investors to watch the JSON payloads arrive live — highlight registers, stack and gas consumption, and point them to the saved trace log at the bottom of the panel.
+
+### Task Scheduler Control Plane
+
+* The **Задачи** tab lists active jobs from `/api/v1/control/tasks` (search, benchmarking, Δ-VM experiments).
+* Priorities can be bumped inline; cancelled tasks return into the queue immediately, mirroring the actual control-plane semantics.
+* Demo tip: create a synthetic task with payload `{ "program": [16,0,0,2] }` to prove that background Δ-VM runs honour the same gas limits as the interactive view.
+
+### Monitoring Dashboard
+
+* The **Мониторинг** tab aggregates `/api/v1/control/monitoring`: uptime, PoU/MDL alerts, metrics, and a unified timeline of synthesis and blockchain events.
+* Alerts can be acknowledged directly from the UI; the action maps to `POST /api/v1/control/monitoring/alerts/:id/ack`.
+* Use the timeline to narrate what happened during an overnight self-improvement sprint (blocks sealed, programs promoted, memory refactors).
+
+### Blockchain Explorer (PoU/MDL)
+
+* The **Блокчейн** tab doubles as an explorer. Each submission to `/api/v1/chain/submit` records PoU and ΔMDL deltas, allowing you to explain the economics of proof-of-use.
+* The summary cards compute a rolling PoU average for the last ten blocks so you can instantly confirm the health of the network.
+
+### Cluster Manager Playbook
+
+* The **Кластер** tab now includes management controls: change a peer’s role, quarantine it, or disconnect the node entirely.
+* All actions go through `/api/v1/control/cluster/peers/:id` and surface in the metrics grid instantly, making it easy to demonstrate resilience to node churn.
+
+### Automated Studio Checks
+
+End-to-end demos are codified as Playwright tests under `web/tests/e2e`. Run them locally after each build:
+
+```bash
+cd web
+npm install
+npm run test:e2e
+```
+
+The suite spins up Vite, stubs control-plane calls, walks through Диалог → Программы → Задачи → Мониторинг → Блокчейн → Кластер, and verifies that PoU/MDL indicators update after each interaction. Use it before shipping demo builds or investor releases.
+
 | # | Scenario | Goal | Key KPIs | Studio | API |
 |---|----------|------|----------|--------|-----|
 | 1 | Arithmetic & Algebra | Test core arithmetic and algebraic solving | VM latency (P95 < 50 ms), 100 % correctness | Dialogue | `POST /api/v1/dialog` |

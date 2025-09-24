@@ -1,7 +1,7 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { FormEvent, useState } from "react";
-import { apiClient } from "../api/client";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { apiClient, VmStreamSession, VmTraceEvent } from "../api/client";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
 
@@ -45,6 +45,13 @@ export function ProgramsView() {
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<unknown>(null);
   const [trace, setTrace] = useState<unknown>(null);
+  const [editorSource, setEditorSource] = useState("// PUSHd 2, PUSHd 2, ADD10, HALT\n16 0 0 2");
+  const [editorGasLimit, setEditorGasLimit] = useState("512");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamSessionId, setStreamSessionId] = useState<string | null>(null);
+  const [streamEvents, setStreamEvents] = useState<VmTraceEvent[]>([]);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const streamSessionRef = useRef<VmStreamSession | null>(null);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -76,6 +83,75 @@ export function ProgramsView() {
       setIsLoading(false);
     }
   };
+
+  const finalizeStream = () => {
+    if (streamSessionRef.current) {
+      streamSessionRef.current.close();
+      streamSessionRef.current = null;
+    }
+    setIsStreaming(false);
+  };
+
+  const handleStream = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    let program: number[];
+    try {
+      program = parseProgram(editorSource);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Неизвестная ошибка";
+      notify({ title: "Ошибка парсинга", message, type: "error" });
+      return;
+    }
+
+    const gas = editorGasLimit.trim() ? Number(editorGasLimit) : undefined;
+    const gasValue = Number.isFinite(gas) ? gas : undefined;
+
+    setStreamEvents([]);
+    setStreamError(null);
+    setIsStreaming(true);
+    try {
+      streamSessionRef.current?.close();
+      const session = await apiClient.streamVmExecution(
+        { program, gasLimit: gasValue },
+        {
+          onEvent: (eventPayload) => {
+            setStreamEvents((prev) => [...prev, eventPayload]);
+            if (eventPayload.type === "error") {
+              setStreamError(typeof eventPayload.payload === "string" ? eventPayload.payload : "Ошибка выполнения Δ-VM");
+              finalizeStream();
+            }
+            if (eventPayload.type === "complete" || eventPayload.type === "result") {
+              finalizeStream();
+            }
+          },
+          onError: (error) => {
+            setStreamError(error.message);
+            finalizeStream();
+          }
+        }
+      );
+      streamSessionRef.current = session;
+      setStreamSessionId(session.sessionId);
+      notify({ title: "Стрим трассы запущен", message: `Сессия ${session.sessionId}`, type: "info" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Неизвестная ошибка";
+      setStreamError(message);
+      setIsStreaming(false);
+      notify({ title: "Не удалось запустить стрим", message, type: "error" });
+    }
+  };
+
+  const stopStreaming = () => {
+    finalizeStream();
+    setStreamSessionId(null);
+    notify({ title: "Стрим остановлен", type: "info", timeout: 2000 });
+  };
+
+  useEffect(() => {
+    return () => {
+      streamSessionRef.current?.close();
+    };
+  }, []);
 
   return (
     <section className="view" aria-labelledby="programs-tab">
@@ -130,6 +206,63 @@ export function ProgramsView() {
               {formatTrace(trace)}
             </pre>
           </div>
+        </div>
+      </article>
+      <article className="panel">
+        <header>
+          <h3>Редактор программ Δ-VM</h3>
+          <p>Редактируйте байткод, запускайте пошаговую трассировку и наблюдайте события в реальном времени.</p>
+        </header>
+        <form className="form-grid" onSubmit={handleStream}>
+          <label htmlFor="program-editor-source">Исходный байткод</label>
+          <textarea
+            id="program-editor-source"
+            value={editorSource}
+            onChange={(event) => setEditorSource(event.target.value)}
+            disabled={isStreaming}
+          />
+          <label htmlFor="program-editor-gas">Лимит газа</label>
+          <input
+            id="program-editor-gas"
+            value={editorGasLimit}
+            onChange={(event) => setEditorGasLimit(event.target.value)}
+            placeholder="Например: 1024"
+            inputMode="numeric"
+            disabled={isStreaming}
+          />
+          <div className="button-row">
+            <button type="submit" disabled={isStreaming}>
+              {isStreaming ? <Spinner /> : "Запустить стрим"}
+            </button>
+            <button type="button" className="secondary" onClick={stopStreaming} disabled={!isStreaming && !streamSessionId}>
+              Остановить
+            </button>
+          </div>
+        </form>
+        {streamSessionId ? (
+          <p className="muted">Текущая сессия: {streamSessionId}</p>
+        ) : (
+          <p className="muted">Сессия не активна.</p>
+        )}
+        {streamError ? <p className="error-text">{streamError}</p> : null}
+        <div className="trace-block">
+          <h4 className="trace-title">События трассы</h4>
+          {streamEvents.length === 0 ? (
+            <div className="empty-state">События пока не получены.</div>
+          ) : (
+            <ul className="history-list">
+              {streamEvents.map((eventPayload, index) => (
+                <li key={`${eventPayload.type}-${index}`} className="history-item">
+                  <header>
+                    <span>{eventPayload.type}</span>
+                    {eventPayload.timestamp ? <time dateTime={eventPayload.timestamp}>{new Date(eventPayload.timestamp).toLocaleTimeString("ru-RU")}</time> : null}
+                  </header>
+                  {typeof eventPayload.step === "number" ? <p>Шаг: {eventPayload.step}</p> : null}
+                  <pre className="output">{formatTrace(eventPayload.payload)}</pre>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </article>
     </section>

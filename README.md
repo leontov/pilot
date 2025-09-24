@@ -40,7 +40,19 @@ Prerequisites: GCC (C11), Make, Node.js 18+, and npm.
 
 The command builds the native node, installs web dependencies, produces the static bundle, and launches the backend on `http://localhost:9000`. Logs are written to `logs/kolibri.log`.
 
-> **Note:** The web client expects the backend base URL to be provided through the `VITE_API_BASE` environment variable during the Vite build. For local development this is typically `http://localhost:9000`, e.g. `VITE_API_BASE=http://localhost:9000 npm run build`.
+> **Note:** Kolibri Studio automatically picks up the backend base URL from `import.meta.env.VITE_API_BASE`, `process.env.VITE_API_BASE`, or the global `window.KOLIBRI_API_BASE`. For local development export `VITE_API_BASE=http://localhost:9000` before running `npm run dev` or `npm run build`.
+
+### Kolibri Studio panels
+
+The Studio dashboard exposes live control-plane operations beyond the classic dialog runner:
+
+* **Δ-VM Runner & Trace Editor** – Execute decimal bytecode, request structured traces, or start a streaming session over SSE/WebSocket (`POST /api/v1/vm/stream`).
+* **Task Scheduler** – Inspect and reprioritise background jobs via the control-plane endpoints (`/api/v1/control/tasks`).
+* **Monitoring** – One-click observability snapshot with alerts, PoU/MDL timeline, and health metrics from `/api/v1/control/monitoring`.
+* **Blockchain Explorer** – Submit programs to the knowledge chain and audit PoU/MDL deltas for the latest blocks.
+* **Cluster Manager** – Promote, quarantine, or disconnect peers using `/api/v1/control/cluster/peers/:id` while tracking latency and reputation.
+
+The UI automatically falls back to WebSockets when SSE is unavailable and can be driven entirely from Playwright-based end-to-end tests.
 
 Other CLI commands:
 
@@ -86,6 +98,15 @@ make test
 ```
 
 Unit tests cover the Δ-VM arithmetic instructions and the F-KV prefix lookup.
+
+Run Studio e2e scenarios with Playwright:
+
+```
+cd web
+npm run test:e2e
+```
+
+The suite boots Vite locally, stubs control-plane APIs, and validates the dialog, scheduler, monitoring, blockchain, and cluster management flows.
 
 ## Roadmap
 
