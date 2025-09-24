@@ -1,26 +1,171 @@
-# Copyright (c) 2024 Кочуров Владислав Евгеньевич
-
-name: kolibri-ci
+name: Kolibri CI (strict)
 
 on:
-  push:
   pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-test:
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v3
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential
-      - name: Build native
-        run: make build
-      - name: Run tests
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: ESLint
+        working-directory: web
+        run: npm run lint
+
+      - name: Markdown lint
+        if: always()
+        run: |
+          sudo npm i -g markdownlint-cli
+          markdownlint "**/*.md" || true
+
+      - name: C/C++ format check
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-format
+          ./scripts/clangfmt-check.sh
+
+      - name: Auto-fix (eslint/clang-format)
+        if: failure()
+        run: |
+          set -euxo pipefail
+          (cd web && npm run lint:fix || true)
+          ./scripts/clangfmt-fix.sh || true
+          pipx install cmakelang || python3 -m pip install --user cmakelang || true
+          cmake-format -i CMakeLists.txt || true
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "kolibri-ci-bot"
+            git config user.email "ci@kolibri.local"
+            git add -A
+            git commit -m "ci(auto-fix): apply eslint/clang-format/cmake-format"
+            git push
+            echo "Auto-fixes pushed. Failing run to re-trigger CI on updated code."
+            exit 1
+          fi
+
+      - name: Guard: workspace must be clean
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Workspace dirty after lint. Failing."
+            git status
+            exit 1
+          fi
+
+  unit:
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libjson-c-dev libmicrohttpd-dev uuid-dev curl
+
+      - name: Build
+        run: |
+          set -euxo pipefail
+          make clean
+          make -j"$(nproc)"
+
+      - name: Run unit tests
         run: make test
-      - name: Run performance benchmarks
-        run: ./kolibri.sh bench --output logs/ci_bench.json
-      - name: Upload benchmark report
+
+      - name: Guard: workspace must be clean
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Workspace dirty after unit tests. Failing."
+            git status
+            exit 1
+          fi
+
+  build_web:
+    runs-on: ubuntu-latest
+    needs: unit
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install & build web
+        working-directory: web
+        run: |
+          set -euxo pipefail
+          npm ci
+          npm run build
+
+      - name: Guard: workspace must be clean
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Workspace dirty after web build. Failing."
+            git status
+            exit 1
+          fi
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build_web
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start node (background)
+        run: |
+          set -euxo pipefail
+          make -j"$(nproc)"
+          nohup ./bin/kolibri_node > server.log 2>&1 &
+          echo $! > server.pid
+          sleep 1
+
+      - name: Ping health
+        run: |
+          curl -sfL http://127.0.0.1:9000/ > /dev/null
+
+      - name: VM smoke
+        run: |
+          curl -sfL -X POST http://127.0.0.1:9000/api/v1/vm/run \
+          -H 'Content-Type: application/json' \
+          -d '{"program":"PUSHd 1; PUSHd 2; ADD10; HALT;"}' | jq -e '.result // empty' > /dev/null
+
+      - name: Stop node
+        if: always()
+        run: |
+          kill "$(cat server.pid)" || true
+
+      - name: Upload logs on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-report
-          path: logs/ci_bench.json
+          name: e2e-logs
+          path: |
+            server.log
+            logs/**

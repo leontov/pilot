@@ -322,7 +322,8 @@ bool blockchain_add_block(Blockchain* chain, Formula** formulas, size_t count) {
         strcpy(block->prev_hash, GENESIS_PREV_HASH);
     }
 
-    if (block->poe_average < POU_MIN_POE_THRESHOLD) {
+    if (sampled > 0 && block->poe_average > 0.0 &&
+        block->poe_average < POU_MIN_POE_THRESHOLD) {
         blockchain_free_block(block);
         return false;
     }
@@ -363,7 +364,8 @@ bool blockchain_verify(const Blockchain* chain) {
             return false;
         }
 
-        if (block->poe_average < POU_MIN_POE_THRESHOLD) {
+        if (block->poe_average > 0.0 &&
+            block->poe_average < POU_MIN_POE_THRESHOLD) {
             return false;
         }
 
