@@ -291,12 +291,21 @@ int fkv_put(const uint8_t *key,
             const uint8_t *val,
             size_t vn,
             fkv_entry_type_t type) {
+    return fkv_put_scored(key, kn, val, vn, type, 0);
+}
+
+int fkv_put_scored(const uint8_t *key,
+                   size_t kn,
+                   const uint8_t *val,
+                   size_t vn,
+                   fkv_entry_type_t type,
+                   uint64_t priority) {
     if (!key || !val || kn == 0 || vn == 0) {
         return -1;
     }
 
     pthread_mutex_lock(&fkv_lock);
-    int rc = fkv_put_locked_internal(key, kn, val, vn, type, 0);
+    int rc = fkv_put_locked_internal(key, kn, val, vn, type, priority);
     pthread_mutex_unlock(&fkv_lock);
     return rc;
 }
@@ -423,6 +432,7 @@ int fkv_get_prefix(const uint8_t *key, size_t kn, fkv_iter_t *it, size_t k) {
         }
         entries[i].value_len = rec->value_len;
         entries[i].type = rec->type;
+        entries[i].priority = rec->priority;
     }
     pthread_mutex_unlock(&fkv_lock);
 
