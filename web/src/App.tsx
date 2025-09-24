@@ -1,33 +1,35 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { NotificationProvider } from "./components/NotificationCenter";
-import { ChainView } from "./views/ChainView";
-import { ClusterView } from "./views/ClusterView";
-import { DialogView } from "./views/DialogView";
-import { MemoryView } from "./views/MemoryView";
-import { ProgramsView } from "./views/ProgramsView";
-import { StatusView } from "./views/StatusView";
-import { SynthView } from "./views/SynthView";
+import { SkeletonLines } from "./components/Skeleton";
+import { TabNavigation, type TabItem } from "./components/TabNavigation";
+
+const DialogView = lazy(() => import("./views/DialogView").then((module) => ({ default: module.DialogView })));
+const MemoryView = lazy(() => import("./views/MemoryView").then((module) => ({ default: module.MemoryView })));
+const ProgramsView = lazy(() => import("./views/ProgramsView").then((module) => ({ default: module.ProgramsView })));
+const SynthView = lazy(() => import("./views/SynthView").then((module) => ({ default: module.SynthView })));
+const ChainView = lazy(() => import("./views/ChainView").then((module) => ({ default: module.ChainView })));
+const StatusView = lazy(() => import("./views/StatusView").then((module) => ({ default: module.StatusView })));
+const ClusterView = lazy(() => import("./views/ClusterView").then((module) => ({ default: module.ClusterView })));
 
 type ThemeMode = "light" | "dark";
 
 type TabId = "dialog" | "memory" | "programs" | "synth" | "chain" | "status" | "cluster";
 
-interface TabConfig {
+interface TabConfig extends TabItem {
   id: TabId;
-  label: string;
   render: () => JSX.Element;
 }
 
 const tabs: TabConfig[] = [
-  { id: "dialog", label: "Диалог", render: () => <DialogView /> },
-  { id: "memory", label: "Память", render: () => <MemoryView /> },
-  { id: "programs", label: "Программы", render: () => <ProgramsView /> },
-  { id: "synth", label: "Синтез", render: () => <SynthView /> },
-  { id: "chain", label: "Блокчейн", render: () => <ChainView /> },
-  { id: "status", label: "Статус", render: () => <StatusView /> },
-  { id: "cluster", label: "Кластер", render: () => <ClusterView /> }
+  { id: "dialog", label: "Диалог", description: "Консоль Δ-VM с историей запросов", render: () => <DialogView /> },
+  { id: "memory", label: "Память", description: "F-KV Explorer с деревом префиксов", render: () => <MemoryView /> },
+  { id: "programs", label: "Программы", description: "Редактор и анализ байткодов", render: () => <ProgramsView /> },
+  { id: "synth", label: "Синтез", description: "Монитор поиска программ", render: () => <SynthView /> },
+  { id: "chain", label: "Блокчейн", description: "Цепочка знаний Kolibri Ω", render: () => <ChainView /> },
+  { id: "status", label: "Статус", description: "Мониторинг узла и метрик", render: () => <StatusView /> },
+  { id: "cluster", label: "Кластер", description: "Состояние соседей и репутация", render: () => <ClusterView /> }
 ];
 
 const THEME_STORAGE_KEY = "kolibri-theme";
@@ -66,25 +68,15 @@ export default function App() {
     <NotificationProvider>
       <div className="app-shell">
         <header className="app-header">
-          <nav aria-label="Основные разделы Kolibri Ω Studio">
-            <ul className="tab-list" role="tablist">
-              {tabs.map((tab) => (
-                <li key={tab.id}>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeTab === tab.id}
-                    aria-controls={`${tab.id}-panel`}
-                    id={`${tab.id}-tab`}
-                    className="tab-button"
-                    onClick={() => setActiveTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </nav>
+          <div className="brand">
+            <span className="brand__title">Kolibri Ω Studio</span>
+            <span className="brand__subtitle">Контроль ядра, памяти и сети</span>
+          </div>
+          <TabNavigation
+            tabs={tabs.map(({ id, label, description }) => ({ id, label, description }))}
+            activeId={active.id}
+            onChange={(id) => setActiveTab(id as TabId)}
+          />
           <div className="header-actions">
             <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label={themeToggleLabel}>
               {themeToggleText}
@@ -93,7 +85,15 @@ export default function App() {
         </header>
         <main className="app-content">
           <section id={`${active.id}-panel`} role="tabpanel" aria-labelledby={`${active.id}-tab`} className="view">
-            {active.render()}
+            <Suspense
+              fallback={
+                <div className="panel">
+                  <SkeletonLines count={4} />
+                </div>
+              }
+            >
+              {active.render()}
+            </Suspense>
           </section>
         </main>
       </div>
