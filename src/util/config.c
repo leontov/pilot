@@ -271,12 +271,13 @@ static int skip_value(json_cursor_t *cur) {
     return -1;
 }
 
-static int parse_http_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen) {
+static int parse_http_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
     }
     int saw_host = 0;
     int saw_port = 0;
+    int saw_body_size = 0;
     while (*cur->cur) {
         skip_ws(cur);
         if (*cur->cur == '}') {
@@ -291,23 +292,42 @@ static int parse_http_object(json_cursor_t *cur, kolibri_config_t *cfg, int *see
             return -1;
         }
         if (strcmp(key, "host") == 0) {
-            if (parse_string(cur, cfg->http.host, sizeof(cfg->http.host)) != 0) {
-                return -1;
+            if (saw_host) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                if (parse_string(cur, cfg->http.host, sizeof(cfg->http.host)) != 0) {
+                    return -1;
+                }
+                saw_host = 1;
             }
-            saw_host = 1;
         } else if (strcmp(key, "port") == 0) {
-            uint64_t value = 0;
-            if (parse_uint(cur, &value) != 0 || value > UINT16_MAX) {
-                return -1;
+            if (saw_port) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT16_MAX) {
+                    return -1;
+                }
+                cfg->http.port = (uint16_t)value;
+                saw_port = 1;
             }
-            cfg->http.port = (uint16_t)value;
-            saw_port = 1;
         } else if (strcmp(key, "max_body_size") == 0) {
-            uint64_t value = 0;
-            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
-                return -1;
+            if (saw_body_size) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->http.max_body_size = (uint32_t)value;
+                saw_body_size = 1;
             }
-            cfg->http.max_body_size = (uint32_t)value;
         } else {
             if (skip_value(cur) != 0) {
                 return -1;
@@ -327,11 +347,10 @@ static int parse_http_object(json_cursor_t *cur, kolibri_config_t *cfg, int *see
     if (!saw_host || !saw_port) {
         return -1;
     }
-    *seen = 1;
     return 0;
 }
 
-static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen) {
+static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
     }
@@ -351,19 +370,45 @@ static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen)
         if (consume_char(cur, ':') != 0) {
             return -1;
         }
-        uint64_t value = 0;
-        if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
-            return -1;
-        }
         if (strcmp(key, "max_steps") == 0) {
-            cfg->vm.max_steps = (uint32_t)value;
-            saw_steps = 1;
+            if (saw_steps) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->vm.max_steps = (uint32_t)value;
+                saw_steps = 1;
+            }
         } else if (strcmp(key, "max_stack") == 0) {
-            cfg->vm.max_stack = (uint32_t)value;
-            saw_stack = 1;
+            if (saw_stack) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->vm.max_stack = (uint32_t)value;
+                saw_stack = 1;
+            }
         } else if (strcmp(key, "trace_depth") == 0) {
-            cfg->vm.trace_depth = (uint32_t)value;
-            saw_trace = 1;
+            if (saw_trace) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->vm.trace_depth = (uint32_t)value;
+                saw_trace = 1;
+            }
         } else {
             return -1;
         }
@@ -381,7 +426,6 @@ static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen)
     if (!saw_steps || !saw_stack || !saw_trace) {
         return -1;
     }
-    *seen = 1;
     return 0;
 }
 
@@ -389,6 +433,7 @@ static int parse_fkv_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
     }
+    int saw_top_k = 0;
     while (*cur->cur) {
         skip_ws(cur);
         if (*cur->cur == '}') {
@@ -403,11 +448,18 @@ static int parse_fkv_object(json_cursor_t *cur, kolibri_config_t *cfg) {
             return -1;
         }
         if (strcmp(key, "top_k") == 0) {
-            uint64_t value = 0;
-            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
-                return -1;
+            if (saw_top_k) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->fkv.top_k = value == 0 ? 1u : (uint32_t)value;
+                saw_top_k = 1;
             }
-            cfg->fkv.top_k = value == 0 ? 1u : (uint32_t)value;
         } else {
             if (skip_value(cur) != 0) {
                 return -1;
@@ -431,6 +483,8 @@ static int parse_ai_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
     }
+    int saw_path = 0;
+    int saw_limit = 0;
     while (*cur->cur) {
         skip_ws(cur);
         if (*cur->cur == '}') {
@@ -445,15 +499,29 @@ static int parse_ai_object(json_cursor_t *cur, kolibri_config_t *cfg) {
             return -1;
         }
         if (strcmp(key, "snapshot_path") == 0) {
-            if (parse_string(cur, cfg->ai.snapshot_path, sizeof(cfg->ai.snapshot_path)) != 0) {
-                return -1;
+            if (saw_path) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                if (parse_string(cur, cfg->ai.snapshot_path, sizeof(cfg->ai.snapshot_path)) != 0) {
+                    return -1;
+                }
+                saw_path = 1;
             }
         } else if (strcmp(key, "snapshot_limit") == 0) {
-            uint64_t value = 0;
-            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
-                return -1;
+            if (saw_limit) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->ai.snapshot_limit = (uint32_t)value;
+                saw_limit = 1;
             }
-            cfg->ai.snapshot_limit = (uint32_t)value;
         } else {
             if (skip_value(cur) != 0) {
                 return -1;
@@ -477,6 +545,8 @@ static int parse_selfplay_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
     }
+    int saw_tasks = 0;
+    int saw_difficulty = 0;
     while (*cur->cur) {
         skip_ws(cur);
         if (*cur->cur == '}') {
@@ -490,14 +560,32 @@ static int parse_selfplay_object(json_cursor_t *cur, kolibri_config_t *cfg) {
         if (consume_char(cur, ':') != 0) {
             return -1;
         }
-        uint64_t value = 0;
-        if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
-            return -1;
-        }
         if (strcmp(key, "tasks_per_iteration") == 0) {
-            cfg->selfplay.tasks_per_iteration = (uint32_t)value;
+            if (saw_tasks) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->selfplay.tasks_per_iteration = (uint32_t)value;
+                saw_tasks = 1;
+            }
         } else if (strcmp(key, "max_difficulty") == 0) {
-            cfg->selfplay.max_difficulty = (uint32_t)value;
+            if (saw_difficulty) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->selfplay.max_difficulty = (uint32_t)value;
+                saw_difficulty = 1;
+            }
         } else {
             return -1;
         }
@@ -519,6 +607,11 @@ static int parse_search_object(json_cursor_t *cur, kolibri_config_t *cfg) {
     if (consume_char(cur, '{') != 0) {
         return -1;
     }
+    int saw_candidates = 0;
+    int saw_terms = 0;
+    int saw_coefficient = 0;
+    int saw_formula_length = 0;
+    int saw_base_effectiveness = 0;
     while (*cur->cur) {
         skip_ws(cur);
         if (*cur->cur == '}') {
@@ -533,29 +626,74 @@ static int parse_search_object(json_cursor_t *cur, kolibri_config_t *cfg) {
             return -1;
         }
         if (strcmp(key, "base_effectiveness") == 0) {
-            double value = 0.0;
-            if (parse_double(cur, &value) != 0) {
-                return -1;
+            if (saw_base_effectiveness) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                double value = 0.0;
+                if (parse_double(cur, &value) != 0) {
+                    return -1;
+                }
+                if (value >= 0.0) {
+                    cfg->search.base_effectiveness = value;
+                }
+                saw_base_effectiveness = 1;
             }
-            if (value >= 0.0) {
-                cfg->search.base_effectiveness = value;
+        } else if (strcmp(key, "max_candidates") == 0) {
+            if (saw_candidates) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->search.max_candidates = (uint32_t)value;
+                saw_candidates = 1;
+            }
+        } else if (strcmp(key, "max_terms") == 0) {
+            if (saw_terms) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->search.max_terms = (uint32_t)value;
+                saw_terms = 1;
+            }
+        } else if (strcmp(key, "max_coefficient") == 0) {
+            if (saw_coefficient) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->search.max_coefficient = (uint32_t)value;
+                saw_coefficient = 1;
+            }
+        } else if (strcmp(key, "max_formula_length") == 0) {
+            if (saw_formula_length) {
+                if (skip_value(cur) != 0) {
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                    return -1;
+                }
+                cfg->search.max_formula_length = (uint32_t)value;
+                saw_formula_length = 1;
             }
         } else {
-            uint64_t value = 0;
-            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
-                return -1;
-            }
-            if (strcmp(key, "max_candidates") == 0) {
-                cfg->search.max_candidates = (uint32_t)value;
-            } else if (strcmp(key, "max_terms") == 0) {
-                cfg->search.max_terms = (uint32_t)value;
-            } else if (strcmp(key, "max_coefficient") == 0) {
-                cfg->search.max_coefficient = (uint32_t)value;
-            } else if (strcmp(key, "max_formula_length") == 0) {
-                cfg->search.max_formula_length = (uint32_t)value;
-            } else {
-                return -1;
-            }
+            return -1;
         }
         skip_ws(cur);
         if (*cur->cur == ',') {
@@ -657,6 +795,10 @@ int config_load(const char *path, kolibri_config_t *cfg) {
     int saw_http = 0;
     int saw_vm = 0;
     int saw_seed = 0;
+    int saw_fkv = 0;
+    int saw_ai = 0;
+    int saw_selfplay = 0;
+    int saw_search = 0;
 
     while (*cur.cur) {
         skip_ws(&cur);
@@ -679,49 +821,111 @@ int config_load(const char *path, kolibri_config_t *cfg) {
         }
 
         if (strcmp(key, "http") == 0) {
-            if (parse_http_object(&cur, &tmp, &saw_http) != 0) {
-                free(buffer);
-                errno = EINVAL;
-                return -1;
+            if (saw_http) {
+                if (skip_value(&cur) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+            } else {
+                if (parse_http_object(&cur, &tmp) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+                saw_http = 1;
             }
         } else if (strcmp(key, "vm") == 0) {
-            if (parse_vm_object(&cur, &tmp, &saw_vm) != 0) {
-                free(buffer);
-                errno = EINVAL;
-                return -1;
+            if (saw_vm) {
+                if (skip_value(&cur) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+            } else {
+                if (parse_vm_object(&cur, &tmp) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+                saw_vm = 1;
             }
         } else if (strcmp(key, "seed") == 0) {
-            uint64_t value = 0;
-            if (parse_uint(&cur, &value) != 0 || value > UINT32_MAX) {
-                free(buffer);
-                errno = EINVAL;
-                return -1;
+            if (saw_seed) {
+                if (skip_value(&cur) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+            } else {
+                uint64_t value = 0;
+                if (parse_uint(&cur, &value) != 0 || value > UINT32_MAX) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+                tmp.seed = (uint32_t)value;
+                saw_seed = 1;
             }
-            tmp.seed = (uint32_t)value;
-            saw_seed = 1;
         } else if (strcmp(key, "fkv") == 0) {
-            if (parse_fkv_object(&cur, &tmp) != 0) {
-                free(buffer);
-                errno = EINVAL;
-                return -1;
+            if (saw_fkv) {
+                if (skip_value(&cur) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+            } else {
+                if (parse_fkv_object(&cur, &tmp) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+                saw_fkv = 1;
             }
         } else if (strcmp(key, "ai") == 0) {
-            if (parse_ai_object(&cur, &tmp) != 0) {
-                free(buffer);
-                errno = EINVAL;
-                return -1;
+            if (saw_ai) {
+                if (skip_value(&cur) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+            } else {
+                if (parse_ai_object(&cur, &tmp) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+                saw_ai = 1;
             }
         } else if (strcmp(key, "selfplay") == 0) {
-            if (parse_selfplay_object(&cur, &tmp) != 0) {
-                free(buffer);
-                errno = EINVAL;
-                return -1;
+            if (saw_selfplay) {
+                if (skip_value(&cur) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+            } else {
+                if (parse_selfplay_object(&cur, &tmp) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+                saw_selfplay = 1;
             }
         } else if (strcmp(key, "search") == 0) {
-            if (parse_search_object(&cur, &tmp) != 0) {
-                free(buffer);
-                errno = EINVAL;
-                return -1;
+            if (saw_search) {
+                if (skip_value(&cur) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+            } else {
+                if (parse_search_object(&cur, &tmp) != 0) {
+                    free(buffer);
+                    errno = EINVAL;
+                    return -1;
+                }
+                saw_search = 1;
             }
         } else {
             if (skip_value(&cur) != 0) {
