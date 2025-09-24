@@ -5,6 +5,7 @@
 #include "kolibri_ai.h"
 
 #include "util/log.h"
+#include <json-c/json.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -133,7 +134,7 @@ static int dataset_append(KolibriAIDataset *dataset,
 }
 
 static void dataset_trim(KolibriAIDataset *dataset, size_t limit) {
-    if (!dataset || dataset->count <= limit) {
+    if (!dataset || limit == 0 || dataset->count <= limit) {
         return;
     }
     size_t offset = dataset->count - limit;
@@ -141,6 +142,238 @@ static void dataset_trim(KolibriAIDataset *dataset, size_t limit) {
             dataset->entries + offset,
             limit * sizeof(dataset->entries[0]));
     dataset->count = limit;
+}
+
+static size_t clamp_snapshot_window(size_t total, size_t limit) {
+    if (limit == 0 || total <= limit) {
+        return 0;
+    }
+    return total - limit;
+}
+
+static int parse_dataset_entries(struct json_object *entries,
+                                 size_t snapshot_limit,
+                                 KolibriAIDatasetEntry **out_entries,
+                                 size_t *out_count,
+                                 size_t *out_capacity) {
+    if (!entries || !out_entries || !out_count || !out_capacity) {
+        return -1;
+    }
+
+    size_t total = json_object_array_length(entries);
+    size_t start = clamp_snapshot_window(total, snapshot_limit);
+    size_t capacity = total > start ? total - start : 0;
+
+    KolibriAIDatasetEntry *buffer = NULL;
+    if (capacity > 0) {
+        buffer = calloc(capacity, sizeof(*buffer));
+        if (!buffer) {
+            return -1;
+        }
+    }
+
+    size_t count = 0;
+    for (size_t i = start; i < total; ++i) {
+        struct json_object *entry_obj =
+            json_object_array_get_idx(entries, (int)i);
+        if (!json_object_is_type(entry_obj, json_type_object)) {
+            continue;
+        }
+
+        KolibriAIDatasetEntry entry = {0};
+        struct json_object *field = NULL;
+        if (json_object_object_get_ex(entry_obj, "prompt", &field) &&
+            json_object_is_type(field, json_type_string)) {
+            copy_string_truncated(entry.prompt,
+                                  sizeof(entry.prompt),
+                                  json_object_get_string(field));
+        }
+        if (json_object_object_get_ex(entry_obj, "response", &field) &&
+            json_object_is_type(field, json_type_string)) {
+            copy_string_truncated(entry.response,
+                                  sizeof(entry.response),
+                                  json_object_get_string(field));
+        }
+        if (json_object_object_get_ex(entry_obj, "reward", &field) &&
+            (json_object_is_type(field, json_type_double) ||
+             json_object_is_type(field, json_type_int))) {
+            entry.reward = json_object_get_double(field);
+        }
+        if (json_object_object_get_ex(entry_obj, "poe", &field) &&
+            (json_object_is_type(field, json_type_double) ||
+             json_object_is_type(field, json_type_int))) {
+            entry.poe = json_object_get_double(field);
+        }
+        if (json_object_object_get_ex(entry_obj, "mdl", &field) &&
+            (json_object_is_type(field, json_type_double) ||
+             json_object_is_type(field, json_type_int))) {
+            entry.mdl = json_object_get_double(field);
+        }
+        if (json_object_object_get_ex(entry_obj, "timestamp", &field) &&
+            json_object_is_type(field, json_type_int)) {
+            entry.timestamp = (time_t)json_object_get_int64(field);
+        }
+
+        if (buffer && count < capacity) {
+            buffer[count++] = entry;
+        }
+    }
+
+    if (count == 0) {
+        free(buffer);
+        buffer = NULL;
+        capacity = 0;
+    } else if (count < capacity) {
+        KolibriAIDatasetEntry *shrunk =
+            realloc(buffer, count * sizeof(*buffer));
+        if (shrunk) {
+            buffer = shrunk;
+        }
+        capacity = count;
+    }
+
+    *out_entries = buffer;
+    *out_count = count;
+    *out_capacity = capacity;
+    return 0;
+}
+
+static int parse_memory_facts(struct json_object *facts,
+                              size_t snapshot_limit,
+                              KolibriMemoryFact **out_facts,
+                              size_t *out_count,
+                              size_t *out_capacity) {
+    if (!facts || !out_facts || !out_count || !out_capacity) {
+        return -1;
+    }
+
+    size_t total = json_object_array_length(facts);
+    size_t start = clamp_snapshot_window(total, snapshot_limit);
+    size_t capacity = total > start ? total - start : 0;
+
+    KolibriMemoryFact *buffer = NULL;
+    if (capacity > 0) {
+        buffer = calloc(capacity, sizeof(*buffer));
+        if (!buffer) {
+            return -1;
+        }
+    }
+
+    size_t count = 0;
+    for (size_t i = start; i < total; ++i) {
+        struct json_object *fact_obj = json_object_array_get_idx(facts, (int)i);
+        if (!json_object_is_type(fact_obj, json_type_object)) {
+            continue;
+        }
+
+        KolibriMemoryFact fact = {0};
+        struct json_object *field = NULL;
+        if (json_object_object_get_ex(fact_obj, "key", &field) &&
+            json_object_is_type(field, json_type_string)) {
+            copy_string_truncated(fact.key,
+                                  sizeof(fact.key),
+                                  json_object_get_string(field));
+        }
+        if (json_object_object_get_ex(fact_obj, "value", &field) &&
+            json_object_is_type(field, json_type_string)) {
+            copy_string_truncated(fact.value,
+                                  sizeof(fact.value),
+                                  json_object_get_string(field));
+        }
+        if (json_object_object_get_ex(fact_obj, "salience", &field) &&
+            (json_object_is_type(field, json_type_double) ||
+             json_object_is_type(field, json_type_int))) {
+            fact.salience = json_object_get_double(field);
+        }
+        if (json_object_object_get_ex(fact_obj, "last_updated", &field) &&
+            json_object_is_type(field, json_type_int)) {
+            fact.last_updated = (time_t)json_object_get_int64(field);
+        }
+
+        if (buffer && count < capacity) {
+            buffer[count++] = fact;
+        }
+    }
+
+    if (count == 0) {
+        free(buffer);
+        buffer = NULL;
+        capacity = 0;
+    } else if (count < capacity) {
+        KolibriMemoryFact *shrunk =
+            realloc(buffer, count * sizeof(*buffer));
+        if (shrunk) {
+            buffer = shrunk;
+        }
+        capacity = count;
+    }
+
+    *out_facts = buffer;
+    *out_count = count;
+    *out_capacity = capacity;
+    return 0;
+}
+
+static int parse_formulas(struct json_object *formulas,
+                          Formula **out_formulas,
+                          size_t *out_count) {
+    if (!formulas || !out_formulas || !out_count) {
+        return -1;
+    }
+
+    size_t count = json_object_array_length(formulas);
+    Formula *buffer = NULL;
+    if (count > 0) {
+        buffer = calloc(count, sizeof(*buffer));
+        if (!buffer) {
+            return -1;
+        }
+    }
+
+    size_t written = 0;
+    for (size_t i = 0; i < count; ++i) {
+        struct json_object *entry =
+            json_object_array_get_idx(formulas, (int)i);
+        if (!json_object_is_type(entry, json_type_object)) {
+            continue;
+        }
+        struct json_object *id_obj = NULL;
+        struct json_object *eff_obj = NULL;
+        if (!json_object_object_get_ex(entry, "id", &id_obj) ||
+            !json_object_is_type(id_obj, json_type_string)) {
+            continue;
+        }
+        if (!json_object_object_get_ex(entry, "effectiveness", &eff_obj) ||
+            (!json_object_is_type(eff_obj, json_type_double) &&
+             !json_object_is_type(eff_obj, json_type_int))) {
+            continue;
+        }
+
+        Formula formula = {0};
+        formula.representation = FORMULA_REPRESENTATION_TEXT;
+        copy_string_truncated(formula.id,
+                              sizeof(formula.id),
+                              json_object_get_string(id_obj));
+        formula.effectiveness = json_object_get_double(eff_obj);
+
+        if (buffer && written < count) {
+            buffer[written++] = formula;
+        }
+    }
+
+    if (written == 0) {
+        free(buffer);
+        buffer = NULL;
+    } else if (written < count) {
+        Formula *shrunk = realloc(buffer, written * sizeof(*buffer));
+        if (shrunk) {
+            buffer = shrunk;
+        }
+    }
+
+    *out_formulas = buffer;
+    *out_count = written;
+    return 0;
 }
 
 static void memory_init(KolibriMemoryModule *memory) {
@@ -610,102 +843,144 @@ char *kolibri_ai_export_snapshot(const KolibriAI *ai) {
     if (!ai) {
         return NULL;
     }
+
     pthread_mutex_lock((pthread_mutex_t *)&ai->mutex);
-    size_t count = ai->library ? ai->library->count : 0;
-    size_t formulas_cap = 2; /* [] */
-    if (ai->library) {
-        for (size_t i = 0; i < ai->library->count; ++i) {
-            size_t id_len = strnlen(ai->library->formulas[i].id,
-                                    sizeof(ai->library->formulas[i].id));
-            formulas_cap += id_len + 40; /* formatting overhead */
-        }
-    }
-    char *formulas = malloc(formulas_cap);
-    if (!formulas) {
+
+    struct json_object *root = json_object_new_object();
+    if (!root) {
         pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
         return NULL;
     }
-    size_t offset = (size_t)snprintf(formulas, formulas_cap, "[");
-    for (size_t i = 0; i < count && offset < formulas_cap; ++i) {
-        const Formula *formula = &ai->library->formulas[i];
-        int written = snprintf(formulas + offset,
-                               formulas_cap - offset,
-                               "%s{\"id\":\"%s\",\"effectiveness\":%.6f}",
-                               i == 0 ? "" : ",",
-                               formula->id,
-                               formula->effectiveness);
-        if (written < 0) {
-            formulas[0] = '\0';
-            break;
+
+    char *result = NULL;
+
+    json_object_object_add(root,
+                           "iterations",
+                           json_object_new_int64((int64_t)ai->iterations));
+    json_object_object_add(root,
+                           "average_reward",
+                           json_object_new_double(ai->average_reward));
+    json_object_object_add(root,
+                           "planning_score",
+                           json_object_new_double(ai->planning_score));
+    json_object_object_add(root,
+                           "recent_poe",
+                           json_object_new_double(ai->recent_poe));
+    json_object_object_add(root,
+                           "recent_mdl",
+                           json_object_new_double(ai->recent_mdl));
+
+    struct json_object *formulas = json_object_new_array();
+    if (!formulas) {
+        goto export_cleanup;
+    }
+    if (ai->library) {
+        for (size_t i = 0; i < ai->library->count; ++i) {
+            const Formula *formula = &ai->library->formulas[i];
+            struct json_object *entry = json_object_new_object();
+            if (!entry) {
+                goto export_cleanup;
+            }
+            json_object_object_add(entry,
+                                   "id",
+                                   json_object_new_string(formula->id));
+            json_object_object_add(entry,
+                                   "effectiveness",
+                                   json_object_new_double(formula->effectiveness));
+            json_object_array_add(formulas, entry);
         }
-        offset += (size_t)written;
     }
-    if (offset < formulas_cap) {
-        snprintf(formulas + offset, formulas_cap - offset, "]");
-    } else if (formulas_cap > 0) {
-        formulas[formulas_cap - 1] = '\0';
+    json_object_object_add(root, "formulas", formulas);
+
+    struct json_object *dataset_obj = json_object_new_object();
+    if (!dataset_obj) {
+        goto export_cleanup;
+    }
+    struct json_object *entries_array = json_object_new_array();
+    if (!entries_array) {
+        goto export_cleanup;
+    }
+    size_t dataset_start = 0;
+    if (ai->snapshot_limit > 0 && ai->dataset.count > ai->snapshot_limit) {
+        dataset_start = ai->dataset.count - ai->snapshot_limit;
+    }
+    for (size_t i = dataset_start; i < ai->dataset.count; ++i) {
+        const KolibriAIDatasetEntry *entry = &ai->dataset.entries[i];
+        struct json_object *entry_obj = json_object_new_object();
+        if (!entry_obj) {
+            goto export_cleanup;
+        }
+        json_object_object_add(entry_obj,
+                               "prompt",
+                               json_object_new_string(entry->prompt));
+        json_object_object_add(entry_obj,
+                               "response",
+                               json_object_new_string(entry->response));
+        json_object_object_add(entry_obj,
+                               "reward",
+                               json_object_new_double(entry->reward));
+        json_object_object_add(entry_obj,
+                               "poe",
+                               json_object_new_double(entry->poe));
+        json_object_object_add(entry_obj,
+                               "mdl",
+                               json_object_new_double(entry->mdl));
+        json_object_object_add(entry_obj,
+                               "timestamp",
+                               json_object_new_int64((int64_t)entry->timestamp));
+        json_object_array_add(entries_array, entry_obj);
+    }
+    json_object_object_add(dataset_obj, "entries", entries_array);
+    json_object_object_add(root, "dataset", dataset_obj);
+
+    struct json_object *memory_obj = json_object_new_object();
+    if (!memory_obj) {
+        goto export_cleanup;
+    }
+    struct json_object *facts_array = json_object_new_array();
+    if (!facts_array) {
+        goto export_cleanup;
+    }
+    size_t memory_start = 0;
+    if (ai->snapshot_limit > 0 && ai->memory.count > ai->snapshot_limit) {
+        memory_start = ai->memory.count - ai->snapshot_limit;
+    }
+    for (size_t i = memory_start; i < ai->memory.count; ++i) {
+        const KolibriMemoryFact *fact = &ai->memory.facts[i];
+        struct json_object *fact_obj = json_object_new_object();
+        if (!fact_obj) {
+            goto export_cleanup;
+        }
+        json_object_object_add(fact_obj,
+                               "key",
+                               json_object_new_string(fact->key));
+        json_object_object_add(fact_obj,
+                               "value",
+                               json_object_new_string(fact->value));
+        json_object_object_add(fact_obj,
+                               "salience",
+                               json_object_new_double(fact->salience));
+        json_object_object_add(fact_obj,
+                               "last_updated",
+                               json_object_new_int64((int64_t)fact->last_updated));
+        json_object_array_add(facts_array, fact_obj);
+    }
+    json_object_object_add(memory_obj, "facts", facts_array);
+    json_object_object_add(root, "memory", memory_obj);
+
+    {
+        const char *json_str =
+            json_object_to_json_string_ext(root, JSON_C_TO_STRING_PLAIN);
+        if (!json_str) {
+            goto export_cleanup;
+        }
+        result = strdup(json_str);
     }
 
-    double average = ai->average_reward;
-    double planning = ai->planning_score;
-    double poe = ai->recent_poe;
-    double mdl = ai->recent_mdl;
-    uint64_t iterations = ai->iterations;
+export_cleanup:
+    json_object_put(root);
     pthread_mutex_unlock((pthread_mutex_t *)&ai->mutex);
-
-    size_t total = 128 + strlen(formulas);
-    char *result = malloc(total);
-    if (!result) {
-        free(formulas);
-        return NULL;
-    }
-    snprintf(result,
-             total,
-             "{\"iterations\":%llu,\"average_reward\":%.6f,"
-             "\"planning_score\":%.6f,\"recent_poe\":%.6f,"
-             "\"recent_mdl\":%.6f,\"formulas\":%s}",
-             (unsigned long long)iterations,
-             average,
-             planning,
-             poe,
-             mdl,
-             formulas);
-    free(formulas);
     return result;
-}
-
-static int parse_double_field(const char *json, const char *key, double *out) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-    const char *pos = strstr(json, pattern);
-    if (!pos) {
-        return -1;
-    }
-    pos += strlen(pattern);
-    char *end = NULL;
-    double value = strtod(pos, &end);
-    if (end == pos) {
-        return -1;
-    }
-    *out = value;
-    return 0;
-}
-
-static int parse_uint64_field(const char *json, const char *key, uint64_t *out) {
-    char pattern[64];
-    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-    const char *pos = strstr(json, pattern);
-    if (!pos) {
-        return -1;
-    }
-    pos += strlen(pattern);
-    char *end = NULL;
-    unsigned long long value = strtoull(pos, &end, 10);
-    if (end == pos) {
-        return -1;
-    }
-    *out = (uint64_t)value;
-    return 0;
 }
 
 int kolibri_ai_import_snapshot(KolibriAI *ai, const char *json) {
@@ -713,77 +988,198 @@ int kolibri_ai_import_snapshot(KolibriAI *ai, const char *json) {
         return -1;
     }
 
+    struct json_tokener *tok = json_tokener_new();
+    if (!tok) {
+        return -1;
+    }
+
+    struct json_object *root =
+        json_tokener_parse_ex(tok, json, (int)strlen(json));
+    enum json_tokener_error err = json_tokener_get_error(tok);
+    json_tokener_free(tok);
+    if (!root || err != json_tokener_success ||
+        !json_object_is_type(root, json_type_object)) {
+        if (root) {
+            json_object_put(root);
+        }
+        return -1;
+    }
+
+    KolibriAIDatasetEntry *new_entries = NULL;
+    KolibriMemoryFact *new_facts = NULL;
+    Formula *new_formulas = NULL;
+    size_t new_entry_count = 0;
+    size_t new_entry_capacity = 0;
+    size_t new_fact_count = 0;
+    size_t new_fact_capacity = 0;
+    size_t new_formula_count = 0;
+
+    int dataset_present = 0;
+    int memory_present = 0;
+    int formulas_present = 0;
+
+    int has_iterations = 0;
+    uint64_t parsed_iterations = 0;
+    int has_average = 0;
+    double parsed_average = 0.0;
+    int has_planning = 0;
+    double parsed_planning = 0.0;
+    int has_recent_poe = 0;
+    double parsed_recent_poe = 0.0;
+    int has_recent_mdl = 0;
+    double parsed_recent_mdl = 0.0;
+
+    uint32_t snapshot_limit = 0;
     pthread_mutex_lock(&ai->mutex);
-    double tmp_double = 0.0;
-    uint64_t tmp_u64 = 0;
-    if (parse_uint64_field(json, "iterations", &tmp_u64) == 0) {
-        ai->iterations = tmp_u64;
+    snapshot_limit = ai->snapshot_limit;
+    pthread_mutex_unlock(&ai->mutex);
+
+    struct json_object *value = NULL;
+    if (json_object_object_get_ex(root, "iterations", &value) &&
+        json_object_is_type(value, json_type_int)) {
+        parsed_iterations = (uint64_t)json_object_get_int64(value);
+        has_iterations = 1;
     }
-    if (parse_double_field(json, "average_reward", &tmp_double) == 0) {
-        ai->average_reward = tmp_double;
+    if (json_object_object_get_ex(root, "average_reward", &value) &&
+        (json_object_is_type(value, json_type_double) ||
+         json_object_is_type(value, json_type_int))) {
+        parsed_average = json_object_get_double(value);
+        has_average = 1;
     }
-    if (parse_double_field(json, "planning_score", &tmp_double) == 0) {
-        ai->planning_score = tmp_double;
+    if (json_object_object_get_ex(root, "planning_score", &value) &&
+        (json_object_is_type(value, json_type_double) ||
+         json_object_is_type(value, json_type_int))) {
+        parsed_planning = json_object_get_double(value);
+        has_planning = 1;
     }
-    if (parse_double_field(json, "recent_poe", &tmp_double) == 0) {
-        ai->recent_poe = tmp_double;
+    if (json_object_object_get_ex(root, "recent_poe", &value) &&
+        (json_object_is_type(value, json_type_double) ||
+         json_object_is_type(value, json_type_int))) {
+        parsed_recent_poe = json_object_get_double(value);
+        has_recent_poe = 1;
     }
-    if (parse_double_field(json, "recent_mdl", &tmp_double) == 0) {
-        ai->recent_mdl = tmp_double;
+    if (json_object_object_get_ex(root, "recent_mdl", &value) &&
+        (json_object_is_type(value, json_type_double) ||
+         json_object_is_type(value, json_type_int))) {
+        parsed_recent_mdl = json_object_get_double(value);
+        has_recent_mdl = 1;
     }
 
-    const char *array = strstr(json, "\"formulas\":[");
-    if (array) {
-        array += strlen("\"formulas\":[");
-        const char *array_end = strchr(array, ']');
-        if (array_end) {
-            for (size_t i = 0; i < ai->library->count; ++i) {
-                formula_clear(&ai->library->formulas[i]);
+    if (json_object_object_get_ex(root, "formulas", &value) &&
+        json_object_is_type(value, json_type_array)) {
+        formulas_present = 1;
+        if (parse_formulas(value, &new_formulas, &new_formula_count) != 0) {
+            json_object_put(root);
+            return -1;
+        }
+    }
+
+    if (json_object_object_get_ex(root, "dataset", &value) &&
+        json_object_is_type(value, json_type_object)) {
+        struct json_object *entries = NULL;
+        if (json_object_object_get_ex(value, "entries", &entries) &&
+            json_object_is_type(entries, json_type_array)) {
+            dataset_present = 1;
+            if (parse_dataset_entries(entries,
+                                      snapshot_limit,
+                                      &new_entries,
+                                      &new_entry_count,
+                                      &new_entry_capacity) != 0) {
+                free(new_formulas);
+                json_object_put(root);
+                return -1;
             }
-            ai->library->count = 0;
-            while (array < array_end) {
-                const char *id_key = strstr(array, "\"id\":\"");
-                if (!id_key || id_key >= array_end) {
-                    break;
-                }
-                id_key += strlen("\"id\":\"");
-                const char *id_end = strchr(id_key, '"');
-                if (!id_end || id_end > array_end) {
-                    break;
-                }
-                size_t id_len = (size_t)(id_end - id_key);
-                char id_buf[64];
-                if (id_len >= sizeof(id_buf)) {
-                    id_len = sizeof(id_buf) - 1;
-                }
-                memcpy(id_buf, id_key, id_len);
-                id_buf[id_len] = '\0';
+        }
+    }
 
-                const char *eff_key = strstr(id_end, "\"effectiveness\":");
-                if (!eff_key || eff_key >= array_end) {
-                    break;
-                }
-                eff_key += strlen("\"effectiveness\":");
-                char *eff_end = NULL;
-                double eff_value = strtod(eff_key, &eff_end);
-                if (eff_end == eff_key) {
-                    break;
-                }
-
-                Formula formula = {0};
-                formula.representation = FORMULA_REPRESENTATION_TEXT;
-                memcpy(formula.id, id_buf, id_len);
-                formula.id[id_len] = '\0';
-                formula.effectiveness = eff_value;
-                formula_collection_add(ai->library, &formula);
-                array = eff_end;
+    if (json_object_object_get_ex(root, "memory", &value) &&
+        json_object_is_type(value, json_type_object)) {
+        struct json_object *facts = NULL;
+        if (json_object_object_get_ex(value, "facts", &facts) &&
+            json_object_is_type(facts, json_type_array)) {
+            memory_present = 1;
+            if (parse_memory_facts(facts,
+                                   snapshot_limit,
+                                   &new_facts,
+                                   &new_fact_count,
+                                   &new_fact_capacity) != 0) {
+                free(new_formulas);
+                free(new_entries);
+                json_object_put(root);
+                return -1;
             }
-            update_average_reward(ai);
+        }
+    }
+
+    int status = 0;
+    pthread_mutex_lock(&ai->mutex);
+
+    if (status == 0 && formulas_present) {
+        size_t initial_capacity = new_formula_count > 0 ? new_formula_count : 8;
+        FormulaCollection *replacement =
+            formula_collection_create(initial_capacity);
+        if (!replacement) {
+            status = -1;
+        } else {
+            for (size_t i = 0; i < new_formula_count; ++i) {
+                if (formula_collection_add(replacement, &new_formulas[i]) != 0) {
+                    status = -1;
+                    break;
+                }
+            }
+            if (status == 0) {
+                if (ai->library) {
+                    formula_collection_destroy(ai->library);
+                }
+                ai->library = replacement;
+                update_average_reward(ai);
+            } else {
+                formula_collection_destroy(replacement);
+            }
+        }
+    }
+
+    if (status == 0 && dataset_present) {
+        dataset_clear(&ai->dataset);
+        ai->dataset.entries = new_entries;
+        ai->dataset.count = new_entry_count;
+        ai->dataset.capacity = new_entry_capacity;
+        new_entries = NULL;
+    }
+
+    if (status == 0 && memory_present) {
+        memory_clear(&ai->memory);
+        ai->memory.facts = new_facts;
+        ai->memory.count = new_fact_count;
+        ai->memory.capacity = new_fact_capacity;
+        new_facts = NULL;
+    }
+
+    if (status == 0) {
+        if (has_iterations) {
+            ai->iterations = parsed_iterations;
+        }
+        if (has_average) {
+            ai->average_reward = parsed_average;
+        }
+        if (has_planning) {
+            ai->planning_score = parsed_planning;
+        }
+        if (has_recent_poe) {
+            ai->recent_poe = parsed_recent_poe;
+        }
+        if (has_recent_mdl) {
+            ai->recent_mdl = parsed_recent_mdl;
         }
     }
 
     pthread_mutex_unlock(&ai->mutex);
-    return 0;
+    json_object_put(root);
+
+    free(new_entries);
+    free(new_facts);
+    free(new_formulas);
+    return status;
 }
 
 int kolibri_ai_sync_with_neighbor(KolibriAI *ai, const char *base_url) {
