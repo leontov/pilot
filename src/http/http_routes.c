@@ -42,15 +42,6 @@ static uint64_t submitted_program_counter = 0;
 static pthread_mutex_t dialog_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t dialog_exchange_counter = 0;
 
-typedef struct {
-    char *program_id;
-} submitted_program_id_t;
-
-static submitted_program_id_t *submitted_program_ids = NULL;
-static size_t submitted_program_id_count = 0;
-static size_t submitted_program_id_capacity = 0;
-static size_t next_program_id = 1;
-
 static char *duplicate_string(const char *src) {
     if (!src) {
         return NULL;
@@ -86,52 +77,7 @@ static int respond_json(http_response_t *resp, const char *json, int status) {
 }
 
 
-static void remember_program_id(const char *program_id) {
-    if (!program_id) {
-        return;
-    }
-    if (submitted_program_id_count == submitted_program_id_capacity) {
-        size_t new_capacity = submitted_program_id_capacity ? submitted_program_id_capacity * 2 : 8;
-        submitted_program_id_t *tmp = realloc(submitted_program_ids, new_capacity * sizeof(*tmp));
-        if (!tmp) {
-            return;
-        }
-        submitted_program_ids = tmp;
-        for (size_t i = submitted_program_id_capacity; i < new_capacity; ++i) {
-            submitted_program_ids[i].program_id = NULL;
-        }
-        submitted_program_id_capacity = new_capacity;
-    }
-    char *copy = duplicate_string(program_id);
-    if (!copy) {
-        return;
-    }
-    submitted_program_ids[submitted_program_id_count++].program_id = copy;
-}
-
-static int program_was_submitted(const char *program_id) {
-    if (!program_id) {
-        return 0;
-    }
-    for (size_t i = 0; i < submitted_program_id_count; ++i) {
-        if (submitted_program_ids[i].program_id &&
-            strcmp(submitted_program_ids[i].program_id, program_id) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 static void free_submitted_programs(void) {
-    for (size_t i = 0; i < submitted_program_id_count; ++i) {
-        free(submitted_program_ids[i].program_id);
-        submitted_program_ids[i].program_id = NULL;
-    }
-    free(submitted_program_ids);
-    submitted_program_ids = NULL;
-    submitted_program_id_count = 0;
-    submitted_program_id_capacity = 0;
-
     free(submitted_programs);
     submitted_programs = NULL;
     submitted_program_count = 0;
@@ -146,7 +92,10 @@ static const char *memmem_const(const char *haystack, size_t haystack_len, const
     for (size_t i = 0; i <= haystack_len - needle_len; ++i) {
         if (memcmp(haystack + i, needle, needle_len) == 0) {
             return haystack + i;
-
+        }
+    }
+    return NULL;
+}
 
 static int respond_error(http_response_t *resp, int status, const char *code, const char *message) {
     if (!code) {
@@ -285,6 +234,9 @@ static int json_extract_string(const char *json, const char *key, char *out, siz
         len = out_size - 1;
     }
     memcpy(out, start, len);
+    out[len] = '\0';
+    return 0;
+}
 
 static void append_char(char **buffer, size_t *len, size_t *cap, char ch) {
     if (!buffer || !len || !cap) {
@@ -711,6 +663,7 @@ static int extract_string_field(const char *body, size_t body_len, const char *k
     }
     const char *value_end = ptr;
     return json_unescape_into_buffer(value_start, value_end, out, out_len);
+}
 
 static int digits_from_string(const char *str, uint8_t *out, size_t *out_len, size_t max_len) {
     if (!str || !out || !out_len) {
@@ -745,6 +698,7 @@ static int digits_to_string(const uint8_t *digits, size_t len, char *out, size_t
     }
     out[len] = '\0';
     return 0;
+}
 
 static int parse_json_uint_field(const char *json, const char *field, uint64_t *out) {
     if (!json || !field || !out) {
@@ -1522,7 +1476,6 @@ void http_routes_set_start_time(uint64_t ms_since_epoch) {
 void http_routes_set_blockchain(Blockchain *chain) {
     if (!chain) {
         free_submitted_programs();
-        next_program_id = 1;
     }
     routes_blockchain = chain;
 }
