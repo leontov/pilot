@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "vm/vm.h"
 
 #include "fkv/fkv.h"

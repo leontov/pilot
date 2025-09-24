@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2024 Кочуров Владислав Евгеньевич -->
+
 # Kolibri Ω — Product Mission & Execution Blueprint
 
 ## 1. Product Mission & Success Criteria

@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #define _POSIX_C_SOURCE 200809L
 
 #include "formula.h"

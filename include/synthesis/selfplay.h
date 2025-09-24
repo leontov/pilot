@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef KOLIBRI_SYNTHESIS_SELFPLAY_H
 #define KOLIBRI_SYNTHESIS_SELFPLAY_H
 

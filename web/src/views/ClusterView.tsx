@@ -1,3 +1,5 @@
+// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 import { useEffect, useMemo, useState } from "react";
 import { apiClient, MetricsResponse, PeerInfo } from "../api/client";
 import { DataTable } from "../components/DataTable";

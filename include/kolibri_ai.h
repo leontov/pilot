@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef KOLIBRI_AI_H
 #define KOLIBRI_AI_H
 
@@ -6,7 +8,9 @@
 
 #include "formula_core.h"
 #include "synthesis/selfplay.h"
+
 #include "util/config.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,10 +18,13 @@ extern "C" {
 
 typedef struct KolibriAI KolibriAI;
 
+#ifndef KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
+#define KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
 typedef struct {
     uint32_t tasks_per_iteration;
     uint32_t max_difficulty;
 } KolibriAISelfplayConfig;
+#endif
 
 typedef struct {
     KolibriSelfplayTask task;
@@ -36,8 +43,12 @@ typedef enum {
     KOLIBRI_DIFFICULTY_CHALLENGE = 3
 } KolibriDifficultyLevel;
 
+
 KolibriAI *kolibri_ai_create(void);
 KolibriAI *kolibri_ai_create_with_config(const kolibri_config_t *cfg);
+
+KolibriAI *kolibri_ai_create(const struct kolibri_config_t *cfg);
+
 void kolibri_ai_destroy(KolibriAI *ai);
 
 void kolibri_ai_start(KolibriAI *ai);

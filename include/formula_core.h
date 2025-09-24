@@ -1,5 +1,12 @@
+
 #ifndef KOLIBRI_FORMULA_CORE_H
 #define KOLIBRI_FORMULA_CORE_H
+
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
+#ifndef FORMULA_CORE_H
+#define FORMULA_CORE_H
+
 
 #include <stddef.h>
 #include <stdint.h>

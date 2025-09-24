@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
