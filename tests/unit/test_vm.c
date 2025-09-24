@@ -1,6 +1,7 @@
 /* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
 
 #include "vm/vm.h"
+#include "fkv/fkv.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -138,12 +139,70 @@ static void test_halt(void) {
     assert(trace.entries[1].opcode == 0x12);
 }
 
+static void test_read_fkv_negative_operand(void) {
+    struct byte_buffer bb = {0};
+    assert(fkv_init() == 0);
+
+    uint8_t key_digits[] = {4};
+    uint8_t value_digits[] = {2, 1};
+    assert(fkv_put(key_digits, sizeof(key_digits), value_digits, sizeof(value_digits), FKV_ENTRY_TYPE_VALUE) == 0);
+
+    assert(bb_push(&bb, 0x01) == 0 && bb_push(&bb, 0x00) == 0); // push 0
+    assert(bb_push(&bb, 0x01) == 0 && bb_push(&bb, 0x01) == 0); // push 1
+    assert(bb_push(&bb, 0x03) == 0); // SUB10 -> -1
+    assert(bb_push(&bb, 0x0C) == 0); // READ_FKV
+
+    uint64_t result = 0;
+    vm_status_t status;
+    assert(run_program(&bb, &result, &status) == 0);
+    assert(status == VM_ERR_INVALID_OPCODE);
+    assert(result == UINT64_MAX);
+
+    fkv_iter_t it = {0};
+    assert(fkv_get_prefix(key_digits, sizeof(key_digits), &it, 1) == 0);
+    assert(it.count == 1);
+    assert(it.entries[0].value_len == sizeof(value_digits));
+    assert(memcmp(it.entries[0].value, value_digits, sizeof(value_digits)) == 0);
+    fkv_iter_free(&it);
+
+    fkv_shutdown();
+    free(bb.data);
+}
+
+static void test_write_fkv_negative_operand(void) {
+    struct byte_buffer bb = {0};
+    assert(fkv_init() == 0);
+
+    assert(bb_push(&bb, 0x01) == 0 && bb_push(&bb, 0x00) == 0); // push 0
+    assert(bb_push(&bb, 0x01) == 0 && bb_push(&bb, 0x01) == 0); // push 1
+    assert(bb_push(&bb, 0x03) == 0); // SUB10 -> -1 (key)
+    assert(emit_push_number(&bb, 7) == 0); // value
+    assert(bb_push(&bb, 0x0D) == 0); // WRITE_FKV
+
+    uint64_t result = 0;
+    vm_status_t status;
+    assert(run_program(&bb, &result, &status) == 0);
+    assert(status == VM_ERR_INVALID_OPCODE);
+    assert(result == 7);
+
+    uint8_t probe_key[] = {7};
+    fkv_iter_t it = {0};
+    assert(fkv_get_prefix(probe_key, sizeof(probe_key), &it, 1) == 0);
+    assert(it.count == 0);
+    fkv_iter_free(&it);
+
+    fkv_shutdown();
+    free(bb.data);
+}
+
 int main(void) {
     test_random_deterministic();
     test_add();
     test_mul();
     test_div_zero();
     test_halt();
+    test_read_fkv_negative_operand();
+    test_write_fkv_negative_operand();
     printf("vm tests passed\n");
     return 0;
 }
