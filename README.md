@@ -28,6 +28,7 @@ Key subsystems delivered in this milestone:
 * **Δ-VM v2** – A decimal stack virtual machine with the initial opcode set (PUSHd–RET) and deterministic execution limits.
 * **Fractal KV (F-KV)** – An in-memory decimal trie with prefix lookup. Persistence hooks and compression points are stubbed for later milestones.
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/dialog`, `/api/v1/vm/run`, `/api/v1/fkv/get`, `/api/v1/program/submit`, and `/api/v1/chain/submit`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
+* **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/metrics`, `/api/v1/vm/run`, `/api/v1/dialog`, and `/api/v1/fkv/get`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **Web Studio** – Lightweight Vite + TypeScript SPA that connects to the HTTP API and renders console-style panels for dialog, VM trace, and memory previews.
 
 ## Building and running
@@ -46,9 +47,14 @@ Other CLI commands:
 
 ```
 ./kolibri.sh stop   # stop running node
-./kolibri.sh bench  # run built-in benchmarks (placeholder)
+./kolibri.sh bench  # run Δ-VM & F-KV microbenchmarks (mean/p95/stddev latency, VM steps)
 ./kolibri.sh clean  # remove build artifacts, logs, and data
 ```
+
+The suite runs three deterministic Δ-VM programs plus 1000 `fkv_put`/`fkv_get` prefix lookups. Each line reports mean, p95,
+standard deviation, minimum, and maximum latency in microseconds alongside the achieved throughput (ops/s); Δ-VM entries also
+print average/min/max step counts and the HALT ratio to confirm execution limits while F-KV validates stored values. Results
+are appended to `logs/bench.log` and exported as structured JSON in `logs/bench.json` for programmatic comparison.
 
 ### Console chat mode
 
@@ -62,12 +68,22 @@ make build
 The CLI accepts decimal arithmetic expressions (e.g. `12+30/6`) and stores the results in the F-KV memory. Any other text prompt
 falls back to the current best formula discovered by the Kolibri AI core, which is useful for smoke-testing the synthesis loop.
 
+### HTTP API endpoints
+
+Kolibri Ω now exposes a richer JSON API that mirrors the CLI behaviour:
+
+* `GET /api/v1/health` – returns uptime information and whether a blockchain peer is attached.
+* `GET /api/v1/metrics` – surfaces the latest Kolibri AI planning metrics alongside request counters.
+* `POST /api/v1/dialog` – accepts `{ "input": "7+8" }`, executes the expression on the Δ-VM, stores the result in F-KV, nudges the AI curriculum, and responds with `{ "answer": "15", "status": "vm", "steps": 6, "stored": true }`. If the expression cannot be evaluated the handler falls back to the strongest known formula.
+* `POST /api/v1/vm/run` – executes raw decimal bytecode supplied via the `program` array and returns the VM status, result, and halt flag. Optional `max_steps`/`max_stack` keys override the config limits per request.
+* `GET /api/v1/fkv/get?prefix=...&limit=...` – performs a prefix lookup in the fractal memory and returns the top matches (keys and decimal values) for observability tooling.
 
 ## AI state persistence
 
-The Kolibri AI subsystem snapshots its working memory (`KolibriMemoryModule`) and training dataset to a JSON file whenever the
-node is stopped or destroyed. Snapshots are automatically reloaded on startup so the node can resume from the last session. The
-location and retention policy live under the `ai` section of [`cfg/kolibri.jsonc`](cfg/kolibri.jsonc):
+The Kolibri AI subsystem snapshots its working memory (`KolibriMemoryModule`), training dataset, and the most recent scoring
+metrics to a structured JSON file whenever the node is stopped or destroyed. Snapshots are automatically reloaded on startup so
+the node can resume from the last session. The location and retention policy live under the `ai` section of
+[`cfg/kolibri.jsonc`](cfg/kolibri.jsonc):
 
 ```jsonc
   "ai": {
@@ -78,6 +94,17 @@ location and retention policy live under the `ai` section of [`cfg/kolibri.jsonc
 
 The snapshot file is created on demand (directories are created automatically). Setting `snapshot_limit` to zero disables
 trimming and keeps the entire history.
+
+Each vertex of the F-KV trie keeps only the top-K most recent entries for its prefix. The default capacity can be tweaked via
+the optional `fkv` block in [`cfg/kolibri.jsonc`](cfg/kolibri.jsonc):
+
+```jsonc
+  "fkv": {
+    "top_k": 4
+  }
+```
+
+Requests to `/api/v1/fkv/get` or the CLI will surface entries in recency order based on this limit.
 
 ## Testing
 

@@ -1,10 +1,13 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient, MetricsResponse, PeerInfo } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
+import { ToggleSwitch } from "../components/ToggleSwitch";
+import { usePersistentState } from "../hooks/usePersistentState";
+import { useAutoRefresh } from "../hooks/useAutoRefresh";
 
 interface ClusterSummary {
   peersOnline: number;
@@ -32,10 +35,11 @@ export function ClusterView() {
   const { notify } = useNotifications();
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = usePersistentState("kolibri-cluster-auto-refresh", true);
 
   const summary = useMemo(() => computeSummary(metrics?.peers), [metrics?.peers]);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await apiClient.metrics();
@@ -46,11 +50,13 @@ export function ClusterView() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
+
+  useAutoRefresh(refresh, autoRefresh, { intervalMs: 20000, runImmediately: true });
 
   return (
     <section className="view" aria-labelledby="cluster-tab">
@@ -60,9 +66,18 @@ export function ClusterView() {
             <h2>Роевой разум</h2>
             <p>Сводка по соседям и сетевому состоянию.</p>
           </div>
-          <button type="button" className="inline" onClick={refresh} disabled={isLoading}>
-            {isLoading ? <Spinner /> : "Обновить"}
-          </button>
+          <div className="inline-actions">
+            <ToggleSwitch
+              id="cluster-auto-refresh"
+              checked={autoRefresh}
+              onChange={setAutoRefresh}
+              label="Автообновление"
+              description="20 секунд"
+            />
+            <button type="button" className="inline" onClick={refresh} disabled={isLoading}>
+              {isLoading ? <Spinner /> : "Обновить"}
+            </button>
+          </div>
         </header>
         <div className="metrics-grid">
           <div className="metric-card">
