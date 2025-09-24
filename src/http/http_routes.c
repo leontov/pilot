@@ -65,7 +65,18 @@ static int handle_health(http_response_t *resp) {
     if (written < 0) {
         return -1;
     }
+
+
+    resp->data = json;
+    resp->len = len;
+    resp->status = 200;
+    snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
+
+    fkv_iter_free(&it);
+    return 0;
+
     return respond_json(resp, buffer, 200);
+
 }
 
 static int handle_metrics(http_response_t *resp) {

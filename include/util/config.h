@@ -51,16 +51,22 @@ typedef struct {
 #ifndef KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
 #define KOLIBRI_AI_SELFPLAY_CONFIG_DEFINED
 typedef struct {
+
+    char snapshot_path[256];
+    size_t snapshot_limit;
+} ai_persistence_config_t;
+
     uint32_t tasks_per_iteration;
     uint32_t max_difficulty;
 } KolibriAISelfplayConfig;
 #endif
 
 
+
 typedef struct {
     http_config_t http;
     vm_config_t vm;
-
+    FormulaSearchConfig search;
     uint32_t seed;
     ai_persistence_config_t ai;
     kolibri_selfplay_config_t selfplay;
