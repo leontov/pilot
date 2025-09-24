@@ -48,8 +48,6 @@ typedef struct {
 
     ai_persistence_config_t ai;
     KolibriAISelfplayConfig selfplay;
-    FormulaSearchConfig search;
-    uint32_t seed;
 } kolibri_config_t;
 
 int config_load(const char *path, kolibri_config_t *cfg);

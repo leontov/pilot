@@ -8,6 +8,7 @@
 #include "fkv/fkv.h"
 #include "http/http_routes.h"
 #include "http/http_server.h"
+#include "http/status_server.h"
 #include "kolibri_ai.h"
 #include "synthesis/formula_vm_eval.h"
 #include "protocol/swarm_node.h"
@@ -21,6 +22,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <math.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -36,6 +38,12 @@ static volatile sig_atomic_t running = 1;
 static void handle_signal(int sig) {
     (void)sig;
     running = 0;
+}
+
+static void *status_server_thread(void *arg) {
+    (void)arg;
+    http_status_server_run();
+    return NULL;
 }
 
 static char *trim_inplace(char *line) {
@@ -1116,44 +1124,6 @@ static int parse_size_t_arg(const char *value, size_t *out) {
     }
     *out = (size_t)val;
     return 0;
-
-static int run_bench(void) {
-    if (mkdir("logs", 0755) != 0 && errno != EEXIST) {
-        log_warn("failed to create logs directory: %s", strerror(errno));
-    }
-
-    FILE *bench_log = fopen("logs/bench.log", "a");
-    if (!bench_log) {
-        log_warn("could not open logs/bench.log: %s", strerror(errno));
-    }
-
-    bench_log_line(bench_log, "=== Kolibri Ω benchmark suite ===");
-
-    int rc = 0;
-    bench_report_t report;
-    memset(&report, 0, sizeof(report));
-
-    if (run_vm_microbench(bench_log, &report) != 0) {
-        rc = -1;
-    }
-    if (run_fkv_microbench(bench_log, &report) != 0) {
-        rc = -1;
-    }
-
-    bench_log_line(bench_log, "=== Benchmarks completed (%s) ===", rc == 0 ? "OK" : "FAIL");
-    if (bench_log) {
-        fclose(bench_log);
-    }
-
-    report.overall_ok = (rc == 0);
-    if (write_bench_json("logs/bench.json", &report) != 0) {
-        log_warn("failed to write logs/bench.json: %s", strerror(errno));
-    } else {
-        log_info("Benchmark JSON report saved to logs/bench.json");
-    }
-    log_info("Benchmark report saved to logs/bench.log");
-    return rc == 0 ? 0 : 1;
-
 }
 
 static int parse_double_arg(const char *value, double *out) {
@@ -1358,6 +1328,9 @@ int main(int argc, char **argv) {
     }
 
     KolibriAI *http_ai = kolibri_ai_create(&cfg);
+    pthread_t status_thread = 0;
+    int status_thread_started = 0;
+    int status_server_initialized = 0;
     if (http_ai) {
         KolibriAISelfplayConfig sp = {
             .tasks_per_iteration = cfg.selfplay.tasks_per_iteration,
@@ -1371,11 +1344,39 @@ int main(int argc, char **argv) {
         log_warn("HTTP AI subsystem unavailable");
     }
 
+    unsigned int status_port = (unsigned int)cfg.http.port + 1000u;
+    if (status_port > 65535u) {
+        status_port = cfg.http.port;
+    }
+    if (http_status_server_init((uint16_t)status_port, &running, http_ai) == 0) {
+        status_server_initialized = 1;
+        if (pthread_create(&status_thread, NULL, status_server_thread, NULL) == 0) {
+            status_thread_started = 1;
+            log_info("status server listening on %s:%u",
+                     cfg.http.host[0] ? cfg.http.host : "0.0.0.0",
+                     (unsigned int)status_port);
+        } else {
+            log_warn("failed to start status server thread: %s", strerror(errno));
+            http_status_server_shutdown();
+            status_server_initialized = 0;
+        }
+    } else {
+        log_warn("status server unavailable on port %u", status_port);
+    }
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     if (http_server_start(&cfg) != 0) {
         log_error("failed to start HTTP server");
+        if (status_thread_started) {
+            pthread_join(status_thread, NULL);
+            status_thread_started = 0;
+        }
+        if (status_server_initialized) {
+            http_status_server_shutdown();
+            status_server_initialized = 0;
+        }
         if (http_ai) {
             kolibri_ai_stop(http_ai);
             kolibri_ai_destroy(http_ai);
@@ -1399,11 +1400,21 @@ int main(int argc, char **argv) {
     }
 
     http_server_stop();
+
     if (swarm_thread_started) {
         swarm_node_stop(swarm_node);
     }
     if (swarm_node) {
         swarm_node_destroy(swarm_node);
+
+    if (status_thread_started) {
+        pthread_join(status_thread, NULL);
+        status_thread_started = 0;
+    }
+    if (status_server_initialized) {
+        http_status_server_shutdown();
+        status_server_initialized = 0;
+
     }
     if (http_ai) {
         kolibri_ai_stop(http_ai);

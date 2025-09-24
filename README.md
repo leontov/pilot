@@ -30,6 +30,7 @@ Key subsystems delivered in this milestone:
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/dialog`, `/api/v1/vm/run`, `/api/v1/fkv/get`, `/api/v1/program/submit`, and `/api/v1/chain/submit`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/metrics`, `/api/v1/vm/run`, `/api/v1/dialog`, and `/api/v1/fkv/get`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **Web Studio** – Lightweight Vite + TypeScript SPA that connects to the HTTP API and renders console-style panels for dialog, VM trace, and memory previews.
+* **Runtime entrypoint** – `src/main.c` is the only native launcher; it wires VM execution, F-KV storage, Kolibri AI orchestration, and HTTP routing. The legacy UDP prototype from `src/kolibri_node_v1.c` has been removed to keep the build aligned with the current subsystems.【F:src/main.c†L1-L118】【F:CMakeLists.txt†L24-L41】
 
 ## Building and running
 
@@ -74,6 +75,7 @@ Kolibri Ω now exposes a richer JSON API that mirrors the CLI behaviour:
 
 * `GET /api/v1/health` – returns uptime information and whether a blockchain peer is attached.
 * `GET /api/v1/metrics` – surfaces the latest Kolibri AI planning metrics alongside request counters.
+* `GET /status` (port `http.port + 1000`) – lightweight status endpoint exposing node uptime, the current F-KV root top-K view, and an inline snapshot of the Kolibri AI planner metrics for external dashboards.
 * `POST /api/v1/dialog` – accepts `{ "input": "7+8" }`, executes the expression on the Δ-VM, stores the result in F-KV, nudges the AI curriculum, and responds with `{ "answer": "15", "status": "vm", "steps": 6, "stored": true }`. If the expression cannot be evaluated the handler falls back to the strongest known formula.
 * `POST /api/v1/vm/run` – executes raw decimal bytecode supplied via the `program` array and returns the VM status, result, and halt flag. Optional `max_steps`/`max_stack` keys override the config limits per request.
 * `GET /api/v1/fkv/get?prefix=...&limit=...` – performs a prefix lookup in the fractal memory and returns the top matches (keys and decimal values) for observability tooling.

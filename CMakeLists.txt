@@ -38,18 +38,31 @@ include_directories(/opt/homebrew/opt/libmicrohttpd/include)
 link_directories(/opt/homebrew/opt/libmicrohttpd/lib)
 
 # Добавление исходных файлов
+# Прежний экспериментальный узел `kolibri_node_v1.c` больше не собирается:
+# вся инициализация происходит в `src/main.c`, который стыкует VM, F-KV,
+# Kolibri AI и HTTP поверх новых модулей.
 set(SOURCES
         src/main.c
-        src/decimal_cell.c
-        src/rules_engine.c
-        src/formula_advanced.c
-        src/learning.c
-        src/network.c
         src/blockchain.c
         src/formula.c
-        src/synthesis/search.c
+        src/formula_runtime.c
+        src/formula_stub.c
+        src/fkv/fkv.c
+        src/http/http_routes.c
+        src/http/http_server.c
+        src/kolibri_ai.c
+        src/protocol/swarm.c
+        src/synthesis/formula_vm_eval.c
+        src/synthesis/search.
         src/protocol/swarm.c
         src/protocol/swarm_node.c
+        src/synthesis/selfplay.c
+        src/util/bench.c
+        src/util/config.c
+        src/util/json_compat.c
+        src/util/log.c
+        src/vm/vm.c
+
 )
 
 # Создание исполняемого файла
