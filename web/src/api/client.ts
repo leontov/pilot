@@ -106,6 +106,36 @@ export class ApiError<T = unknown> extends Error {
   }
 }
 
+const STATUS_MESSAGES: Record<number, string> = {
+  400: "Некорректный запрос к API диалога. Проверьте отправляемые данные.",
+  401: "Требуется аутентификация для обращения к ядру Kolibri Ω.",
+  403: "Доступ к диалоговому эндпоинту запрещён.",
+  404: "Эндпоинт диалога недоступен, проверьте запуск ядра Kolibri Ω.",
+  409: "Конфликт при обращении к диалоговому API. Повторите попытку позже.",
+  429: "Превышен лимит обращений к ядру Kolibri Ω. Подождите перед новой попыткой.",
+  500: "Внутренняя ошибка ядра Kolibri Ω. Проверьте логи сервиса.",
+  502: "Некорректный ответ от backend. Убедитесь, что сервис запущен корректно.",
+  503: "Диалоговый сервис временно недоступен. Попробуйте повторить запрос позже.",
+  504: "Превышено время ожидания ответа от ядра Kolibri Ω."
+};
+
+export function formatApiError(error: unknown): string {
+  if (error instanceof ApiError) {
+    const predefined = STATUS_MESSAGES[error.status];
+    if (predefined) {
+      return predefined;
+    }
+    const fallback = error.message || "Запрос к API завершился ошибкой.";
+    return `Ошибка API (${error.status}). ${fallback}`;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Неизвестная ошибка";
+}
+
 interface RequestOptions extends RequestInit {
   skipJson?: boolean;
 }

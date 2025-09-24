@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
-import { apiClient } from "../api/client";
+import { apiClient, formatApiError } from "../api/client";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
 
@@ -79,7 +79,7 @@ export function DialogView() {
       setHistory((prev) => [entry, ...prev].slice(0, 20));
       notify({ title: "Диалог выполнен", message: "Ответ получен от ядра Kolibri Ω", type: "success", timeout: 3500 });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Неизвестная ошибка";
+      const message = formatApiError(error);
       notify({ title: "Ошибка диалога", message, type: "error" });
     } finally {
       setIsLoading(false);
