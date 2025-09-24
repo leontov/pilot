@@ -74,9 +74,10 @@ Kolibri Ω now exposes a richer JSON API that mirrors the CLI behaviour:
 
 ## AI state persistence
 
-The Kolibri AI subsystem snapshots its working memory (`KolibriMemoryModule`) and training dataset to a JSON file whenever the
-node is stopped or destroyed. Snapshots are automatically reloaded on startup so the node can resume from the last session. The
-location and retention policy live under the `ai` section of [`cfg/kolibri.jsonc`](cfg/kolibri.jsonc):
+The Kolibri AI subsystem snapshots its working memory (`KolibriMemoryModule`), training dataset, and the most recent scoring
+metrics to a structured JSON file whenever the node is stopped or destroyed. Snapshots are automatically reloaded on startup so
+the node can resume from the last session. The location and retention policy live under the `ai` section of
+[`cfg/kolibri.jsonc`](cfg/kolibri.jsonc):
 
 ```jsonc
   "ai": {
@@ -87,6 +88,17 @@ location and retention policy live under the `ai` section of [`cfg/kolibri.jsonc
 
 The snapshot file is created on demand (directories are created automatically). Setting `snapshot_limit` to zero disables
 trimming and keeps the entire history.
+
+Each vertex of the F-KV trie keeps only the top-K most recent entries for its prefix. The default capacity can be tweaked via
+the optional `fkv` block in [`cfg/kolibri.jsonc`](cfg/kolibri.jsonc):
+
+```jsonc
+  "fkv": {
+    "top_k": 4
+  }
+```
+
+Requests to `/api/v1/fkv/get` or the CLI will surface entries in recency order based on this limit.
 
 ## Testing
 

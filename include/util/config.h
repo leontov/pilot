@@ -25,6 +25,10 @@ typedef struct {
 } vm_config_t;
 
 typedef struct {
+    uint32_t top_k;
+} fkv_config_t;
+
+typedef struct {
     uint32_t tasks_per_iteration;
     uint32_t max_difficulty;
 } KolibriAISelfplayConfig;
@@ -37,6 +41,11 @@ typedef struct {
 typedef struct {
     http_config_t http;
     vm_config_t vm;
+
+    fkv_config_t fkv;
+    FormulaSearchConfig search;
+    uint32_t seed;
+
     ai_persistence_config_t ai;
     KolibriAISelfplayConfig selfplay;
     FormulaSearchConfig search;

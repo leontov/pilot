@@ -56,6 +56,19 @@ static int push(int64_t *stack, size_t *sp, size_t max_stack, int64_t v) {
 }
 
 static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
+    if (!digits || !len) {
+        return -1;
+    }
+    if (value < 0) {
+        return -1;
+    }
+    char buf[32];
+    int written = snprintf(buf, sizeof(buf), "%lld", (long long)value);
+    if (written <= 0) {
+        return -1;
+    }
+    size_t n = (size_t)written;
+    if (n >= sizeof(buf) || n > *len) {
     if (value < 0) {
         return -1;
     }
@@ -67,6 +80,9 @@ static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
         return -1;
     }
     for (size_t i = 0; i < n; ++i) {
+        if (buf[i] < '0' || buf[i] > '9') {
+            return -1;
+        }
         digits[i] = (uint8_t)(buf[i] - '0');
     }
     *len = n;
@@ -286,6 +302,7 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 status = VM_ERR_STACK_UNDERFLOW;
                 goto done;
             }
+            int64_t key_num = stack[sp - 1];
             uint8_t key_digits[32];
             size_t key_len = sizeof(key_digits);
             int64_t key_value = stack[sp - 1];
@@ -293,6 +310,8 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
+            (void)pop(stack, &sp);
+
             if (number_to_digits(key_value, key_digits, &key_len) != 0) {
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
@@ -323,8 +342,17 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 status = VM_ERR_STACK_UNDERFLOW;
                 goto done;
             }
+
+            int64_t value_num = stack[sp - 1];
+            int64_t key_num = stack[sp - 2];
+            if (key_num < 0 || value_num < 0) {
+                status = VM_ERR_INVALID_OPCODE;
+                goto done;
+            }
+
             int64_t value_value = stack[sp - 1];
             int64_t key_value = stack[sp - 2];
+
             uint8_t key_digits[32];
             size_t key_len = sizeof(key_digits);
             if (validate_decimal_operand(key_value, key_len) != 0) {
@@ -345,9 +373,18 @@ int vm_run(const prog_t *p, const vm_limits_t *lim, vm_trace_t *trace, vm_result
                 status = VM_ERR_INVALID_OPCODE;
                 goto done;
             }
+
+            (void)pop(stack, &sp);
+            (void)pop(stack, &sp);
+            if (fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE) != 0) {
+                status = VM_ERR_INVALID_OPCODE;
+                goto done;
+            }
+
             pop(stack, &sp);
             pop(stack, &sp);
             fkv_put(key_digits, key_len, value_digits, value_len, FKV_ENTRY_TYPE_VALUE);
+
             break;
         }
         case 0x0E: { // HASH10
