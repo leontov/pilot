@@ -46,7 +46,7 @@ Other CLI commands:
 
 ```
 ./kolibri.sh stop   # stop running node
-./kolibri.sh bench  # run built-in benchmarks (placeholder)
+./kolibri.sh bench  # execute Δ-VM and F-KV microbenchmarks (mean, p95, steps)
 ./kolibri.sh clean  # remove build artifacts, logs, and data
 ```
 
@@ -61,6 +61,21 @@ make build
 
 The CLI accepts decimal arithmetic expressions (e.g. `12+30/6`) and stores the results in the F-KV memory. Any other text prompt
 falls back to the current best formula discovered by the Kolibri AI core, which is useful for smoke-testing the synthesis loop.
+
+
+### Benchmark mode
+
+`./kolibri.sh bench` builds the native node (if needed) and runs `kolibri_node --bench`. The command prints a compact table with
+the following columns:
+
+* **Mean (us)** – average latency per operation in microseconds.
+* **P95 (us)** – 95th percentile latency; 95 % of the samples fall at or below this number.
+* **Steps** – number of Δ-VM interpreter steps executed by the benchmarked program. This column is only populated for VM rows;
+  F-KV operations do not have a concept of “steps” and display `-`.
+
+Use the mean/p95 pair to track overall throughput vs. tail latency. VM benchmarks focus on deterministic program execution while
+the F-KV rows stress bulk `fkv_put`/`fkv_get_prefix` calls against the in-memory trie. Each run also appends the same summary to
+`logs/kolibri.log` so historical trends can be inspected later.
 
 
 ## AI state persistence

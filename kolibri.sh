@@ -54,6 +54,7 @@ case "${1:-}" in
     stop_node
     ;;
   bench)
+    echo "[kolibri] running Δ-VM and F-KV microbenchmarks" >&2
     make -C "$ROOT_DIR" bench
     ;;
   clean)
