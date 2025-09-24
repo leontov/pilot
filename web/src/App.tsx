@@ -1,31 +1,66 @@
 // Copyright (c) 2025 Кочуров Владислав Евгеньевич
 
-
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { NotificationProvider } from "./components/NotificationCenter";
 import { SkeletonLines } from "./components/Skeleton";
 import { TabNavigation, type TabItem } from "./components/TabNavigation";
 
-const DialogView = lazy(() => import("./views/DialogView").then((module) => ({ default: module.DialogView })));
-const MemoryView = lazy(() => import("./views/MemoryView").then((module) => ({ default: module.MemoryView })));
-const ProgramsView = lazy(() => import("./views/ProgramsView").then((module) => ({ default: module.ProgramsView })));
-const SynthView = lazy(() => import("./views/SynthView").then((module) => ({ default: module.SynthView })));
-const ChainView = lazy(() => import("./views/ChainView").then((module) => ({ default: module.ChainView })));
-const StatusView = lazy(() => import("./views/StatusView").then((module) => ({ default: module.StatusView })));
-const ClusterView = lazy(() => import("./views/ClusterView").then((module) => ({ default: module.ClusterView })));
-
+const DialogView = lazy(() =>
+  import("./views/DialogView").then((module) => ({
+    default: module.DialogView,
+  })),
+);
+const MemoryView = lazy(() =>
+  import("./views/MemoryView").then((module) => ({
+    default: module.MemoryView,
+  })),
+);
+const ProgramsView = lazy(() =>
+  import("./views/ProgramsView").then((module) => ({
+    default: module.ProgramsView,
+  })),
+);
+const SynthView = lazy(() =>
+  import("./views/SynthView").then((module) => ({ default: module.SynthView })),
+);
+const ChainView = lazy(() =>
+  import("./views/ChainView").then((module) => ({ default: module.ChainView })),
+);
+const StatusView = lazy(() =>
+  import("./views/StatusView").then((module) => ({
+    default: module.StatusView,
+  })),
+);
+const ClusterView = lazy(() =>
+  import("./views/ClusterView").then((module) => ({
+    default: module.ClusterView,
+  })),
+);
 
 type ThemeMode = "light" | "dark";
 type Language = "ru" | "en";
-
 
 type ChatMessage = {
   role: "user" | "ai";
   content: string;
 };
 
-type TabId = "dialog" | "memory" | "programs" | "synth" | "chain" | "status" | "cluster";
+type TabId =
+  | "dialog"
+  | "memory"
+  | "programs"
+  | "synth"
+  | "chain"
+  | "status"
+  | "cluster";
 
 interface TabConfig extends TabItem {
   id: TabId;
@@ -33,54 +68,92 @@ interface TabConfig extends TabItem {
 }
 
 const tabs: TabConfig[] = [
-  { id: "dialog", label: "Диалог", description: "Консоль Δ-VM с историей запросов", render: () => <DialogView /> },
-  { id: "memory", label: "Память", description: "F-KV Explorer с деревом префиксов", render: () => <MemoryView /> },
-  { id: "programs", label: "Программы", description: "Редактор и анализ байткодов", render: () => <ProgramsView /> },
-  { id: "synth", label: "Синтез", description: "Монитор поиска программ", render: () => <SynthView /> },
-  { id: "chain", label: "Блокчейн", description: "Цепочка знаний Kolibri Ω", render: () => <ChainView /> },
-  { id: "status", label: "Статус", description: "Мониторинг узла и метрик", render: () => <StatusView /> },
-  { id: "cluster", label: "Кластер", description: "Состояние соседей и репутация", render: () => <ClusterView /> }
+  {
+    id: "dialog",
+    label: "Диалог",
+    description: "Консоль Δ-VM с историей запросов",
+    render: () => <DialogView />,
+  },
+  {
+    id: "memory",
+    label: "Память",
+    description: "F-KV Explorer с деревом префиксов",
+    render: () => <MemoryView />,
+  },
+  {
+    id: "programs",
+    label: "Программы",
+    description: "Редактор и анализ байткодов",
+    render: () => <ProgramsView />,
+  },
+  {
+    id: "synth",
+    label: "Синтез",
+    description: "Монитор поиска программ",
+    render: () => <SynthView />,
+  },
+  {
+    id: "chain",
+    label: "Блокчейн",
+    description: "Цепочка знаний Kolibri Ω",
+    render: () => <ChainView />,
+  },
+  {
+    id: "status",
+    label: "Статус",
+    description: "Мониторинг узла и метрик",
+    render: () => <StatusView />,
+  },
+  {
+    id: "cluster",
+    label: "Кластер",
+    description: "Состояние соседей и репутация",
+    render: () => <ClusterView />,
+  },
 ];
 
 const THEME_STORAGE_KEY = "kolibri-theme";
 const LANGUAGE_STORAGE_KEY = "kolibri-language";
 
-const copy: Record<Language, {
-  nav: { id: string; label: string }[];
-  hero: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    primaryCta: string;
-    secondaryCta: string;
-  };
-  metrics: { value: string; label: string }[];
-  pillars: { title: string; description: string }[];
-  architecture: { title: string; description: string }[];
-  timeline: { label: string; description: string }[];
-  techStack: {
-    title: string;
-    lead: string;
-    items: { title: string; description: string; highlight: string }[];
-  };
-  useCases: {
-    title: string;
-    lead: string;
-    items: { title: string; description: string; impact: string }[];
-  };
-  faq: { title: string; items: { question: string; answer: string }[] };
-  cta: { title: string; description: string; action: string };
-  chat: {
-    title: string;
-    status: string;
-    ariaLabel: string;
-    placeholder: string;
-    send: string;
-    initialMessages: ChatMessage[];
-    autoReplies: string[];
-  };
-  footer: string;
-}> = {
+const copy: Record<
+  Language,
+  {
+    nav: { id: string; label: string }[];
+    hero: {
+      eyebrow: string;
+      title: string;
+      subtitle: string;
+      primaryCta: string;
+      secondaryCta: string;
+    };
+    metrics: { value: string; label: string }[];
+    pillars: { title: string; description: string }[];
+    architecture: { title: string; description: string }[];
+    timeline: { label: string; description: string }[];
+    techStack: {
+      title: string;
+      lead: string;
+      items: { title: string; description: string; highlight: string }[];
+    };
+    useCases: {
+      title: string;
+      lead: string;
+      items: { title: string; description: string; impact: string }[];
+    };
+    faq: { title: string; items: { question: string; answer: string }[] };
+    cta: { title: string; description: string; action: string };
+    chat: {
+      title: string;
+      status: string;
+      ariaLabel: string;
+      placeholder: string;
+      send: string;
+      initialMessages: ChatMessage[];
+      autoReplies: string[];
+    };
+    footer: string;
+  }
+> = {
   ru: {
     nav: [
       { id: "vision", label: "Миссия" },
@@ -148,15 +221,18 @@ const copy: Record<Language, {
     timeline: [
       {
         label: "Спринт A",
-        description: "Δ-VM v2, F-KV v2, метрики PoE/MDL, Kolibri Studio с диалогом и памятью.",
+        description:
+          "Δ-VM v2, F-KV v2, метрики PoE/MDL, Kolibri Studio с диалогом и памятью.",
       },
       {
         label: "Спринт B",
-        description: "Сеть и синтез: обмен программами, Proof-of-Use, оркестратор поисковых стратегий.",
+        description:
+          "Сеть и синтез: обмен программами, Proof-of-Use, оркестратор поисковых стратегий.",
       },
       {
         label: "Спринт C",
-        description: "Блокчейн знаний, кластер, мониторинг и подготовка демонстрации уровня world-class.",
+        description:
+          "Блокчейн знаний, кластер, мониторинг и подготовка демонстрации уровня world-class.",
       },
     ],
     techStack: {
@@ -165,22 +241,26 @@ const copy: Record<Language, {
       items: [
         {
           title: "Δ-VM Core",
-          description: "Интерпретатор на C с резидентным размером менее 50 МБ и строгими лимитами газа для детерминизма.",
+          description:
+            "Интерпретатор на C с резидентным размером менее 50 МБ и строгими лимитами газа для детерминизма.",
           highlight: "C · SIMD · JSON Trace",
         },
         {
           title: "F-KV Fabric",
-          description: "Фрактальная память с десятичным арифметическим кодированием и префиксным поиском за миллисекунды.",
+          description:
+            "Фрактальная память с десятичным арифметическим кодированием и префиксным поиском за миллисекунды.",
           highlight: "Trie · Arithmetic Coding",
         },
         {
           title: "Синтез знаний",
-          description: "Комбинация перебора, MCTS и генетического поиска повышает PoE и снижает MDL.",
+          description:
+            "Комбинация перебора, MCTS и генетического поиска повышает PoE и снижает MDL.",
           highlight: "Search · PoE Engine",
         },
         {
           title: "Kolibri Studio",
-          description: "Веб-интерфейс на React/Vite с живыми дашбордами, трассировками и управлением узлом.",
+          description:
+            "Веб-интерфейс на React/Vite с живыми дашбордами, трассировками и управлением узлом.",
           highlight: "React · Vite · WebGL",
         },
       ],
@@ -191,17 +271,20 @@ const copy: Record<Language, {
       items: [
         {
           title: "Финансовые регламенты",
-          description: "Оцифровка правил расчёта и проверок снижает операционные риски и ускоряет аудит.",
+          description:
+            "Оцифровка правил расчёта и проверок снижает операционные риски и ускоряет аудит.",
           impact: "−65% времени на валидацию",
         },
         {
           title: "Научные лаборатории",
-          description: "Kolibri управляет каталогом формул и автоматически подбирает оптимальные эксперименты.",
+          description:
+            "Kolibri управляет каталогом формул и автоматически подбирает оптимальные эксперименты.",
           impact: "+3× скорость открытия",
         },
         {
           title: "Индустриальные протоколы",
-          description: "Δ-VM выполняет проверяемые последовательности действий для промышленной автоматизации.",
+          description:
+            "Δ-VM выполняет проверяемые последовательности действий для промышленной автоматизации.",
           impact: "99.9% соблюдение процедур",
         },
       ],
@@ -239,9 +322,17 @@ const copy: Record<Language, {
       placeholder: "Спросите о возможностях Kolibri...",
       send: "Отправить",
       initialMessages: [
-        { role: "ai", content: "Привет! Я Kolibri ИИ и помогу разобраться в десятичном интеллекте." },
+        {
+          role: "ai",
+          content:
+            "Привет! Я Kolibri ИИ и помогу разобраться в десятичном интеллекте.",
+        },
         { role: "user", content: "Какие компоненты входят в платформу?" },
-        { role: "ai", content: "Δ-VM, фрактальная память F-KV и блокчейн знаний объединены в единую систему." },
+        {
+          role: "ai",
+          content:
+            "Δ-VM, фрактальная память F-KV и блокчейн знаний объединены в единую систему.",
+        },
       ],
       autoReplies: [
         "Мы показываем трассировку Δ-VM и PoE-метрики в Kolibri Studio в реальном времени.",
@@ -318,15 +409,18 @@ const copy: Record<Language, {
     timeline: [
       {
         label: "Sprint A",
-        description: "Δ-VM v2, F-KV v2, PoE/MDL metrics, Kolibri Studio with dialogue and memory views.",
+        description:
+          "Δ-VM v2, F-KV v2, PoE/MDL metrics, Kolibri Studio with dialogue and memory views.",
       },
       {
         label: "Sprint B",
-        description: "Network & synthesis: program exchange, Proof-of-Use, orchestration of search strategies.",
+        description:
+          "Network & synthesis: program exchange, Proof-of-Use, orchestration of search strategies.",
       },
       {
         label: "Sprint C",
-        description: "Knowledge blockchain, cluster operations, monitoring, and world-class demo readiness.",
+        description:
+          "Knowledge blockchain, cluster operations, monitoring, and world-class demo readiness.",
       },
     ],
     techStack: {
@@ -335,22 +429,26 @@ const copy: Record<Language, {
       items: [
         {
           title: "Δ-VM Core",
-          description: "A C interpreter under 50 MB with strict gas limits for deterministic execution.",
+          description:
+            "A C interpreter under 50 MB with strict gas limits for deterministic execution.",
           highlight: "C · SIMD · JSON Trace",
         },
         {
           title: "F-KV Fabric",
-          description: "Fractal memory with decimal arithmetic coding delivering millisecond prefix lookups.",
+          description:
+            "Fractal memory with decimal arithmetic coding delivering millisecond prefix lookups.",
           highlight: "Trie · Arithmetic Coding",
         },
         {
           title: "Knowledge synthesis",
-          description: "Enumeration, MCTS, and genetic search collaborate to raise PoE while lowering MDL.",
+          description:
+            "Enumeration, MCTS, and genetic search collaborate to raise PoE while lowering MDL.",
           highlight: "Search · PoE Engine",
         },
         {
           title: "Kolibri Studio",
-          description: "A React/Vite web cockpit with live dashboards, traces, and node orchestration.",
+          description:
+            "A React/Vite web cockpit with live dashboards, traces, and node orchestration.",
           highlight: "React · Vite · WebGL",
         },
       ],
@@ -361,17 +459,20 @@ const copy: Record<Language, {
       items: [
         {
           title: "Financial compliance",
-          description: "Digitized rulebooks automate checks and reduce operational risk while accelerating audits.",
+          description:
+            "Digitized rulebooks automate checks and reduce operational risk while accelerating audits.",
           impact: "−65% validation effort",
         },
         {
           title: "Research labs",
-          description: "Kolibri curates formula catalogs and proposes optimal experiment plans on demand.",
+          description:
+            "Kolibri curates formula catalogs and proposes optimal experiment plans on demand.",
           impact: "+3× discovery velocity",
         },
         {
           title: "Industrial protocols",
-          description: "Δ-VM executes verifiable action sequences for mission-critical automation.",
+          description:
+            "Δ-VM executes verifiable action sequences for mission-critical automation.",
           impact: "99.9% procedure adherence",
         },
       ],
@@ -409,9 +510,17 @@ const copy: Record<Language, {
       placeholder: "Ask about Kolibri’s capabilities...",
       send: "Send",
       initialMessages: [
-        { role: "ai", content: "Hello! I’m Kolibri AI, ready to guide you through decimal-native intelligence." },
+        {
+          role: "ai",
+          content:
+            "Hello! I’m Kolibri AI, ready to guide you through decimal-native intelligence.",
+        },
         { role: "user", content: "What components power the platform?" },
-        { role: "ai", content: "Δ-VM, fractal F-KV memory, and the knowledge blockchain operate as one system." },
+        {
+          role: "ai",
+          content:
+            "Δ-VM, fractal F-KV memory, and the knowledge blockchain operate as one system.",
+        },
       ],
       autoReplies: [
         "We surface Δ-VM traces and PoE metrics live inside Kolibri Studio.",
@@ -431,7 +540,9 @@ function determineInitialTheme(): ThemeMode {
   if (stored === "light" || stored === "dark") {
     return stored;
   }
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
 }
 
 function determineInitialLanguage(): Language {
@@ -448,12 +559,15 @@ function determineInitialLanguage(): Language {
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => determineInitialTheme());
-  const [language, setLanguage] = useState<Language>(() => determineInitialLanguage());
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(
-    () => [...copy[determineInitialLanguage()].chat.initialMessages]
+  const [language, setLanguage] = useState<Language>(() =>
+    determineInitialLanguage(),
   );
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => [
+    ...copy[determineInitialLanguage()].chat.initialMessages,
+  ]);
   const [chatInput, setChatInput] = useState("");
   const [autoReplyIndex, setAutoReplyIndex] = useState(0);
+  const [activeTab, setActiveTab] = useState<TabId>(tabs[0].id);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -478,6 +592,10 @@ export default function App() {
   }, []);
 
   const content = useMemo(() => copy[language], [language]);
+  const active = useMemo(
+    () => tabs.find((tab) => tab.id === activeTab) ?? tabs[0],
+    [activeTab],
+  );
 
   const themeToggleLabel =
     theme === "light"
@@ -489,7 +607,13 @@ export default function App() {
         : "Switch to light theme";
 
   const themeToggleText =
-    theme === "light" ? (language === "ru" ? "Тёмная тема" : "Dark") : language === "ru" ? "Светлая тема" : "Light";
+    theme === "light"
+      ? language === "ru"
+        ? "Тёмная тема"
+        : "Dark"
+      : language === "ru"
+        ? "Светлая тема"
+        : "Light";
 
   const handleChatSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -500,7 +624,8 @@ export default function App() {
       }
 
       const replies = copy[language].chat.autoReplies;
-      const reply = replies.length > 0 ? replies[autoReplyIndex % replies.length] : "";
+      const reply =
+        replies.length > 0 ? replies[autoReplyIndex % replies.length] : "";
 
       setChatMessages((prev) => [
         ...prev,
@@ -512,253 +637,291 @@ export default function App() {
         setAutoReplyIndex((prev) => (prev + 1) % replies.length);
       }
     },
-    [autoReplyIndex, chatInput, language]
+    [autoReplyIndex, chatInput, language],
   );
 
   return (
-
-    <div className="landing">
-      <header className="landing-header">
-        <a className="brand" href="#vision">
-          <span className="brand-mark" aria-hidden="true">
-            Ω
-          </span>
-          <span className="brand-text">Kolibri</span>
-        </a>
-        <nav aria-label={language === "ru" ? "Основные разделы" : "Main sections"} className="landing-nav">
-          {content.nav.map((item) => (
-            <a key={item.id} className="nav-link" href={`#${item.id}`}>
-              {item.label}
-            </a>
-          ))}
-        </nav>
-        <div className="header-actions">
-          <div className="language-switch" role="group" aria-label={language === "ru" ? "Выбор языка" : "Language switch"}>
-            <button
-              type="button"
-              className="language-option"
-              aria-pressed={language === "ru"}
-              onClick={() => switchLanguage("ru")}
-            >
-              Русский
-
-    <NotificationProvider>
-      <div className="app-shell">
-        <header className="app-header">
-          <div className="brand">
-            <span className="brand__title">Kolibri Ω Studio</span>
-            <span className="brand__subtitle">Контроль ядра, памяти и сети</span>
-          </div>
-          <TabNavigation
-            tabs={tabs.map(({ id, label, description }) => ({ id, label, description }))}
-            activeId={active.id}
-            onChange={(id) => setActiveTab(id as TabId)}
-          />
+    <>
+      <div className="landing">
+        <header className="landing-header">
+          <a className="brand" href="#vision">
+            <span className="brand-mark" aria-hidden="true">
+              Ω
+            </span>
+            <span className="brand-text">Kolibri</span>
+          </a>
+          <nav
+            aria-label={
+              language === "ru" ? "Основные разделы" : "Main sections"
+            }
+            className="landing-nav"
+          >
+            {content.nav.map((item) => (
+              <a key={item.id} className="nav-link" href={`#${item.id}`}>
+                {item.label}
+              </a>
+            ))}
+          </nav>
           <div className="header-actions">
-            <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label={themeToggleLabel}>
-              {themeToggleText}
-
-            </button>
+            <div
+              className="language-switch"
+              role="group"
+              aria-label={language === "ru" ? "Выбор языка" : "Language switch"}
+            >
+              <button
+                type="button"
+                className="language-option"
+                aria-pressed={language === "ru"}
+                onClick={() => switchLanguage("ru")}
+              >
+                Русский
+              </button>
+              <button
+                type="button"
+                className="language-option"
+                aria-pressed={language === "en"}
+                onClick={() => switchLanguage("en")}
+              >
+                English
+              </button>
+            </div>
             <button
               type="button"
-              className="language-option"
-              aria-pressed={language === "en"}
-              onClick={() => switchLanguage("en")}
+              className="theme-toggle"
+              onClick={toggleTheme}
+              aria-label={themeToggleLabel}
             >
-              English
+              {themeToggleText}
             </button>
           </div>
-          <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label={themeToggleLabel}>
-            {themeToggleText}
-          </button>
-        </div>
-      </header>
+        </header>
 
-      <main className="landing-main">
-        <section id="vision" className="hero">
-          <div className="hero-content">
-            <p className="hero-eyebrow">{content.hero.eyebrow}</p>
-            <h1 className="hero-title">{content.hero.title}</h1>
-            <p className="hero-subtitle">{content.hero.subtitle}</p>
-            <div className="hero-cta">
-              <a className="cta-primary" href="mailto:hello@kolibri.ai">
-                {content.hero.primaryCta}
-              </a>
-              <a className="cta-secondary" href="#architecture">
-                {content.hero.secondaryCta}
-              </a>
-            </div>
-            <div className="metrics-grid">
-              {content.metrics.map((metric) => (
-                <div key={metric.label} className="metric-card">
-                  <span className="metric-value">{metric.value}</span>
-                  <span className="metric-label">{metric.label}</span>
-                </div>
-              ))}
-            </div>
-            <aside className="chat-panel" aria-label={content.chat.ariaLabel}>
-              <header className="chat-header">
-                <div className="chat-avatar" aria-hidden="true">
-                  Ω
-                </div>
-                <div>
-                  <p className="chat-title">{content.chat.title}</p>
-                  <p className="chat-status">{content.chat.status}</p>
-                </div>
-              </header>
-              <div className="chat-messages" role="log" aria-live="polite">
-                {chatMessages.map((message, index) => (
-                  <div key={`${message.role}-${index}`} className={`chat-message chat-message-${message.role}`}>
-                    <span>{message.content}</span>
+        <main className="landing-main">
+          <section id="vision" className="hero">
+            <div className="hero-content">
+              <p className="hero-eyebrow">{content.hero.eyebrow}</p>
+              <h1 className="hero-title">{content.hero.title}</h1>
+              <p className="hero-subtitle">{content.hero.subtitle}</p>
+              <div className="hero-cta">
+                <a className="cta-primary" href="mailto:hello@kolibri.ai">
+                  {content.hero.primaryCta}
+                </a>
+                <a className="cta-secondary" href="#architecture">
+                  {content.hero.secondaryCta}
+                </a>
+              </div>
+              <div className="metrics-grid">
+                {content.metrics.map((metric) => (
+                  <div key={metric.label} className="metric-card">
+                    <span className="metric-value">{metric.value}</span>
+                    <span className="metric-label">{metric.label}</span>
                   </div>
                 ))}
               </div>
-              <form className="chat-input" onSubmit={handleChatSubmit}>
-                <label className="sr-only" htmlFor="chat-entry">
-                  {content.chat.placeholder}
-                </label>
-                <input
-                  id="chat-entry"
-                  type="text"
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder={content.chat.placeholder}
-                  autoComplete="off"
-                />
-                <button type="submit">{content.chat.send}</button>
-              </form>
-            </aside>
-          </div>
-          <div className="hero-visual" aria-hidden="true">
-            <div className="orb" />
-            <div className="trace" />
-          </div>
-        </section>
-
-        <section id="pillars" className="section">
-          <h2 className="section-title">{language === "ru" ? "Три ключевые опоры" : "Three key pillars"}</h2>
-          <p className="section-lead">
-            {language === "ru"
-              ? "Kolibri Ω сочетает вычислительную точность, гибкую память и доказуемую полезность знаний."
-              : "Kolibri Ω fuses computational precision, adaptive memory, and provable usefulness of knowledge."}
-          </p>
-          <div className="pillars-grid">
-            {content.pillars.map((pillar) => (
-              <article key={pillar.title} className="pillar-card">
-                <h3>{pillar.title}</h3>
-                <p>{pillar.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section id="architecture" className="section">
-          <h2 className="section-title">{language === "ru" ? "Полная архитектура" : "Full architecture"}</h2>
-          <div className="architecture-grid">
-            {content.architecture.map((block) => (
-              <article key={block.title} className="architecture-card">
-                <h3>{block.title}</h3>
-                <p>{block.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section id="roadmap" className="section">
-          <h2 className="section-title">{language === "ru" ? "Дорожная карта" : "Roadmap"}</h2>
-          <div className="timeline">
-            {content.timeline.map((step, index) => (
-              <div key={step.label} className="timeline-item">
-                <div className="timeline-index">{index + 1}</div>
-                <div>
-                  <h3>{step.label}</h3>
-                  <p>{step.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="stack" className="section">
-          <h2 className="section-title">{content.techStack.title}</h2>
-          <p className="section-lead">{content.techStack.lead}</p>
-          <div className="tech-grid">
-            {content.techStack.items.map((item) => (
-              <article key={item.title} className="tech-card">
-                <div>
-                  <h3>{item.title}</h3>
-                  <p>{item.description}</p>
-                </div>
-                <span className="tech-highlight">{item.highlight}</span>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section id="use-cases" className="section">
-          <h2 className="section-title">{content.useCases.title}</h2>
-          <p className="section-lead">{content.useCases.lead}</p>
-          <div className="usecases-grid">
-            {content.useCases.items.map((item) => (
-              <article key={item.title} className="case-card">
-                <header>
-                  <h3>{item.title}</h3>
-                  <span className="case-impact">{item.impact}</span>
+              <aside className="chat-panel" aria-label={content.chat.ariaLabel}>
+                <header className="chat-header">
+                  <div className="chat-avatar" aria-hidden="true">
+                    Ω
+                  </div>
+                  <div>
+                    <p className="chat-title">{content.chat.title}</p>
+                    <p className="chat-status">{content.chat.status}</p>
+                  </div>
                 </header>
-                <p>{item.description}</p>
-              </article>
-            ))}
-          </div>
-
-        </section>
-
-        <section id="faq" className="section">
-          <h2 className="section-title">{content.faq.title}</h2>
-          <div className="faq-list">
-            {content.faq.items.map((item) => (
-              <details key={item.question} className="faq-item">
-                <summary>
-                  <span>{item.question}</span>
-                  <span aria-hidden="true" className="faq-icon">
-                    ＋
-                  </span>
-                </summary>
-                <p>{item.answer}</p>
-              </details>
-            ))}
-          </div>
-        </section>
-
-        <section id="cta" className="section">
-          <div className="cta-panel">
-            <h2>{content.cta.title}</h2>
-            <p>{content.cta.description}</p>
-            <a className="cta-primary" href="mailto:partnerships@kolibri.ai">
-              {content.cta.action}
-            </a>
-          </div>
-        </section>
-      </main>
-
-      <footer className="landing-footer">{content.footer}</footer>
-    </div>
-
-        </header>
-        <main className="app-content">
-          <section id={`${active.id}-panel`} role="tabpanel" aria-labelledby={`${active.id}-tab`} className="view">
-            <Suspense
-              fallback={
-                <div className="panel">
-                  <SkeletonLines count={4} />
+                <div className="chat-messages" role="log" aria-live="polite">
+                  {chatMessages.map((message, index) => (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`chat-message chat-message-${message.role}`}
+                    >
+                      <span>{message.content}</span>
+                    </div>
+                  ))}
                 </div>
-              }
-            >
-              {active.render()}
-            </Suspense>
+                <form className="chat-input" onSubmit={handleChatSubmit}>
+                  <label className="sr-only" htmlFor="chat-entry">
+                    {content.chat.placeholder}
+                  </label>
+                  <input
+                    id="chat-entry"
+                    type="text"
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    placeholder={content.chat.placeholder}
+                    autoComplete="off"
+                  />
+                  <button type="submit">{content.chat.send}</button>
+                </form>
+              </aside>
+            </div>
+            <div className="hero-visual" aria-hidden="true">
+              <div className="orb" />
+              <div className="trace" />
+            </div>
+          </section>
+
+          <section id="pillars" className="section">
+            <h2 className="section-title">
+              {language === "ru" ? "Три ключевые опоры" : "Three key pillars"}
+            </h2>
+            <p className="section-lead">
+              {language === "ru"
+                ? "Kolibri Ω сочетает вычислительную точность, гибкую память и доказуемую полезность знаний."
+                : "Kolibri Ω fuses computational precision, adaptive memory, and provable usefulness of knowledge."}
+            </p>
+            <div className="pillars-grid">
+              {content.pillars.map((pillar) => (
+                <article key={pillar.title} className="pillar-card">
+                  <h3>{pillar.title}</h3>
+                  <p>{pillar.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="architecture" className="section">
+            <h2 className="section-title">
+              {language === "ru" ? "Полная архитектура" : "Full architecture"}
+            </h2>
+            <div className="architecture-grid">
+              {content.architecture.map((block) => (
+                <article key={block.title} className="architecture-card">
+                  <h3>{block.title}</h3>
+                  <p>{block.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="roadmap" className="section">
+            <h2 className="section-title">
+              {language === "ru" ? "Дорожная карта" : "Roadmap"}
+            </h2>
+            <div className="timeline">
+              {content.timeline.map((step, index) => (
+                <div key={step.label} className="timeline-item">
+                  <div className="timeline-index">{index + 1}</div>
+                  <div>
+                    <h3>{step.label}</h3>
+                    <p>{step.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section id="stack" className="section">
+            <h2 className="section-title">{content.techStack.title}</h2>
+            <p className="section-lead">{content.techStack.lead}</p>
+            <div className="tech-grid">
+              {content.techStack.items.map((item) => (
+                <article key={item.title} className="tech-card">
+                  <div>
+                    <h3>{item.title}</h3>
+                    <p>{item.description}</p>
+                  </div>
+                  <span className="tech-highlight">{item.highlight}</span>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="use-cases" className="section">
+            <h2 className="section-title">{content.useCases.title}</h2>
+            <p className="section-lead">{content.useCases.lead}</p>
+            <div className="usecases-grid">
+              {content.useCases.items.map((item) => (
+                <article key={item.title} className="case-card">
+                  <header>
+                    <h3>{item.title}</h3>
+                    <span className="case-impact">{item.impact}</span>
+                  </header>
+                  <p>{item.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="faq" className="section">
+            <h2 className="section-title">{content.faq.title}</h2>
+            <div className="faq-list">
+              {content.faq.items.map((item) => (
+                <details key={item.question} className="faq-item">
+                  <summary>
+                    <span>{item.question}</span>
+                    <span aria-hidden="true" className="faq-icon">
+                      ＋
+                    </span>
+                  </summary>
+                  <p>{item.answer}</p>
+                </details>
+              ))}
+            </div>
+          </section>
+
+          <section id="cta" className="section">
+            <div className="cta-panel">
+              <h2>{content.cta.title}</h2>
+              <p>{content.cta.description}</p>
+              <a className="cta-primary" href="mailto:partnerships@kolibri.ai">
+                {content.cta.action}
+              </a>
+            </div>
           </section>
         </main>
-      </div>
-    </NotificationProvider>
 
+        <footer className="landing-footer">{content.footer}</footer>
+      </div>
+
+      <NotificationProvider>
+        <div className="app-shell">
+          <header className="app-header">
+            <div className="brand">
+              <span className="brand__title">Kolibri Ω Studio</span>
+              <span className="brand__subtitle">
+                Контроль ядра, памяти и сети
+              </span>
+            </div>
+            <TabNavigation
+              tabs={tabs.map(({ id, label, description }) => ({
+                id,
+                label,
+                description,
+              }))}
+              activeId={active.id}
+              onChange={(id) => setActiveTab(id as TabId)}
+            />
+            <div className="header-actions">
+              <button
+                type="button"
+                className="theme-toggle"
+                onClick={toggleTheme}
+                aria-label={themeToggleLabel}
+              >
+                {themeToggleText}
+              </button>
+            </div>
+          </header>
+          <main className="app-content">
+            <section
+              id={`${active.id}-panel`}
+              role="tabpanel"
+              aria-labelledby={`${active.id}-tab`}
+              className="view"
+            >
+              <Suspense
+                fallback={
+                  <div className="panel">
+                    <SkeletonLines count={4} />
+                  </div>
+                }
+              >
+                {active.render()}
+              </Suspense>
+            </section>
+          </main>
+        </div>
+      </NotificationProvider>
+    </>
   );
 }
