@@ -142,16 +142,100 @@ interface RequestOptions extends RequestInit {
   skipJson?: boolean;
 }
 
+export function resolveApiBaseUrl(): string {
+  const envBase = import.meta.env.VITE_API_BASE;
+  if (typeof envBase === "string" && envBase.trim().length > 0) {
+    return envBase.trim();
+  }
+
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+
+  return "";
+}
+
+export interface KolibriClientOptions {
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+  defaultHeaders?: HeadersInit;
+  timeoutMs?: number;
+}
+
 export class KolibriClient {
-  constructor(private readonly baseUrl = "") {}
+  constructor(private readonly options: KolibriClientOptions = {}) {}
+
+  get baseUrl(): string {
+    return this.options.baseUrl ?? "";
+  }
+
+  withBaseUrl(baseUrl: string): KolibriClient {
+    return new KolibriClient({ ...this.options, baseUrl });
+  }
+
+  private buildUrl(path: string): string {
+    const baseUrl = this.baseUrl;
+    if (!baseUrl) {
+      return path;
+    }
+
+    try {
+      const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+      const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+      return new URL(normalizedPath, normalizedBase).toString();
+    } catch (error) {
+      console.warn("KolibriClient: failed to construct request URL", error);
+      return `${baseUrl}${path}`;
+    }
+  }
 
   private async request<TResponse = unknown, TBody = unknown>(path: string, init: RequestOptions = {}): Promise<TResponse> {
-    const headers = new Headers(init.headers ?? {});
-    if (!(init.body instanceof FormData) && !headers.has("Content-Type") && init.method && init.method !== "GET") {
+    const headers = new Headers();
+    const applyHeaders = (source?: HeadersInit) => {
+      if (!source) {
+        return;
+      }
+      const resolved = new Headers(source);
+      resolved.forEach((value, key) => {
+        headers.set(key, value);
+      });
+    };
+
+    applyHeaders(this.options.defaultHeaders);
+    applyHeaders(init.headers);
+
+    const method = init.method ?? "GET";
+    if (method !== "GET" && method !== "HEAD" && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
+    const fetchImpl = this.options.fetchImpl ?? fetch;
+    const requestUrl = this.buildUrl(path);
+    const requestInit: RequestInit = { ...init, headers };
+
+    let controller: AbortController | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    if (!requestInit.signal && this.options.timeoutMs && this.options.timeoutMs > 0 && typeof AbortController !== "undefined") {
+      controller = new AbortController();
+      timeoutId = setTimeout(() => {
+        const reason = typeof DOMException !== "undefined"
+          ? new DOMException("Request timed out", "TimeoutError")
+          : undefined;
+        controller?.abort(reason);
+      }, this.options.timeoutMs);
+      requestInit.signal = controller.signal;
+    }
+
+    let response: Response;
+    try {
+      response = await fetchImpl(requestUrl, requestInit);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+
     if (!response.ok) {
       let payload: unknown;
       try {
@@ -223,4 +307,14 @@ export class KolibriClient {
   }
 }
 
-export const apiClient = new KolibriClient();
+const API_BASE_URL = resolveApiBaseUrl();
+
+export const apiClient = new KolibriClient({ baseUrl: API_BASE_URL });
+
+export function createApiClient(options: KolibriClientOptions = {}): KolibriClient {
+  if (options.baseUrl === undefined) {
+    return new KolibriClient({ ...options, baseUrl: resolveApiBaseUrl() });
+  }
+
+  return new KolibriClient(options);
+}
