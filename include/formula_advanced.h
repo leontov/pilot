@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef FORMULA_ADVANCED_H
 #define FORMULA_ADVANCED_H
 

@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef KOLIBRI_UTIL_CONFIG_H
 #define KOLIBRI_UTIL_CONFIG_H
 

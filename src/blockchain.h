@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef BLOCKCHAIN_H
 #define BLOCKCHAIN_H
 

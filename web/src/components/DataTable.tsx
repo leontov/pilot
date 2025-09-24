@@ -1,3 +1,5 @@
+// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 import type { ReactNode } from "react";
 
 export interface Column<T> {

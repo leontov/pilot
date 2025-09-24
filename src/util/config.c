@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "util/config.h"
 
 #include <ctype.h>

@@ -1,3 +1,5 @@
+// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 import { useEffect, useState } from "react";
 import { apiClient, HealthResponse, MetricsResponse } from "../api/client";
 import { Spinner } from "../components/Spinner";

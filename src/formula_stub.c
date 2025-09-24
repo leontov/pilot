@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "formula.h"
 
 #include <stdlib.h>

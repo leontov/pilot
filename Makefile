@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
