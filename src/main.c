@@ -18,6 +18,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -238,7 +239,51 @@ typedef struct {
     double p95_us;
     double min_us;
     double max_us;
+    double stddev_us;
 } bench_timing_stats_t;
+
+#define MAX_VM_BENCH_CASES 8
+#define BENCH_ERROR_MSG_MAX 128
+
+typedef struct {
+    char name[32];
+    size_t iterations;
+    size_t completed;
+    uint64_t expected_result;
+    uint64_t actual_result;
+    double halt_ratio;
+    double avg_steps;
+    uint32_t min_steps;
+    uint32_t max_steps;
+    bench_timing_stats_t timings;
+    double throughput_ops;
+    int result_mismatch;
+    int ok;
+    char error[BENCH_ERROR_MSG_MAX];
+} bench_vm_case_report_t;
+
+typedef struct {
+    size_t operations;
+    size_t put_completed;
+    size_t get_completed;
+    size_t hits;
+    size_t value_mismatches;
+    double hit_rate;
+    bench_timing_stats_t put_timings;
+    bench_timing_stats_t get_timings;
+    double put_throughput_ops;
+    double get_throughput_ops;
+    int ok;
+    char error[BENCH_ERROR_MSG_MAX];
+} bench_fkv_report_t;
+
+typedef struct {
+    bench_vm_case_report_t vm_cases[MAX_VM_BENCH_CASES];
+    size_t vm_count;
+    bench_fkv_report_t fkv;
+    int has_fkv;
+    int overall_ok;
+} bench_report_t;
 
 static uint64_t monotonic_ns(void) {
     struct timespec ts;
@@ -281,6 +326,7 @@ static int compute_timing_stats(const double *samples, size_t count, bench_timin
     double min_v = samples[0];
     double max_v = samples[0];
     double sum = 0.0;
+    double sum_sq = 0.0;
     for (size_t i = 0; i < count; ++i) {
         double v = samples[i];
         if (v < min_v) {
@@ -290,6 +336,7 @@ static int compute_timing_stats(const double *samples, size_t count, bench_timin
             max_v = v;
         }
         sum += v;
+        sum_sq += v * v;
     }
     double *sorted = malloc(count * sizeof(double));
     if (!sorted) {
@@ -308,6 +355,11 @@ static int compute_timing_stats(const double *samples, size_t count, bench_timin
     out->p95_us = sorted[rank - 1];
     out->min_us = min_v;
     out->max_us = max_v;
+    double variance = sum_sq / (double)count - out->mean_us * out->mean_us;
+    if (variance < 0.0) {
+        variance = 0.0;
+    }
+    out->stddev_us = sqrt(variance);
     free(sorted);
     return 0;
 }
@@ -380,7 +432,7 @@ static int build_program_from_expression(const char *expression,
     return 0;
 }
 
-static int run_vm_microbench(FILE *log_fp) {
+static int run_vm_microbench(FILE *log_fp, bench_report_t *report) {
     typedef struct {
         const char *name;
         const char *expression;
@@ -398,8 +450,50 @@ static int run_vm_microbench(FILE *log_fp) {
     int rc = 0;
     vm_limits_t limits = {.max_steps = 512, .max_stack = 128};
 
-    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+    const size_t case_count = sizeof(cases) / sizeof(cases[0]);
+    if (report) {
+        if (case_count > MAX_VM_BENCH_CASES) {
+            bench_log_line(log_fp,
+                           "Δ-VM | configuration error: %zu cases exceed MAX_VM_BENCH_CASES=%d",
+                           case_count,
+                           MAX_VM_BENCH_CASES);
+            report->vm_count = MAX_VM_BENCH_CASES;
+        } else {
+            report->vm_count = case_count;
+        }
+        size_t to_init = report->vm_count;
+        for (size_t i = 0; i < to_init; ++i) {
+            bench_vm_case_report_t *slot = &report->vm_cases[i];
+            memset(slot, 0, sizeof(*slot));
+            if (i < case_count) {
+                snprintf(slot->name, sizeof(slot->name), "%s", cases[i].name);
+                slot->iterations = cases[i].iterations;
+                slot->expected_result = cases[i].expected_result;
+            }
+            slot->ok = 1;
+        }
+    }
+
+    for (size_t c = 0; c < case_count; ++c) {
         const vm_case_t *vm_case = &cases[c];
+        bench_vm_case_report_t *slot = NULL;
+        if (report && c < report->vm_count) {
+            slot = &report->vm_cases[c];
+            slot->completed = 0;
+            slot->actual_result = 0;
+            slot->avg_steps = 0.0;
+            slot->min_steps = 0;
+            slot->max_steps = 0;
+            slot->halt_ratio = 0.0;
+            slot->result_mismatch = 0;
+            slot->throughput_ops = 0.0;
+            slot->timings.mean_us = 0.0;
+            slot->timings.p95_us = 0.0;
+            slot->timings.min_us = 0.0;
+            slot->timings.max_us = 0.0;
+            slot->timings.stddev_us = 0.0;
+            slot->error[0] = '\0';
+        }
         uint8_t *code = NULL;
         size_t code_len = 0;
         if (build_program_from_expression(vm_case->expression, &code, &code_len) != 0) {
@@ -407,6 +501,13 @@ static int run_vm_microbench(FILE *log_fp) {
                            "Δ-VM %-12s | failed to compile expression '%s'",
                            vm_case->name,
                            vm_case->expression);
+            if (slot) {
+                slot->ok = 0;
+                snprintf(slot->error,
+                         sizeof(slot->error),
+                         "compile failed for '%s'",
+                         vm_case->expression);
+            }
             rc = -1;
             continue;
         }
@@ -420,6 +521,13 @@ static int run_vm_microbench(FILE *log_fp) {
             free(samples);
             free(steps);
             free(code);
+            if (slot) {
+                slot->ok = 0;
+                snprintf(slot->error,
+                         sizeof(slot->error),
+                         "allocation failed for %zu iterations",
+                         vm_case->iterations);
+            }
             rc = -1;
             continue;
         }
@@ -441,6 +549,15 @@ static int run_vm_microbench(FILE *log_fp) {
                                completed,
                                run_rc,
                                (int)result.status);
+                if (slot) {
+                    slot->ok = 0;
+                    snprintf(slot->error,
+                             sizeof(slot->error),
+                             "iteration %zu failed (rc=%d status=%d)",
+                             completed,
+                             run_rc,
+                             (int)result.status);
+                }
                 rc = -1;
                 break;
             }
@@ -453,6 +570,10 @@ static int run_vm_microbench(FILE *log_fp) {
                 result_mismatch = 1;
             }
             last_result = result.result;
+            if (slot) {
+                slot->actual_result = result.result;
+                slot->completed = completed + 1;
+            }
         }
 
         if (completed == vm_case->iterations) {
@@ -461,6 +582,12 @@ static int run_vm_microbench(FILE *log_fp) {
                 bench_log_line(log_fp,
                                "Δ-VM %-12s | failed to compute timing stats",
                                vm_case->name);
+                if (slot) {
+                    slot->ok = 0;
+                    snprintf(slot->error,
+                             sizeof(slot->error),
+                             "timing stats failed");
+                }
                 rc = -1;
             } else {
                 double avg_steps = 0.0;
@@ -476,13 +603,15 @@ static int run_vm_microbench(FILE *log_fp) {
                                                  (double)vm_case->iterations
                                            : 0.0;
                 bench_log_line(log_fp,
-                               "Δ-VM %-12s | iters=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs | steps(avg)=%.2f min=%u max=%u | HALT=%.1f%% | result=%" PRIu64,
+                               "Δ-VM %-12s | iters=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs | stddev=%.2f µs | throughput=%.0f ops/s | steps(avg)=%.2f min=%u max=%u | HALT=%.1f%% | result=%" PRIu64,
                                vm_case->name,
                                vm_case->iterations,
                                stats.mean_us,
                                stats.p95_us,
                                stats.min_us,
                                stats.max_us,
+                               stats.stddev_us,
+                               stats.mean_us > 0.0 ? 1000000.0 / stats.mean_us : 0.0,
                                avg_steps,
                                min_steps,
                                max_steps,
@@ -493,9 +622,38 @@ static int run_vm_microbench(FILE *log_fp) {
                                    "Δ-VM %-12s | result mismatch detected (expected=%" PRIu64 ")",
                                    vm_case->name,
                                    vm_case->expected_result);
+                    if (slot && slot->error[0] == '\0') {
+                        snprintf(slot->error,
+                                 sizeof(slot->error),
+                                 "result mismatch (expected=%" PRIu64 ")",
+                                 vm_case->expected_result);
+                    }
                     rc = -1;
                 }
+                if (slot) {
+                    slot->timings = stats;
+                    slot->avg_steps = avg_steps;
+                    slot->min_steps = min_steps;
+                    slot->max_steps = max_steps;
+                    slot->halt_ratio = halted_ratio;
+                    slot->result_mismatch = result_mismatch;
+                    slot->actual_result = last_result;
+                    slot->throughput_ops = stats.mean_us > 0.0 ? 1000000.0 / stats.mean_us : 0.0;
+                    if (result_mismatch) {
+                        slot->ok = 0;
+                    }
+                }
             }
+        } else if (slot) {
+            slot->ok = 0;
+            if (slot->error[0] == '\0') {
+                snprintf(slot->error,
+                         sizeof(slot->error),
+                         "completed %zu/%zu iterations",
+                         completed,
+                         vm_case->iterations);
+            }
+            slot->completed = completed;
         }
         free(samples);
         free(steps);
@@ -504,12 +662,24 @@ static int run_vm_microbench(FILE *log_fp) {
     return rc;
 }
 
-static int run_fkv_microbench(FILE *log_fp) {
+static int run_fkv_microbench(FILE *log_fp, bench_report_t *report) {
     const size_t operations = 1000;
     bench_log_line(log_fp, "--- F-KV microbenchmarks ---");
 
+    if (report) {
+        report->has_fkv = 1;
+        memset(&report->fkv, 0, sizeof(report->fkv));
+        report->fkv.operations = operations;
+        report->fkv.ok = 1;
+        report->fkv.error[0] = '\0';
+    }
+
     if (fkv_init() != 0) {
         bench_log_line(log_fp, "F-KV init failed");
+        if (report) {
+            report->fkv.ok = 0;
+            snprintf(report->fkv.error, sizeof(report->fkv.error), "init failed");
+        }
         return -1;
     }
 
@@ -520,10 +690,16 @@ static int run_fkv_microbench(FILE *log_fp) {
         free(put_samples);
         free(get_samples);
         fkv_shutdown();
+        if (report) {
+            report->fkv.ok = 0;
+            snprintf(report->fkv.error, sizeof(report->fkv.error), "allocation failed");
+        }
         return -1;
     }
 
     int rc = 0;
+    size_t put_completed = 0;
+    int fatal_put_error = 0;
     for (size_t i = 0; i < operations; ++i) {
         uint8_t key_digits[32];
         size_t key_len = 0;
@@ -536,6 +712,13 @@ static int run_fkv_microbench(FILE *log_fp) {
                                &value_len) != 0) {
             bench_log_line(log_fp, "F-KV PUT | digit encoding failed at %zu", i);
             rc = -1;
+            fatal_put_error = 1;
+            if (report && report->fkv.error[0] == '\0') {
+                snprintf(report->fkv.error,
+                         sizeof(report->fkv.error),
+                         "digit encoding failed at put %zu",
+                         i);
+            }
             break;
         }
         uint64_t start_ns = monotonic_ns();
@@ -544,13 +727,24 @@ static int run_fkv_microbench(FILE *log_fp) {
         if (put_rc != 0) {
             bench_log_line(log_fp, "F-KV PUT | operation %zu failed (rc=%d)", i, put_rc);
             rc = -1;
+            fatal_put_error = 1;
+            if (report && report->fkv.error[0] == '\0') {
+                snprintf(report->fkv.error,
+                         sizeof(report->fkv.error),
+                         "put failure at %zu (rc=%d)",
+                         i,
+                         put_rc);
+            }
             break;
         }
-        put_samples[i] = (double)(end_ns - start_ns) / 1000.0;
+        put_samples[put_completed++] = (double)(end_ns - start_ns) / 1000.0;
     }
 
     size_t hits = 0;
-    if (rc == 0) {
+    size_t value_mismatches = 0;
+    size_t get_completed = 0;
+    int fatal_get_error = 0;
+    if (!fatal_put_error && put_completed == operations) {
         for (size_t i = 0; i < operations; ++i) {
             uint8_t key_digits[32];
             size_t key_len = 0;
@@ -560,6 +754,13 @@ static int run_fkv_microbench(FILE *log_fp) {
                                    &key_len) != 0) {
                 bench_log_line(log_fp, "F-KV GET | digit encoding failed at %zu", i);
                 rc = -1;
+                fatal_get_error = 1;
+                if (report && report->fkv.error[0] == '\0') {
+                    snprintf(report->fkv.error,
+                             sizeof(report->fkv.error),
+                             "digit encoding failed at get %zu",
+                             i);
+                }
                 break;
             }
             uint64_t start_ns = monotonic_ns();
@@ -569,18 +770,57 @@ static int run_fkv_microbench(FILE *log_fp) {
             if (get_rc != 0) {
                 bench_log_line(log_fp, "F-KV GET | operation %zu failed (rc=%d)", i, get_rc);
                 rc = -1;
+                fatal_get_error = 1;
+                if (report && report->fkv.error[0] == '\0') {
+                    snprintf(report->fkv.error,
+                             sizeof(report->fkv.error),
+                             "get failure at %zu (rc=%d)",
+                             i,
+                             get_rc);
+                }
                 fkv_iter_free(&it);
                 break;
             }
-            get_samples[i] = (double)(end_ns - start_ns) / 1000.0;
+            get_samples[get_completed++] = (double)(end_ns - start_ns) / 1000.0;
             if (it.count > 0) {
                 hits++;
+                uint8_t expected_digits[32];
+                size_t expected_len = 0;
+                if (digits_from_number((uint64_t)i * 17u + 11u,
+                                       expected_digits,
+                                       sizeof(expected_digits),
+                                       &expected_len) == 0) {
+                    const fkv_entry_t *entry = &it.entries[0];
+                    int mismatch = 0;
+                    if (entry->type != FKV_ENTRY_TYPE_VALUE || entry->value_len != expected_len ||
+                        memcmp(entry->value, expected_digits, expected_len) != 0) {
+                        mismatch = 1;
+                    }
+                    if (mismatch) {
+                        value_mismatches++;
+                        if (rc == 0) {
+                            rc = -1;
+                        }
+                        if (report && report->fkv.error[0] == '\0') {
+                            snprintf(report->fkv.error,
+                                     sizeof(report->fkv.error),
+                                     "value mismatch at %zu",
+                                     i);
+                        }
+                    }
+                }
             }
             fkv_iter_free(&it);
         }
     }
 
-    if (rc == 0) {
+    if (value_mismatches > 0) {
+        bench_log_line(log_fp,
+                       "F-KV GET | detected %zu mismatched values",
+                       value_mismatches);
+    }
+
+    if (!fatal_put_error && put_completed == operations && !fatal_get_error && get_completed == operations) {
         bench_timing_stats_t put_stats;
         bench_timing_stats_t get_stats;
         if (compute_timing_stats(put_samples, operations, &put_stats) != 0 ||
@@ -589,28 +829,201 @@ static int run_fkv_microbench(FILE *log_fp) {
             rc = -1;
         } else {
             bench_log_line(log_fp,
-                           "F-KV PUT  | ops=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs",
+                           "F-KV PUT  | ops=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs | stddev=%.2f µs | throughput=%.0f ops/s",
                            operations,
                            put_stats.mean_us,
                            put_stats.p95_us,
                            put_stats.min_us,
-                           put_stats.max_us);
+                           put_stats.max_us,
+                           put_stats.stddev_us,
+                           put_stats.mean_us > 0.0 ? 1000000.0 / put_stats.mean_us : 0.0);
             double hit_rate = operations ? (double)hits * 100.0 / (double)operations : 0.0;
             bench_log_line(log_fp,
-                           "F-KV GET  | ops=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs | hit=%.1f%%",
+                           "F-KV GET  | ops=%zu | mean=%.2f µs | p95=%.2f µs | min=%.2f µs | max=%.2f µs | stddev=%.2f µs | throughput=%.0f ops/s | hit=%.1f%%",
                            operations,
                            get_stats.mean_us,
                            get_stats.p95_us,
                            get_stats.min_us,
                            get_stats.max_us,
+                           get_stats.stddev_us,
+                           get_stats.mean_us > 0.0 ? 1000000.0 / get_stats.mean_us : 0.0,
                            hit_rate);
+            if (report) {
+                report->fkv.put_timings = put_stats;
+                report->fkv.get_timings = get_stats;
+                report->fkv.put_throughput_ops = put_stats.mean_us > 0.0 ? 1000000.0 / put_stats.mean_us : 0.0;
+                report->fkv.get_throughput_ops = get_stats.mean_us > 0.0 ? 1000000.0 / get_stats.mean_us : 0.0;
+            }
         }
     }
 
     free(put_samples);
     free(get_samples);
     fkv_shutdown();
+
+    if (report) {
+        report->fkv.put_completed = put_completed;
+        report->fkv.get_completed = get_completed;
+        report->fkv.hits = hits;
+        report->fkv.value_mismatches = value_mismatches;
+        report->fkv.hit_rate = operations ? (double)hits * 100.0 / (double)operations : 0.0;
+        if (rc == 0) {
+            report->fkv.error[0] = '\0';
+        } else if (report->fkv.error[0] == '\0') {
+            snprintf(report->fkv.error, sizeof(report->fkv.error), "see logs");
+        }
+        report->fkv.ok = (rc == 0);
+    }
     return rc;
+}
+
+static void json_write_string(FILE *fp, const char *str) {
+    if (!fp) {
+        return;
+    }
+    fputc('"', fp);
+    if (!str) {
+        str = "";
+    }
+    for (const unsigned char *p = (const unsigned char *)str; *p; ++p) {
+        unsigned char ch = *p;
+        switch (ch) {
+        case '"':
+            fputs("\\\"", fp);
+            break;
+        case '\\':
+            fputs("\\\\", fp);
+            break;
+        case '\b':
+            fputs("\\b", fp);
+            break;
+        case '\f':
+            fputs("\\f", fp);
+            break;
+        case '\n':
+            fputs("\\n", fp);
+            break;
+        case '\r':
+            fputs("\\r", fp);
+            break;
+        case '\t':
+            fputs("\\t", fp);
+            break;
+        default:
+            if (ch < 0x20 || ch > 0x7E) {
+                fprintf(fp, "\\u%04x", ch);
+            } else {
+                fputc((int)ch, fp);
+            }
+            break;
+        }
+    }
+    fputc('"', fp);
+}
+
+static int write_bench_json(const char *path, const bench_report_t *report) {
+    if (!path || !report) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    char tmp_path[512];
+    int written = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    if (written < 0 || (size_t)written >= sizeof(tmp_path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    FILE *fp = fopen(tmp_path, "w");
+    if (!fp) {
+        return -1;
+    }
+
+    time_t now = time(NULL);
+    struct tm tm_buf;
+    char timestamp[64];
+    if (gmtime_r(&now, &tm_buf) != NULL &&
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &tm_buf) > 0) {
+        // timestamp ready
+    } else {
+        snprintf(timestamp, sizeof(timestamp), "unknown");
+    }
+
+    fprintf(fp, "{\n  \"status\": \"%s\",\n  \"timestamp\": ", report->overall_ok ? "ok" : "error");
+    json_write_string(fp, timestamp);
+    fprintf(fp, ",\n  \"vm\": [\n");
+
+    for (size_t i = 0; i < report->vm_count; ++i) {
+        const bench_vm_case_report_t *vm = &report->vm_cases[i];
+        fprintf(fp,
+                "    {\n      \"name\": ");
+        json_write_string(fp, vm->name);
+        fprintf(fp,
+                ",\n      \"iterations\": %zu,\n      \"completed\": %zu,\n      \"expected_result\": %" PRIu64 ",\n      \"actual_result\": %" PRIu64 ",\n      \"result_mismatch\": %s,\n      \"halt_ratio\": %.4f,\n      \"throughput_ops\": %.2f,\n      \"steps\": {\n        \"avg\": %.2f,\n        \"min\": %u,\n        \"max\": %u\n      },\n      \"timing\": {\n        \"mean_us\": %.2f,\n        \"p95_us\": %.2f,\n        \"min_us\": %.2f,\n        \"max_us\": %.2f,\n        \"stddev_us\": %.2f\n      },\n      \"ok\": %s,\n      \"error\": ",
+                vm->iterations,
+                vm->completed,
+                vm->expected_result,
+                vm->actual_result,
+                vm->result_mismatch ? "true" : "false",
+                vm->halt_ratio,
+                vm->throughput_ops,
+                vm->avg_steps,
+                vm->min_steps,
+                vm->max_steps,
+                vm->timings.mean_us,
+                vm->timings.p95_us,
+                vm->timings.min_us,
+                vm->timings.max_us,
+                vm->timings.stddev_us,
+                vm->ok ? "true" : "false");
+        json_write_string(fp, vm->error);
+        fprintf(fp, "\n    }%s\n", (i + 1 < report->vm_count) ? "," : "");
+    }
+
+    fprintf(fp, "  ]");
+
+    fprintf(fp, ",\n  \"fkv\": ");
+    if (!report->has_fkv) {
+        fprintf(fp, "null\n");
+    } else {
+        const bench_fkv_report_t *fkv = &report->fkv;
+        fprintf(fp,
+                "{\n    \"operations\": %zu,\n    \"put_completed\": %zu,\n    \"get_completed\": %zu,\n    \"hits\": %zu,\n    \"value_mismatches\": %zu,\n    \"hit_rate\": %.4f,\n    \"ok\": %s,\n    \"error\": ",
+                fkv->operations,
+                fkv->put_completed,
+                fkv->get_completed,
+                fkv->hits,
+                fkv->value_mismatches,
+                fkv->hit_rate,
+                fkv->ok ? "true" : "false");
+        json_write_string(fp, fkv->error);
+        fprintf(fp,
+                ",\n    \"put\": {\n      \"timing\": {\n        \"mean_us\": %.2f,\n        \"p95_us\": %.2f,\n        \"min_us\": %.2f,\n        \"max_us\": %.2f,\n        \"stddev_us\": %.2f\n      },\n      \"throughput_ops\": %.2f\n    },\n    \"get\": {\n      \"timing\": {\n        \"mean_us\": %.2f,\n        \"p95_us\": %.2f,\n        \"min_us\": %.2f,\n        \"max_us\": %.2f,\n        \"stddev_us\": %.2f\n      },\n      \"throughput_ops\": %.2f\n    }\n  }\n",
+                fkv->put_timings.mean_us,
+                fkv->put_timings.p95_us,
+                fkv->put_timings.min_us,
+                fkv->put_timings.max_us,
+                fkv->put_timings.stddev_us,
+                fkv->put_throughput_ops,
+                fkv->get_timings.mean_us,
+                fkv->get_timings.p95_us,
+                fkv->get_timings.min_us,
+                fkv->get_timings.max_us,
+                fkv->get_timings.stddev_us,
+                fkv->get_throughput_ops);
+    }
+
+    fprintf(fp, "}\n");
+
+    if (fclose(fp) != 0) {
+        remove(tmp_path);
+        return -1;
+    }
+    if (rename(tmp_path, path) != 0) {
+        remove(tmp_path);
+        return -1;
+    }
+    return 0;
 }
 
 static int run_chat(const kolibri_config_t *cfg) {
@@ -702,10 +1115,13 @@ static int run_bench(void) {
     bench_log_line(bench_log, "=== Kolibri Ω benchmark suite ===");
 
     int rc = 0;
-    if (run_vm_microbench(bench_log) != 0) {
+    bench_report_t report;
+    memset(&report, 0, sizeof(report));
+
+    if (run_vm_microbench(bench_log, &report) != 0) {
         rc = -1;
     }
-    if (run_fkv_microbench(bench_log) != 0) {
+    if (run_fkv_microbench(bench_log, &report) != 0) {
         rc = -1;
     }
 
@@ -714,6 +1130,12 @@ static int run_bench(void) {
         fclose(bench_log);
     }
 
+    report.overall_ok = (rc == 0);
+    if (write_bench_json("logs/bench.json", &report) != 0) {
+        log_warn("failed to write logs/bench.json: %s", strerror(errno));
+    } else {
+        log_info("Benchmark JSON report saved to logs/bench.json");
+    }
     log_info("Benchmark report saved to logs/bench.log");
     return rc == 0 ? 0 : 1;
 }
