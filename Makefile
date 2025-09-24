@@ -1,11 +1,16 @@
 # Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
 CC ?= gcc
-CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
+JSONC_CFLAGS := $(shell pkg-config --cflags json-c 2>/dev/null)
+JSONC_LIBS := $(shell pkg-config --libs json-c 2>/dev/null)
 
+CFLAGS ?= -std=c11 -Wall -Wextra -O2
+CFLAGS += -Isrc -Iinclude -pthread
+CFLAGS += $(JSONC_CFLAGS)
+CFLAGS += -I/usr/include/json-c
 
-LDFLAGS := -lpthread -lm -luuid -lcrypto -lcurl
-
+LDFLAGS ?= -lpthread -lm -luuid -lcrypto -lcurl
+LDFLAGS += $(JSONC_LIBS)
 
 BUILD_DIR := build/obj
 BIN_DIR := bin
@@ -15,17 +20,16 @@ SRC := \
   src/main.c \
   src/util/log.c \
   src/util/config.c \
+  src/util/json_compat.c \
   src/vm/vm.c \
   src/fkv/fkv.c \
   src/kolibri_ai.c \
   src/http/http_server.c \
   src/http/http_routes.c \
   src/blockchain.c \
-
   src/formula_runtime.c \
   src/synthesis/search.c \
-  src/synthesis/formula_vm_eval.c
-
+  src/synthesis/formula_vm_eval.c \
   src/formula_stub.c \
   src/protocol/swarm.c
 
@@ -34,9 +38,18 @@ TEST_VM_SRC := tests/unit/test_vm.c src/vm/vm.c src/util/log.c src/util/config.c
 TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/config.c
 TEST_CONFIG_SRC := tests/unit/test_config.c src/util/config.c src/util/log.c
 
-TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c src/synthesis/search.c src/synthesis/formula_vm_eval.c src/vm/vm.c src/fkv/fkv.c
-
-TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c
+TEST_KOLIBRI_ITER_SRC := \
+  tests/test_kolibri_ai_iterations.c \
+  src/kolibri_ai.c \
+  src/formula_runtime.c \
+  src/formula_stub.c \
+  src/synthesis/search.c \
+  src/synthesis/formula_vm_eval.c \
+  src/vm/vm.c \
+  src/fkv/fkv.c \
+  src/util/log.c \
+  src/util/config.c \
+  src/util/json_compat.c
 TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c
 
 

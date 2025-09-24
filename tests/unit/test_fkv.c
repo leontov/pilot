@@ -35,6 +35,7 @@ static void create_temp_snapshot(char *buffer, size_t buffer_size, const char *t
 
 static void test_prefix(void) {
     fkv_init();
+    fkv_set_topk_limit(4);
     insert_sample("123", "45", FKV_ENTRY_TYPE_VALUE);
     insert_sample("124", "67", FKV_ENTRY_TYPE_VALUE);
     insert_sample("129", "89", FKV_ENTRY_TYPE_VALUE);
@@ -117,10 +118,32 @@ static void test_load_overwrites_existing(void) {
     unlink(snapshot);
 }
 
+static void test_topk_ordering(void) {
+    fkv_init();
+    fkv_set_topk_limit(3);
+    insert_sample("120", "1", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("121", "2", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("122", "3", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("123", "4", FKV_ENTRY_TYPE_VALUE);
+
+    uint8_t prefix[] = {1, 2};
+    fkv_iter_t it = {0};
+    assert(fkv_get_prefix(prefix, sizeof(prefix), &it, 3) == 0);
+    assert(it.count == 3);
+    assert(it.entries[0].key_len == 3);
+    assert(it.entries[0].key[2] == 3);
+    assert(it.entries[1].key[2] == 2);
+    assert(it.entries[2].key[2] == 1);
+    fkv_iter_free(&it);
+
+    fkv_shutdown();
+}
+
 int main(void) {
     test_prefix();
     test_serialization_roundtrip();
     test_load_overwrites_existing();
+    test_topk_ordering();
     printf("fkv tests passed\n");
     return 0;
 }

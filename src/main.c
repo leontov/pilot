@@ -324,6 +324,8 @@ int main(int argc, char **argv) {
         log_warn("could not read cfg/kolibri.jsonc, using defaults");
     }
 
+    fkv_set_topk_limit(cfg.fkv.top_k ? cfg.fkv.top_k : 1);
+
     if (argc > 1 && strcmp(argv[1], "--bench") == 0) {
         if (log_fp) {
             fclose(log_fp);

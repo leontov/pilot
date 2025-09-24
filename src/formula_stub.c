@@ -30,7 +30,11 @@ static void formula_copy_string(char *dest, size_t dest_size, const char *src) {
         dest[0] = '\0';
         return;
     }
-    size_t len = strnlen(src, dest_size - 1);
+    size_t len = 0;
+    size_t limit = dest_size - 1;
+    while (len < limit && src[len] != '\0') {
+        len++;
+    }
     memcpy(dest, src, len);
     dest[len] = '\0';
 }

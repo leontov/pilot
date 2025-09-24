@@ -23,6 +23,25 @@ int main(void) {
     kolibri_config_t cfg = {0};
     cfg.search = formula_search_config_default();
     cfg.search.max_candidates = 2;
+    KolibriAI *empty = kolibri_ai_create(&cfg);
+    assert(empty != NULL);
+    char *empty_snapshot = kolibri_ai_export_snapshot(empty);
+    assert(empty_snapshot != NULL);
+    ensure_contains(empty_snapshot, "\"dataset\":[]");
+    ensure_contains(empty_snapshot, "\"memory\":[]");
+
+    KolibriAI *empty_target = kolibri_ai_create(&cfg);
+    assert(empty_target != NULL);
+    assert(kolibri_ai_import_snapshot(empty_target, empty_snapshot) == 0);
+    char *empty_roundtrip = kolibri_ai_export_snapshot(empty_target);
+    assert(empty_roundtrip != NULL);
+    ensure_contains(empty_roundtrip, "\"dataset\":[]");
+    ensure_contains(empty_roundtrip, "\"memory\":[]");
+    free(empty_roundtrip);
+    kolibri_ai_destroy(empty_target);
+    free(empty_snapshot);
+    kolibri_ai_destroy(empty);
+
     KolibriAI *ai = kolibri_ai_create(&cfg);
     assert(ai != NULL);
 
@@ -56,6 +75,24 @@ int main(void) {
     ensure_contains(formulas, "formulas");
     ensure_contains(formulas, "kolibri");
     free(formulas);
+
+    char *snapshot = kolibri_ai_export_snapshot(ai);
+    assert(snapshot != NULL);
+    ensure_contains(snapshot, "\"dataset\"");
+    ensure_contains(snapshot, "\"memory\"");
+    ensure_contains(snapshot, "\"prompt\"");
+    ensure_contains(snapshot, "\"key\"");
+
+    KolibriAI *restored = kolibri_ai_create(&cfg);
+    assert(restored != NULL);
+    assert(kolibri_ai_import_snapshot(restored, snapshot) == 0);
+    char *restored_snapshot = kolibri_ai_export_snapshot(restored);
+    assert(restored_snapshot != NULL);
+    ensure_contains(restored_snapshot, "\"dataset\"");
+    ensure_contains(restored_snapshot, "\"memory\"");
+    free(restored_snapshot);
+    kolibri_ai_destroy(restored);
+    free(snapshot);
 
     kolibri_ai_destroy(ai);
     return 0;

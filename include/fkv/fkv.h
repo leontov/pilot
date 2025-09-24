@@ -33,6 +33,8 @@ void fkv_shutdown(void);
 int fkv_put(const uint8_t *key, size_t kn, const uint8_t *val, size_t vn, fkv_entry_type_t type);
 int fkv_get_prefix(const uint8_t *key, size_t kn, fkv_iter_t *it, size_t k);
 void fkv_iter_free(fkv_iter_t *it);
+void fkv_set_topk_limit(size_t limit);
+size_t fkv_get_topk_limit(void);
 int fkv_save(const char *path);
 int fkv_load(const char *path);
 
