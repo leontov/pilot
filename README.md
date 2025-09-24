@@ -62,6 +62,33 @@ make build
 The CLI accepts decimal arithmetic expressions (e.g. `12+30/6`) and stores the results in the F-KV memory. Any other text prompt
 falls back to the current best formula discovered by the Kolibri AI core, which is useful for smoke-testing the synthesis loop.
 
+## Android companion app
+
+The repository ships with a native Android client located under [`android/`](android/). The app is built with Kotlin, Jetpack
+Compose, and Material 3. It exposes a streamlined chat surface that connects to the Kolibri Ω node through the public
+`/api/v1/dialog` endpoint and allows configuring the base URL directly from the UI.
+
+### Requirements
+
+* Android Studio Ladybug or newer (AGP 8.5+).
+* Android SDK Platform 34.
+
+### Build & run from the command line
+
+```bash
+cd android
+./gradlew assembleDebug   # requires ANDROID_HOME or local.properties with sdk.dir
+```
+
+> [!NOTE]
+> The Gradle wrapper JAR is omitted from version control to comply with the repository's no-binaries policy. The provided
+> `gradlew`/`gradlew.bat` scripts will regenerate it automatically when a system-wide Gradle installation is available. If you do
+> not have Gradle installed, run `gradle -p android wrapper --gradle-version 8.7 --distribution-type all` once before invoking the
+> wrapper scripts.
+
+The compiled APK is emitted to `android/app/build/outputs/apk/debug/`. When using the Android Emulator, point the base URL to
+`http://10.0.2.2:9000` so the device can reach the Kolibri Ω node running on the host.
+
 
 ## AI state persistence
 

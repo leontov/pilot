@@ -1,0 +1,11 @@
+<resources>
+    <color name="seed">#3949AB</color>
+    <color name="md_theme_light_primary">#3949AB</color>
+    <color name="md_theme_light_onPrimary">#FFFFFF</color>
+    <color name="md_theme_light_background">#FFFFFF</color>
+    <color name="md_theme_light_onBackground">#1A1C1E</color>
+    <color name="md_theme_dark_primary">#AAB4FF</color>
+    <color name="md_theme_dark_onPrimary">#0D175F</color>
+    <color name="md_theme_dark_background">#1A1C1E</color>
+    <color name="md_theme_dark_onBackground">#E3E2E6</color>
+</resources>
