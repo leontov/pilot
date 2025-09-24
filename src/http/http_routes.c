@@ -653,10 +653,6 @@ static void respond_dialog(const kolibri_config_t *cfg, const char *body, size_t
     resp->status = 200;
     snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
 
-    double effectiveness = 1.0;
-    int rating = effectiveness >= 0.75 ? 5 : 1;
-    kolibri_ai_record_interaction(body ? body : "", json, effectiveness, rating);
-
     fkv_iter_free(&it);
     return 0;
 }
