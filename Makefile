@@ -28,38 +28,23 @@ BIN_DIR := bin
 TARGET := $(BIN_DIR)/kolibri_node
 
 SRC := \
-
     src/main.c \
     src/util/log.c \
+    src/util/bench.c \
     src/util/config.c \
+    src/util/json_compat.c \
     src/vm/vm.c \
     src/fkv/fkv.c \
     src/kolibri_ai.c \
     src/http/http_server.c \
     src/http/http_routes.c \
+    src/http_status_server.c \
     src/blockchain.c \
     src/formula_runtime.c \
     src/synthesis/search.c \
     src/synthesis/formula_vm_eval.c \
     src/formula_stub.c \
     src/protocol/swarm.c
-
-  src/main.c \
-  src/util/log.c \
-  src/util/bench.c \
-  src/util/config.c \
-  src/util/json_compat.c \
-  src/vm/vm.c \
-  src/fkv/fkv.c \
-  src/kolibri_ai.c \
-  src/http/http_server.c \
-  src/http/http_routes.c \
-  src/blockchain.c \
-  src/formula_runtime.c \
-  src/synthesis/search.c \
-  src/synthesis/formula_vm_eval.c \
-  src/formula_stub.c \
-  src/protocol/swarm.c
 
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
