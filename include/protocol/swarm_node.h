@@ -25,6 +25,10 @@ typedef struct {
     uint32_t infractions;
     uint32_t successes;
     uint64_t last_seen_ms;
+    uint32_t programs_accepted;
+    uint32_t programs_rejected;
+    uint32_t blocks_accepted;
+    uint32_t blocks_rejected;
     SwarmHelloPayload hello;
     SwarmPingPayload ping;
     SwarmProgramOfferPayload program_offer;

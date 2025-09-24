@@ -1406,6 +1406,7 @@ int main(int argc, char **argv) {
     }
     if (swarm_node) {
         swarm_node_destroy(swarm_node);
+    }
 
     if (status_thread_started) {
         pthread_join(status_thread, NULL);
@@ -1414,7 +1415,6 @@ int main(int argc, char **argv) {
     if (status_server_initialized) {
         http_status_server_shutdown();
         status_server_initialized = 0;
-
     }
     if (http_ai) {
         kolibri_ai_stop(http_ai);
