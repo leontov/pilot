@@ -45,6 +45,7 @@ struct KolibriAI {
 };
 
 static void copy_string(char *dst, size_t dst_size, const char *src);
+static void format_fixed3(char *dst, size_t dst_size, double value);
 static void dataset_clear(KolibriAIDataset *dataset) {
     if (!dataset) {
         return;
@@ -96,9 +97,9 @@ static void dataset_trim(KolibriAIDataset *dataset, size_t limit) {
         return;
     }
     size_t offset = dataset->count - limit;
-    memmove(dataset->entries,
-            dataset->entries + offset,
-            limit * sizeof(dataset->entries[0]));
+    for (size_t i = 0; i < limit; ++i) {
+        dataset->entries[i] = dataset->entries[offset + i];
+    }
     dataset->count = limit;
 }
 
@@ -153,9 +154,9 @@ static void memory_trim(KolibriMemoryModule *memory, size_t limit) {
         return;
     }
     size_t offset = memory->count - limit;
-    memmove(memory->facts,
-            memory->facts + offset,
-            limit * sizeof(memory->facts[0]));
+    for (size_t i = 0; i < limit; ++i) {
+        memory->facts[i] = memory->facts[offset + i];
+    }
     memory->count = limit;
 }
 
@@ -211,10 +212,8 @@ static void add_bootstrap_formula(KolibriAI *ai) {
     }
     Formula bootstrap = {0};
     bootstrap.representation = FORMULA_REPRESENTATION_TEXT;
-    snprintf(bootstrap.id, sizeof(bootstrap.id), "kolibri.bootstrap");
-    snprintf(bootstrap.content,
-             sizeof(bootstrap.content),
-             "kolibri(x) = x + 1");
+    copy_string(bootstrap.id, sizeof(bootstrap.id), "kolibri.bootstrap");
+    copy_string(bootstrap.content, sizeof(bootstrap.content), "kolibri(x) = x + 1");
     bootstrap.effectiveness = 0.5;
     bootstrap.created_at = time(NULL);
     bootstrap.tests_passed = 1;
@@ -380,17 +379,69 @@ static void copy_string(char *dst, size_t dst_size, const char *src) {
     if (!dst || dst_size == 0) {
         return;
     }
-    if (!src) {
+    size_t index = 0;
+    if (src) {
+        while (index + 1 < dst_size && src[index] != '\0') {
+            dst[index] = src[index];
+            index++;
+        }
+    }
+    dst[index] = '\0';
+}
+
+static void format_fixed3(char *dst, size_t dst_size, double value) {
+    if (!dst || dst_size == 0) {
+        return;
+    }
+    if (!(value == value) || dst_size == 1) {
         dst[0] = '\0';
         return;
     }
-    size_t max_copy = dst_size - 1;
-    size_t len = 0;
-    while (len < max_copy && src[len] != '\0') {
-        len++;
+    double scaled = value * 1000.0;
+    long long rounded = (scaled >= 0.0) ? (long long)(scaled + 0.5) : (long long)(scaled - 0.5);
+    int negative = rounded < 0;
+    unsigned long long magnitude = negative ? (unsigned long long)(-rounded)
+                                            : (unsigned long long)rounded;
+    unsigned long long integer_part = magnitude / 1000ULL;
+    unsigned long long fractional_part = magnitude % 1000ULL;
+
+    char integer_buffer[32];
+    size_t integer_len = 0;
+    do {
+        if (integer_len < sizeof(integer_buffer)) {
+            integer_buffer[integer_len++] = (char)('0' + (integer_part % 10ULL));
+        }
+        integer_part /= 10ULL;
+    } while (integer_part > 0);
+
+    size_t index = 0;
+    if (negative && index + 1 < dst_size) {
+        dst[index++] = '-';
     }
-    memcpy(dst, src, len);
-    dst[len] = '\0';
+
+    if (integer_len == 0 && index + 1 < dst_size) {
+        dst[index++] = '0';
+    } else {
+        while (integer_len > 0 && index + 1 < dst_size) {
+            dst[index++] = integer_buffer[--integer_len];
+        }
+    }
+
+    if (index + 1 >= dst_size) {
+        dst[dst_size - 1] = '\0';
+        return;
+    }
+
+    dst[index++] = '.';
+
+    unsigned int divisors[3] = {100u, 10u, 1u};
+    for (size_t i = 0; i < 3 && index + 1 < dst_size; ++i) {
+        unsigned long long digit = fractional_part / divisors[i];
+        dst[index++] = (char)('0' + digit);
+        fractional_part -= digit * divisors[i];
+    }
+
+    dst[index] = '\0';
 }
 
 void kolibri_ai_record_interaction(KolibriAI *ai,
@@ -400,10 +451,9 @@ void kolibri_ai_record_interaction(KolibriAI *ai,
     }
     KolibriAIDatasetEntry entry = {0};
     copy_string(entry.prompt, sizeof(entry.prompt), interaction->task.description);
-    snprintf(entry.response,
-             sizeof(entry.response),
-             "%.3f",
-             interaction->predicted_result);
+    format_fixed3(entry.response,
+                  sizeof(entry.response),
+                  interaction->predicted_result);
     entry.reward = interaction->reward;
     entry.poe = interaction->task.expected_result;
     entry.mdl = interaction->error;
@@ -483,10 +533,9 @@ int kolibri_ai_apply_reinforcement(KolibriAI *ai,
 
     KolibriAIDatasetEntry entry = {0};
     copy_string(entry.prompt, sizeof(entry.prompt), formula->id);
-    snprintf(entry.response,
-             sizeof(entry.response),
-             "%.3f",
-             experience->reward);
+    format_fixed3(entry.response,
+                  sizeof(entry.response),
+                  experience->reward);
     entry.reward = experience->reward;
     entry.poe = experience->poe;
     entry.mdl = experience->mdl;
@@ -557,7 +606,9 @@ static char *dup_json_string(struct json_object *obj) {
     if (!copy) {
         return NULL;
     }
-    memcpy(copy, text, len + 1);
+    for (size_t i = 0; i <= len; ++i) {
+        copy[i] = text[i];
+    }
     return copy;
 }
 

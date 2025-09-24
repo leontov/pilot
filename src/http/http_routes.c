@@ -1455,7 +1455,11 @@ int http_handle_request(const kolibri_config_t *cfg,
         return route->handler(cfg, path, body, body_len, resp);
     }
 
+
     return respond_error(resp, 404, "not_found", "route not found");
+
+    return respond_json(resp, "{\"error\":\"not_found\"}", 404);
+
 }
 
 void http_response_free(http_response_t *resp) {
