@@ -26,6 +26,17 @@ const copy: Record<Language, {
   pillars: { title: string; description: string }[];
   architecture: { title: string; description: string }[];
   timeline: { label: string; description: string }[];
+  techStack: {
+    title: string;
+    lead: string;
+    items: { title: string; description: string; highlight: string }[];
+  };
+  useCases: {
+    title: string;
+    lead: string;
+    items: { title: string; description: string; impact: string }[];
+  };
+  faq: { title: string; items: { question: string; answer: string }[] };
   cta: { title: string; description: string; action: string };
   chat: {
     title: string;
@@ -43,7 +54,10 @@ const copy: Record<Language, {
       { id: "vision", label: "Миссия" },
       { id: "pillars", label: "Опоры" },
       { id: "architecture", label: "Архитектура" },
+      { id: "stack", label: "Технологии" },
+      { id: "use-cases", label: "Сценарии" },
       { id: "roadmap", label: "Дорожная карта" },
+      { id: "faq", label: "FAQ" },
       { id: "cta", label: "Связаться" },
     ],
     hero: {
@@ -113,6 +127,73 @@ const copy: Record<Language, {
         description: "Блокчейн знаний, кластер, мониторинг и подготовка демонстрации уровня world-class.",
       },
     ],
+    techStack: {
+      title: "Технологический стек Kolibri",
+      lead: "Каждый слой Kolibri Ω выстроен вокруг десятичной точности — от виртуальной машины до визуализации знаний.",
+      items: [
+        {
+          title: "Δ-VM Core",
+          description: "Интерпретатор на C с резидентным размером менее 50 МБ и строгими лимитами газа для детерминизма.",
+          highlight: "C · SIMD · JSON Trace",
+        },
+        {
+          title: "F-KV Fabric",
+          description: "Фрактальная память с десятичным арифметическим кодированием и префиксным поиском за миллисекунды.",
+          highlight: "Trie · Arithmetic Coding",
+        },
+        {
+          title: "Синтез знаний",
+          description: "Комбинация перебора, MCTS и генетического поиска повышает PoE и снижает MDL.",
+          highlight: "Search · PoE Engine",
+        },
+        {
+          title: "Kolibri Studio",
+          description: "Веб-интерфейс на React/Vite с живыми дашбордами, трассировками и управлением узлом.",
+          highlight: "React · Vite · WebGL",
+        },
+      ],
+    },
+    useCases: {
+      title: "Сценарии применения",
+      lead: "Kolibri Ω превращает формальные знания в оцифрованные рабочие процессы для бизнеса и науки.",
+      items: [
+        {
+          title: "Финансовые регламенты",
+          description: "Оцифровка правил расчёта и проверок снижает операционные риски и ускоряет аудит.",
+          impact: "−65% времени на валидацию",
+        },
+        {
+          title: "Научные лаборатории",
+          description: "Kolibri управляет каталогом формул и автоматически подбирает оптимальные эксперименты.",
+          impact: "+3× скорость открытия",
+        },
+        {
+          title: "Индустриальные протоколы",
+          description: "Δ-VM выполняет проверяемые последовательности действий для промышленной автоматизации.",
+          impact: "99.9% соблюдение процедур",
+        },
+      ],
+    },
+    faq: {
+      title: "Частые вопросы",
+      items: [
+        {
+          question: "Чем Kolibri отличается от LLM?",
+          answer:
+            "Kolibri Ω опирается на программы и формальные правила вместо весов. Решения прозрачны, воспроизводимы и трассируются.",
+        },
+        {
+          question: "Можно ли интегрировать Kolibri в существующие системы?",
+          answer:
+            "Да, ядро компактно, запускается локально и предоставляет HTTP API для диалогов, выполнения программ и доступа к памяти.",
+        },
+        {
+          question: "Как обеспечивается безопасность знаний?",
+          answer:
+            "Блокчейн знаний Proof-of-Use фиксирует происхождение, а криптографические подписи и репутация защищают сеть.",
+        },
+      ],
+    },
     cta: {
       title: "Присоединяйтесь к полёту Колибри",
       description:
@@ -143,7 +224,10 @@ const copy: Record<Language, {
       { id: "vision", label: "Vision" },
       { id: "pillars", label: "Pillars" },
       { id: "architecture", label: "Architecture" },
+      { id: "stack", label: "Technology" },
+      { id: "use-cases", label: "Use cases" },
       { id: "roadmap", label: "Roadmap" },
+      { id: "faq", label: "FAQ" },
       { id: "cta", label: "Contact" },
     ],
     hero: {
@@ -213,6 +297,73 @@ const copy: Record<Language, {
         description: "Knowledge blockchain, cluster operations, monitoring, and world-class demo readiness.",
       },
     ],
+    techStack: {
+      title: "Kolibri technology stack",
+      lead: "Every Kolibri Ω layer is engineered for decimal precision — from execution to knowledge visualization.",
+      items: [
+        {
+          title: "Δ-VM Core",
+          description: "A C interpreter under 50 MB with strict gas limits for deterministic execution.",
+          highlight: "C · SIMD · JSON Trace",
+        },
+        {
+          title: "F-KV Fabric",
+          description: "Fractal memory with decimal arithmetic coding delivering millisecond prefix lookups.",
+          highlight: "Trie · Arithmetic Coding",
+        },
+        {
+          title: "Knowledge synthesis",
+          description: "Enumeration, MCTS, and genetic search collaborate to raise PoE while lowering MDL.",
+          highlight: "Search · PoE Engine",
+        },
+        {
+          title: "Kolibri Studio",
+          description: "A React/Vite web cockpit with live dashboards, traces, and node orchestration.",
+          highlight: "React · Vite · WebGL",
+        },
+      ],
+    },
+    useCases: {
+      title: "Use cases",
+      lead: "Kolibri Ω transforms formal knowledge into digitized workflows for business and science.",
+      items: [
+        {
+          title: "Financial compliance",
+          description: "Digitized rulebooks automate checks and reduce operational risk while accelerating audits.",
+          impact: "−65% validation effort",
+        },
+        {
+          title: "Research labs",
+          description: "Kolibri curates formula catalogs and proposes optimal experiment plans on demand.",
+          impact: "+3× discovery velocity",
+        },
+        {
+          title: "Industrial protocols",
+          description: "Δ-VM executes verifiable action sequences for mission-critical automation.",
+          impact: "99.9% procedure adherence",
+        },
+      ],
+    },
+    faq: {
+      title: "Frequently asked questions",
+      items: [
+        {
+          question: "How is Kolibri different from LLMs?",
+          answer:
+            "Kolibri Ω relies on programs and formal rules instead of weights. Decisions are transparent, reproducible, and traceable.",
+        },
+        {
+          question: "Can Kolibri integrate with existing systems?",
+          answer:
+            "Yes. The compact core runs on-premises and exposes HTTP APIs for dialogue, program execution, and memory access.",
+        },
+        {
+          question: "How do you secure the knowledge base?",
+          answer:
+            "The Proof-of-Use knowledge blockchain tracks provenance while cryptographic signatures and reputation protect the network.",
+        },
+      ],
+    },
     cta: {
       title: "Join the Kolibri flight",
       description:
@@ -474,6 +625,55 @@ export default function App() {
                   <p>{step.description}</p>
                 </div>
               </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="stack" className="section">
+          <h2 className="section-title">{content.techStack.title}</h2>
+          <p className="section-lead">{content.techStack.lead}</p>
+          <div className="tech-grid">
+            {content.techStack.items.map((item) => (
+              <article key={item.title} className="tech-card">
+                <div>
+                  <h3>{item.title}</h3>
+                  <p>{item.description}</p>
+                </div>
+                <span className="tech-highlight">{item.highlight}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section id="use-cases" className="section">
+          <h2 className="section-title">{content.useCases.title}</h2>
+          <p className="section-lead">{content.useCases.lead}</p>
+          <div className="usecases-grid">
+            {content.useCases.items.map((item) => (
+              <article key={item.title} className="case-card">
+                <header>
+                  <h3>{item.title}</h3>
+                  <span className="case-impact">{item.impact}</span>
+                </header>
+                <p>{item.description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section id="faq" className="section">
+          <h2 className="section-title">{content.faq.title}</h2>
+          <div className="faq-list">
+            {content.faq.items.map((item) => (
+              <details key={item.question} className="faq-item">
+                <summary>
+                  <span>{item.question}</span>
+                  <span aria-hidden="true" className="faq-icon">
+                    ＋
+                  </span>
+                </summary>
+                <p>{item.answer}</p>
+              </details>
             ))}
           </div>
         </section>
