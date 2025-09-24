@@ -51,8 +51,11 @@ typedef struct {
 typedef struct {
     char prefix[SWARM_PREFIX_DIGITS + 1];
     uint16_t entry_count;
+    uint32_t raw_size;
     uint32_t compressed_size;
     uint16_t checksum;
+    uint8_t *data;
+    size_t data_len;
 } SwarmFkvDeltaPayload;
 
 typedef struct {
@@ -110,5 +113,9 @@ void swarm_peer_report_violation(SwarmPeerState *peer, SwarmFrameType type);
 
 int swarm_frame_serialize(const SwarmFrame *frame, char *out, size_t out_size, size_t *written);
 int swarm_frame_parse(const char *data, size_t len, SwarmFrame *frame);
+
+uint16_t swarm_crc16(const uint8_t *data, size_t len);
+int swarm_fkv_prefix_encode(const uint8_t *digits, size_t len, char out[SWARM_PREFIX_DIGITS + 1]);
+int swarm_fkv_prefix_decode(const char prefix[SWARM_PREFIX_DIGITS + 1], uint8_t *digits_out, size_t *len_out);
 
 #endif // KOLIBRI_PROTOCOL_SWARM_H

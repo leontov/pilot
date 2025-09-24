@@ -1,9 +1,11 @@
 #include "protocol/swarm.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <zlib.h>
 
 #define SWARM_PROTOCOL_VERSION_WIDTH 4
 #define SWARM_FRAME_CODE_WIDTH 2
@@ -24,6 +26,7 @@
 #define BLOCK_PROGRAM_COUNT_WIDTH 4
 
 #define FKV_ENTRY_COUNT_WIDTH 3
+#define FKV_RAW_SIZE_WIDTH 6
 #define FKV_SIZE_WIDTH 6
 #define FKV_CHECKSUM_WIDTH 5
 
@@ -383,6 +386,9 @@ int swarm_frame_serialize(const SwarmFrame *frame, char *out, size_t out_size, s
             rc = write_digits(out + offset, out_size - offset, FKV_ENTRY_COUNT_WIDTH, frame->payload.fkv_delta.entry_count);
             if (rc < 0) return -1;
             offset += (size_t)rc;
+            rc = write_digits(out + offset, out_size - offset, FKV_RAW_SIZE_WIDTH, frame->payload.fkv_delta.raw_size);
+            if (rc < 0) return -1;
+            offset += (size_t)rc;
             rc = write_digits(out + offset, out_size - offset, FKV_SIZE_WIDTH, frame->payload.fkv_delta.compressed_size);
             if (rc < 0) return -1;
             offset += (size_t)rc;
@@ -497,19 +503,25 @@ int swarm_frame_parse(const char *data, size_t len, SwarmFrame *frame) {
         }
         case SWARM_FRAME_FKV_DELTA: {
             uint64_t value = 0;
-            if (offset + SWARM_PREFIX_DIGITS + FKV_ENTRY_COUNT_WIDTH + FKV_SIZE_WIDTH + FKV_CHECKSUM_WIDTH > len) return -1;
+            size_t total_width = SWARM_PREFIX_DIGITS + FKV_ENTRY_COUNT_WIDTH + FKV_RAW_SIZE_WIDTH + FKV_SIZE_WIDTH + FKV_CHECKSUM_WIDTH;
+            if (offset + total_width > len) return -1;
             memcpy(frame->payload.fkv_delta.prefix, data + offset, SWARM_PREFIX_DIGITS);
             frame->payload.fkv_delta.prefix[SWARM_PREFIX_DIGITS] = '\0';
             offset += SWARM_PREFIX_DIGITS;
             if (read_digits(data + offset, FKV_ENTRY_COUNT_WIDTH, &value) != 0) return -1;
             frame->payload.fkv_delta.entry_count = (uint16_t)value;
             offset += FKV_ENTRY_COUNT_WIDTH;
+            if (read_digits(data + offset, FKV_RAW_SIZE_WIDTH, &value) != 0) return -1;
+            frame->payload.fkv_delta.raw_size = (uint32_t)value;
+            offset += FKV_RAW_SIZE_WIDTH;
             if (read_digits(data + offset, FKV_SIZE_WIDTH, &value) != 0) return -1;
             frame->payload.fkv_delta.compressed_size = (uint32_t)value;
             offset += FKV_SIZE_WIDTH;
             if (read_digits(data + offset, FKV_CHECKSUM_WIDTH, &value) != 0) return -1;
             frame->payload.fkv_delta.checksum = (uint16_t)value;
             offset += FKV_CHECKSUM_WIDTH;
+            frame->payload.fkv_delta.data = NULL;
+            frame->payload.fkv_delta.data_len = 0;
             break;
         }
         default:
@@ -518,6 +530,68 @@ int swarm_frame_parse(const char *data, size_t len, SwarmFrame *frame) {
 
     if (offset != len) {
         return -1;
+    }
+    return 0;
+}
+
+uint16_t swarm_crc16(const uint8_t *data, size_t len) {
+    if (!data || len == 0) {
+        return 0;
+    }
+    uLong crc = crc32(0L, Z_NULL, 0);
+    while (len > 0) {
+        uInt chunk = len > UINT_MAX ? UINT_MAX : (uInt)len;
+        crc = crc32(crc, data, chunk);
+        data += chunk;
+        len -= chunk;
+    }
+    return (uint16_t)(crc & 0xFFFFu);
+}
+
+int swarm_fkv_prefix_encode(const uint8_t *digits, size_t len, char out[SWARM_PREFIX_DIGITS + 1]) {
+    if (!out || len > (SWARM_PREFIX_DIGITS - 2)) {
+        return -1;
+    }
+    if (!digits && len > 0) {
+        return -1;
+    }
+    unsigned length_field = (unsigned)len;
+    out[0] = (char)('0' + ((length_field / 10) % 10));
+    out[1] = (char)('0' + (length_field % 10));
+    for (size_t i = 0; i < SWARM_PREFIX_DIGITS - 2; ++i) {
+        if (i < len) {
+            if (digits[i] > 9) {
+                return -1;
+            }
+            out[2 + i] = (char)('0' + digits[i]);
+        } else {
+            out[2 + i] = '0';
+        }
+    }
+    out[SWARM_PREFIX_DIGITS] = '\0';
+    return 0;
+}
+
+int swarm_fkv_prefix_decode(const char prefix[SWARM_PREFIX_DIGITS + 1], uint8_t *digits_out, size_t *len_out) {
+    if (!prefix) {
+        return -1;
+    }
+    for (size_t i = 0; i < SWARM_PREFIX_DIGITS; ++i) {
+        if (!isdigit((unsigned char)prefix[i])) {
+            return -1;
+        }
+    }
+    size_t len = (size_t)((prefix[0] - '0') * 10 + (prefix[1] - '0'));
+    if (len > SWARM_PREFIX_DIGITS - 2) {
+        return -1;
+    }
+    if (digits_out) {
+        for (size_t i = 0; i < len; ++i) {
+            digits_out[i] = (uint8_t)(prefix[2 + i] - '0');
+        }
+    }
+    if (len_out) {
+        *len_out = len;
     }
     return 0;
 }
