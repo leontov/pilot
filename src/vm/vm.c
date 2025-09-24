@@ -72,7 +72,10 @@ static int push(int64_t *stack, size_t *sp, size_t max_stack, int64_t v) {
 }
 
 static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
-    if (!digits || !len || *len == 0 || value < 0) {
+    if (!digits || !len || *len == 0) {
+        return -1;
+    }
+    if (value < 0) {
         return -1;
     }
 

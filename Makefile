@@ -75,15 +75,16 @@ TEST_HTTP_ROUTES_SRC := \
 	src/synthesis/formula_vm_eval.c \
 	src/formula_stub.c
 TEST_SYNTH_SEARCH_SRC := \
-	tests/test_synthesis_search.c \
-	src/synthesis/search.c \
-	src/formula.c \
-	src/formula_runtime.c \
-	src/formula_stub.c \
-	src/synthesis/formula_vm_eval.c \
-	src/vm/vm.c \
-	src/util/log.c \
-	src/util/config.c
+        tests/test_synthesis_search.c \
+        src/synthesis/search.c \
+        src/formula.c \
+        src/formula_runtime.c \
+        src/formula_stub.c \
+        src/synthesis/formula_vm_eval.c \
+        src/fkv/fkv.c \
+        src/vm/vm.c \
+        src/util/log.c \
+        src/util/config.c
 TEST_REGRESS_SRC := tests/test_blockchain_verifier.c src/blockchain.c src/formula_runtime.c src/formula_stub.c src/util/log.c
 TEST_SWARM_EXCHANGE_SRC := \
 	tests/test_swarm_exchange.c \
