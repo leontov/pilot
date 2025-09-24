@@ -54,7 +54,59 @@ case "${1:-}" in
     stop_node
     ;;
   bench)
-    make -C "$ROOT_DIR" bench
+    shift
+    timestamp=$(date +%Y%m%dT%H%M%S)
+    args=("$@")
+    has_output=0
+    has_warmup=0
+    has_iterations=0
+    has_profile_flag=0
+    i=0
+    while [ $i -lt ${#args[@]} ]; do
+      case "${args[$i]}" in
+        --output)
+          has_output=1
+          i=$((i + 2))
+          continue
+          ;;
+        --no-output)
+          has_output=1
+          ;;
+        --warmup)
+          has_warmup=1
+          i=$((i + 2))
+          continue
+          ;;
+        --iterations)
+          has_iterations=1
+          i=$((i + 2))
+          continue
+          ;;
+        --profile|--no-profile)
+          has_profile_flag=1
+          ;;
+      esac
+      i=$((i + 1))
+    done
+    bench_output=""
+    if [ $has_output -eq 0 ]; then
+      bench_output="$LOG_DIR/bench_$timestamp.json"
+      args+=(--output "$bench_output")
+    fi
+    if [ $has_warmup -eq 0 ]; then
+      args+=(--warmup 20)
+    fi
+    if [ $has_iterations -eq 0 ]; then
+      args+=(--iterations 200)
+    fi
+    if [ $has_profile_flag -eq 0 ]; then
+      args+=(--profile)
+    fi
+    BENCH_ARGS="${args[*]}"
+    make -C "$ROOT_DIR" bench BENCH_ARGS="$BENCH_ARGS"
+    if [ -n "$bench_output" ]; then
+      echo "[kolibri] benchmark report saved to $bench_output"
+    fi
     ;;
   clean)
     stop_node || true

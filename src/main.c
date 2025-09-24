@@ -11,6 +11,7 @@
 #include "kolibri_ai.h"
 #include "synthesis/formula_vm_eval.h"
 #include "util/config.h"
+#include "util/bench.h"
 #include "util/log.h"
 #include "vm/vm.h"
 #include "formula.h"
@@ -307,9 +308,62 @@ static int run_chat(const kolibri_config_t *cfg) {
     return 0;
 }
 
-static int run_bench(void) {
-    log_info("Benchmarks are not implemented yet");
+static int parse_size_t_arg(const char *value, size_t *out) {
+    if (!value || !out) {
+        return -1;
+    }
+    char *end = NULL;
+    unsigned long val = strtoul(value, &end, 10);
+    if (end == value || *end != '\0') {
+        return -1;
+    }
+    *out = (size_t)val;
     return 0;
+}
+
+static int run_bench(const kolibri_config_t *cfg, int argc, char **argv) {
+    bench_options_t opts;
+    bench_options_init(&opts);
+    opts.output_path = "logs/bench_latest.json";
+
+    for (int i = 0; i < argc; ++i) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--iterations") == 0) {
+            if (i + 1 >= argc || parse_size_t_arg(argv[i + 1], &opts.iterations) != 0) {
+                log_error("invalid value for --iterations");
+                return 1;
+            }
+            i++;
+        } else if (strcmp(arg, "--warmup") == 0) {
+            if (i + 1 >= argc || parse_size_t_arg(argv[i + 1], &opts.warmup) != 0) {
+                log_error("invalid value for --warmup");
+                return 1;
+            }
+            i++;
+        } else if (strcmp(arg, "--output") == 0) {
+            if (i + 1 >= argc) {
+                log_error("--output requires a path");
+                return 1;
+            }
+            opts.output_path = argv[i + 1];
+            i++;
+        } else if (strcmp(arg, "--no-output") == 0) {
+            opts.output_path = NULL;
+        } else if (strcmp(arg, "--profile") == 0) {
+            opts.include_profile = 1;
+        } else if (strcmp(arg, "--no-profile") == 0) {
+            opts.include_profile = 0;
+        } else {
+            log_warn("unknown bench option: %s", arg);
+        }
+    }
+
+    if (opts.iterations == 0) {
+        log_error("--iterations must be greater than zero");
+        return 1;
+    }
+
+    return bench_run_all(cfg, &opts);
 }
 
 int main(int argc, char **argv) {
@@ -320,15 +374,17 @@ int main(int argc, char **argv) {
     }
 
     kolibri_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
     if (config_load("cfg/kolibri.jsonc", &cfg) != 0) {
         log_warn("could not read cfg/kolibri.jsonc, using defaults");
     }
 
     if (argc > 1 && strcmp(argv[1], "--bench") == 0) {
+        log_set_file(NULL);
         if (log_fp) {
             fclose(log_fp);
         }
-        return run_bench();
+        return run_bench(&cfg, argc - 2, argv + 2);
     }
 
     if (argc > 1 && strcmp(argv[1], "--chat") == 0) {
