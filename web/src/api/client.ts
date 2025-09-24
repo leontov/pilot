@@ -142,6 +142,19 @@ interface RequestOptions extends RequestInit {
   skipJson?: boolean;
 }
 
+export function resolveApiBaseUrl(): string {
+  const envBase = import.meta.env.VITE_API_BASE;
+  if (typeof envBase === "string" && envBase.trim().length > 0) {
+    return envBase;
+  }
+
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+
+  return "";
+}
+
 export class KolibriClient {
   constructor(private readonly baseUrl = "") {}
 
@@ -223,4 +236,6 @@ export class KolibriClient {
   }
 }
 
-export const apiClient = new KolibriClient();
+const API_BASE_URL = resolveApiBaseUrl();
+
+export const apiClient = new KolibriClient(API_BASE_URL);
