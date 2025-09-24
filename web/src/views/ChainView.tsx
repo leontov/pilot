@@ -1,3 +1,5 @@
+// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 import { FormEvent, useEffect, useState } from "react";
 import { apiClient, ChainSubmitResponse, MetricsResponse } from "../api/client";
 import { Spinner } from "../components/Spinner";

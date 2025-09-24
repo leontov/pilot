@@ -1,3 +1,5 @@
+// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 import { FormEvent, useMemo, useState } from "react";
 import { apiClient, MemoryProgram, MemoryValue } from "../api/client";
 import { DataTable } from "../components/DataTable";

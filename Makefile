@@ -1,13 +1,10 @@
+# Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
 
-LDFLAGS := -lpthread -ljson-c -lm -luuid
-
-LDFLAGS := -lpthread -lm -lcrypto
-
-
-LDFLAGS := -lpthread -ljson-c -lcurl
+LDFLAGS := -lpthread -ljson-c -lm -luuid -lcrypto -lcurl
 
 
 BUILD_DIR := build/obj

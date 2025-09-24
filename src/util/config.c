@@ -1,77 +1,71 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "util/config.h"
 
 #include <ctype.h>
 #include <errno.h>
-#include <limits.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    const char *cur;
+} json_cursor_t;
+
 static void set_defaults(kolibri_config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
+
     strncpy(cfg->http.host, "0.0.0.0", sizeof(cfg->http.host) - 1);
-    cfg->http.host[sizeof(cfg->http.host) - 1] = '\0';
     cfg->http.port = 9000;
     cfg->http.max_body_size = 1024 * 1024;
+
     cfg->vm.max_steps = 2048;
     cfg->vm.max_stack = 128;
     cfg->vm.trace_depth = 64;
 
     cfg->seed = 1337;
-    strncpy(cfg->ai.snapshot_path, "data/kolibri_ai_snapshot.json", sizeof(cfg->ai.snapshot_path) - 1);
-    cfg->ai.snapshot_path[sizeof(cfg->ai.snapshot_path) - 1] = '\0';
+
+    strncpy(cfg->ai.snapshot_path,
+            "data/kolibri_ai_snapshot.json",
+            sizeof(cfg->ai.snapshot_path) - 1);
     cfg->ai.snapshot_limit = 2048;
+
+    cfg->selfplay.tasks_per_iteration = 8;
+    cfg->selfplay.max_difficulty = 4;
+
+    cfg->search.max_candidates = 16;
+    cfg->search.max_terms = 8;
+    cfg->search.max_coefficient = 9;
+    cfg->search.max_formula_length = 32;
+    cfg->search.base_effectiveness = 0.5;
 }
 
-static void strip_comments(char *buf) {
-    char *src = buf;
-    char *dst = buf;
-    bool in_string = false;
-
-    while (*src) {
-        if (!in_string && src[0] == '/' && src[1] == '/') {
-            src += 2;
-            while (*src && *src != '\n') {
-                src++;
-            }
-            continue;
-        }
-        if (!in_string && src[0] == '/' && src[1] == '*') {
-            src += 2;
-            while (src[0] && !(src[0] == '*' && src[1] == '/')) {
-                src++;
-            }
-            if (src[0] == '*' && src[1] == '/') {
-                src += 2;
-            }
-            continue;
-        }
-        if (*src == '"' && (src == buf || src[-1] != '\\')) {
-            in_string = !in_string;
-        }
-        *dst++ = *src++;
-    }
-    *dst = '\0';
-}
-
-static void skip_ws(const char **p) {
-    while (**p && isspace((unsigned char)**p)) {
-        (*p)++;
+static void skip_ws(json_cursor_t *cur) {
+    while (*cur->cur && isspace((unsigned char)*cur->cur)) {
+        cur->cur++;
     }
 }
 
-static int parse_string_internal(const char **p, char *out, size_t out_size, bool store) {
-    if (**p != '"') {
+static int consume_char(json_cursor_t *cur, char expected) {
+    skip_ws(cur);
+    if (*cur->cur != expected) {
         return -1;
     }
-    (*p)++;
-    size_t len = 0;
+    cur->cur++;
+    return 0;
+}
 
-    while (**p) {
-        char ch = *(*p)++;
+static int parse_string(json_cursor_t *cur, char *out, size_t out_size) {
+    skip_ws(cur);
+    if (*cur->cur != '"') {
+        return -1;
+    }
+    cur->cur++;
+    size_t len = 0;
+    while (*cur->cur) {
+        char ch = *cur->cur++;
         if (ch == '"') {
-            if (store) {
+            if (out && out_size > 0) {
                 if (len >= out_size) {
                     return -1;
                 }
@@ -80,16 +74,11 @@ static int parse_string_internal(const char **p, char *out, size_t out_size, boo
             return 0;
         }
         if (ch == '\\') {
-            char esc = **p;
-            if (esc == '\0') {
-                return -1;
-            }
-            (*p)++;
-            switch (esc) {
-            case '"':
+            ch = *cur->cur++;
+            switch (ch) {
             case '\\':
+            case '"':
             case '/':
-                ch = esc;
                 break;
             case 'b':
                 ch = '\b';
@@ -110,7 +99,7 @@ static int parse_string_internal(const char **p, char *out, size_t out_size, boo
                 return -1;
             }
         }
-        if (store) {
+        if (out && out_size > 0) {
             if (len + 1 >= out_size) {
                 return -1;
             }
@@ -120,24 +109,14 @@ static int parse_string_internal(const char **p, char *out, size_t out_size, boo
     return -1;
 }
 
-static int parse_string_token(const char **p, char *out, size_t out_size) {
-    return parse_string_internal(p, out, out_size, true);
-}
-
-static int skip_string(const char **p) {
-    return parse_string_internal(p, NULL, 0, false);
-}
-
-static int parse_uint64_token(const char **p, uint64_t *out) {
-    if (**p == '-') {
-        return -1;
-    }
-    if (!isdigit((unsigned char)**p)) {
+static int parse_uint(json_cursor_t *cur, uint64_t *out) {
+    skip_ws(cur);
+    if (!isdigit((unsigned char)*cur->cur)) {
         return -1;
     }
     uint64_t value = 0;
-    while (isdigit((unsigned char)**p)) {
-        unsigned int digit = (unsigned int)(*(*p)++ - '0');
+    while (isdigit((unsigned char)*cur->cur)) {
+        unsigned digit = (unsigned)(*cur->cur++ - '0');
         if (value > (UINT64_MAX - digit) / 10) {
             return -1;
         }
@@ -147,270 +126,435 @@ static int parse_uint64_token(const char **p, uint64_t *out) {
     return 0;
 }
 
-static int skip_value(const char **p);
-
-static int skip_object(const char **p) {
-    if (**p != '{') {
+static int parse_double(json_cursor_t *cur, double *out) {
+    skip_ws(cur);
+    const char *start = cur->cur;
+    if (*cur->cur == '-') {
+        cur->cur++;
+    }
+    if (!isdigit((unsigned char)*cur->cur)) {
         return -1;
     }
-    (*p)++;
-    skip_ws(p);
-    if (**p == '}') {
-        (*p)++;
-        return 0;
+    while (isdigit((unsigned char)*cur->cur)) {
+        cur->cur++;
     }
-    while (**p) {
-        if (skip_string(p) != 0) {
+    if (*cur->cur == '.') {
+        cur->cur++;
+        if (!isdigit((unsigned char)*cur->cur)) {
             return -1;
         }
-        skip_ws(p);
-        if (**p != ':') {
+        while (isdigit((unsigned char)*cur->cur)) {
+            cur->cur++;
+        }
+    }
+    if (*cur->cur == 'e' || *cur->cur == 'E') {
+        cur->cur++;
+        if (*cur->cur == '+' || *cur->cur == '-') {
+            cur->cur++;
+        }
+        if (!isdigit((unsigned char)*cur->cur)) {
             return -1;
         }
-        (*p)++;
-        skip_ws(p);
-        if (skip_value(p) != 0) {
-            return -1;
+        while (isdigit((unsigned char)*cur->cur)) {
+            cur->cur++;
         }
-        skip_ws(p);
-        if (**p == ',') {
-            (*p)++;
-            skip_ws(p);
-            continue;
-        }
-        if (**p == '}') {
-            (*p)++;
-            return 0;
-        }
+    }
+    char buf[64];
+    size_t len = (size_t)(cur->cur - start);
+    if (len >= sizeof(buf)) {
         return -1;
     }
-    return -1;
-}
-
-static int skip_array(const char **p) {
-    if (**p != '[') {
+    memcpy(buf, start, len);
+    buf[len] = '\0';
+    char *end = NULL;
+    errno = 0;
+    double value = strtod(buf, &end);
+    if (errno != 0 || !end || *end != '\0') {
         return -1;
     }
-    (*p)++;
-    skip_ws(p);
-    if (**p == ']') {
-        (*p)++;
-        return 0;
-    }
-    while (**p) {
-        if (skip_value(p) != 0) {
-            return -1;
-        }
-        skip_ws(p);
-        if (**p == ',') {
-            (*p)++;
-            skip_ws(p);
-            continue;
-        }
-        if (**p == ']') {
-            (*p)++;
-            return 0;
-        }
-        return -1;
-    }
-    return -1;
-}
-
-static int skip_literal(const char **p, const char *literal) {
-    size_t len = strlen(literal);
-    if (strncmp(*p, literal, len) != 0) {
-        return -1;
-    }
-    *p += len;
+    *out = value;
     return 0;
 }
 
-static int skip_value(const char **p) {
-    if (**p == '"') {
-        return skip_string(p);
+static int skip_literal(json_cursor_t *cur, const char *literal) {
+    size_t len = strlen(literal);
+    if (strncmp(cur->cur, literal, len) != 0) {
+        return -1;
     }
-    if (**p == '{') {
-        return skip_object(p);
+    cur->cur += len;
+    return 0;
+}
+
+static int skip_value(json_cursor_t *cur);
+
+static int skip_array(json_cursor_t *cur) {
+    if (consume_char(cur, '[') != 0) {
+        return -1;
     }
-    if (**p == '[') {
-        return skip_array(p);
-    }
-    if (**p == '-' || isdigit((unsigned char)**p)) {
-        if (**p == '-') {
-            (*p)++;
-            if (!isdigit((unsigned char)**p)) {
-                return -1;
-            }
-        }
-        while (isdigit((unsigned char)**p)) {
-            (*p)++;
-        }
-        if (**p == '.') {
-            (*p)++;
-            if (!isdigit((unsigned char)**p)) {
-                return -1;
-            }
-            while (isdigit((unsigned char)**p)) {
-                (*p)++;
-            }
-        }
-        if (**p == 'e' || **p == 'E') {
-            (*p)++;
-            if (**p == '+' || **p == '-') {
-                (*p)++;
-            }
-            if (!isdigit((unsigned char)**p)) {
-                return -1;
-            }
-            while (isdigit((unsigned char)**p)) {
-                (*p)++;
-            }
-        }
+    skip_ws(cur);
+    if (*cur->cur == ']') {
+        cur->cur++;
         return 0;
     }
-    if (skip_literal(p, "true") == 0 || skip_literal(p, "false") == 0 ||
-        skip_literal(p, "null") == 0) {
+    while (*cur->cur) {
+        if (skip_value(cur) != 0) {
+            return -1;
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == ']') {
+            cur->cur++;
+            return 0;
+        }
+        break;
+    }
+    return -1;
+}
+
+static int skip_object(json_cursor_t *cur) {
+    if (consume_char(cur, '{') != 0) {
+        return -1;
+    }
+    skip_ws(cur);
+    if (*cur->cur == '}') {
+        cur->cur++;
+        return 0;
+    }
+    while (*cur->cur) {
+        if (parse_string(cur, NULL, 0) != 0) {
+            return -1;
+        }
+        if (consume_char(cur, ':') != 0) {
+            return -1;
+        }
+        if (skip_value(cur) != 0) {
+            return -1;
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        break;
+    }
+    return -1;
+}
+
+static int skip_value(json_cursor_t *cur) {
+    skip_ws(cur);
+    if (*cur->cur == '"') {
+        return parse_string(cur, NULL, 0);
+    }
+    if (*cur->cur == '{') {
+        return skip_object(cur);
+    }
+    if (*cur->cur == '[') {
+        return skip_array(cur);
+    }
+    if (*cur->cur == '-' || isdigit((unsigned char)*cur->cur)) {
+        double dummy = 0.0;
+        return parse_double(cur, &dummy);
+    }
+    if (skip_literal(cur, "true") == 0 || skip_literal(cur, "false") == 0 ||
+        skip_literal(cur, "null") == 0) {
         return 0;
     }
     return -1;
 }
 
-static int parse_http_object(const char **p, kolibri_config_t *cfg) {
-    if (**p != '{') {
+static int parse_http_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen) {
+    if (consume_char(cur, '{') != 0) {
         return -1;
     }
-    (*p)++;
-    bool seen_host = false;
-    bool seen_port = false;
-
-    while (**p) {
-        skip_ws(p);
-        if (**p == '}') {
-            (*p)++;
+    int saw_host = 0;
+    int saw_port = 0;
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
             break;
         }
         char key[32];
-        if (parse_string_token(p, key, sizeof(key)) != 0) {
+        if (parse_string(cur, key, sizeof(key)) != 0) {
             return -1;
         }
-        skip_ws(p);
-        if (**p != ':') {
+        if (consume_char(cur, ':') != 0) {
             return -1;
         }
-        (*p)++;
-        skip_ws(p);
-
         if (strcmp(key, "host") == 0) {
-            if (parse_string_token(p, cfg->http.host, sizeof(cfg->http.host)) != 0) {
+            if (parse_string(cur, cfg->http.host, sizeof(cfg->http.host)) != 0) {
                 return -1;
             }
-            seen_host = true;
+            saw_host = 1;
         } else if (strcmp(key, "port") == 0) {
             uint64_t value = 0;
-            if (parse_uint64_token(p, &value) != 0 || value > UINT16_MAX) {
+            if (parse_uint(cur, &value) != 0 || value > UINT16_MAX) {
                 return -1;
             }
             cfg->http.port = (uint16_t)value;
-            seen_port = true;
+            saw_port = 1;
         } else if (strcmp(key, "max_body_size") == 0) {
             uint64_t value = 0;
-            if (parse_uint64_token(p, &value) != 0 || value > UINT32_MAX) {
+            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
                 return -1;
             }
             cfg->http.max_body_size = (uint32_t)value;
         } else {
-            if (skip_value(p) != 0) {
+            if (skip_value(cur) != 0) {
                 return -1;
             }
         }
-
-        skip_ws(p);
-        if (**p == ',') {
-            (*p)++;
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
             continue;
         }
-        if (**p == '}') {
-            (*p)++;
+        if (*cur->cur == '}') {
+            cur->cur++;
             break;
         }
         return -1;
     }
-
-    if (!seen_host || !seen_port) {
+    if (!saw_host || !saw_port) {
         return -1;
     }
+    *seen = 1;
     return 0;
 }
 
-static int parse_vm_object(const char **p, kolibri_config_t *cfg) {
-    if (**p != '{') {
+static int parse_vm_object(json_cursor_t *cur, kolibri_config_t *cfg, int *seen) {
+    if (consume_char(cur, '{') != 0) {
         return -1;
     }
-    (*p)++;
-    bool seen_max_steps = false;
-    bool seen_max_stack = false;
-    bool seen_trace_depth = false;
-
-    while (**p) {
-        skip_ws(p);
-        if (**p == '}') {
-            (*p)++;
+    int saw_steps = 0;
+    int saw_stack = 0;
+    int saw_trace = 0;
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
             break;
         }
         char key[32];
-        if (parse_string_token(p, key, sizeof(key)) != 0) {
+        if (parse_string(cur, key, sizeof(key)) != 0) {
             return -1;
         }
-        skip_ws(p);
-        if (**p != ':') {
+        if (consume_char(cur, ':') != 0) {
             return -1;
         }
-        (*p)++;
-        skip_ws(p);
-
+        uint64_t value = 0;
+        if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+            return -1;
+        }
         if (strcmp(key, "max_steps") == 0) {
-            uint64_t value = 0;
-            if (parse_uint64_token(p, &value) != 0 || value > UINT32_MAX) {
-                return -1;
-            }
             cfg->vm.max_steps = (uint32_t)value;
-            seen_max_steps = true;
+            saw_steps = 1;
         } else if (strcmp(key, "max_stack") == 0) {
-            uint64_t value = 0;
-            if (parse_uint64_token(p, &value) != 0 || value > UINT32_MAX) {
-                return -1;
-            }
             cfg->vm.max_stack = (uint32_t)value;
-            seen_max_stack = true;
+            saw_stack = 1;
         } else if (strcmp(key, "trace_depth") == 0) {
-            uint64_t value = 0;
-            if (parse_uint64_token(p, &value) != 0 || value > UINT32_MAX) {
-                return -1;
-            }
             cfg->vm.trace_depth = (uint32_t)value;
-            seen_trace_depth = true;
+            saw_trace = 1;
         } else {
-            if (skip_value(p) != 0) {
-                return -1;
-            }
+            return -1;
         }
-
-        skip_ws(p);
-        if (**p == ',') {
-            (*p)++;
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
             continue;
         }
-        if (**p == '}') {
-            (*p)++;
+        if (*cur->cur == '}') {
+            cur->cur++;
             break;
         }
         return -1;
     }
-
-    if (!seen_max_steps || !seen_max_stack || !seen_trace_depth) {
+    if (!saw_steps || !saw_stack || !saw_trace) {
         return -1;
     }
+    *seen = 1;
     return 0;
+}
+
+static int parse_ai_object(json_cursor_t *cur, kolibri_config_t *cfg) {
+    if (consume_char(cur, '{') != 0) {
+        return -1;
+    }
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        char key[32];
+        if (parse_string(cur, key, sizeof(key)) != 0) {
+            return -1;
+        }
+        if (consume_char(cur, ':') != 0) {
+            return -1;
+        }
+        if (strcmp(key, "snapshot_path") == 0) {
+            if (parse_string(cur, cfg->ai.snapshot_path, sizeof(cfg->ai.snapshot_path)) != 0) {
+                return -1;
+            }
+        } else if (strcmp(key, "snapshot_limit") == 0) {
+            uint64_t value = 0;
+            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                return -1;
+            }
+            cfg->ai.snapshot_limit = (uint32_t)value;
+        } else {
+            if (skip_value(cur) != 0) {
+                return -1;
+            }
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+static int parse_selfplay_object(json_cursor_t *cur, kolibri_config_t *cfg) {
+    if (consume_char(cur, '{') != 0) {
+        return -1;
+    }
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        char key[32];
+        if (parse_string(cur, key, sizeof(key)) != 0) {
+            return -1;
+        }
+        if (consume_char(cur, ':') != 0) {
+            return -1;
+        }
+        uint64_t value = 0;
+        if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+            return -1;
+        }
+        if (strcmp(key, "tasks_per_iteration") == 0) {
+            cfg->selfplay.tasks_per_iteration = (uint32_t)value;
+        } else if (strcmp(key, "max_difficulty") == 0) {
+            cfg->selfplay.max_difficulty = (uint32_t)value;
+        } else {
+            return -1;
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+static int parse_search_object(json_cursor_t *cur, kolibri_config_t *cfg) {
+    if (consume_char(cur, '{') != 0) {
+        return -1;
+    }
+    while (*cur->cur) {
+        skip_ws(cur);
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        char key[32];
+        if (parse_string(cur, key, sizeof(key)) != 0) {
+            return -1;
+        }
+        if (consume_char(cur, ':') != 0) {
+            return -1;
+        }
+        if (strcmp(key, "base_effectiveness") == 0) {
+            double value = 0.0;
+            if (parse_double(cur, &value) != 0) {
+                return -1;
+            }
+            if (value >= 0.0) {
+                cfg->search.base_effectiveness = value;
+            }
+        } else {
+            uint64_t value = 0;
+            if (parse_uint(cur, &value) != 0 || value > UINT32_MAX) {
+                return -1;
+            }
+            if (strcmp(key, "max_candidates") == 0) {
+                cfg->search.max_candidates = (uint32_t)value;
+            } else if (strcmp(key, "max_terms") == 0) {
+                cfg->search.max_terms = (uint32_t)value;
+            } else if (strcmp(key, "max_coefficient") == 0) {
+                cfg->search.max_coefficient = (uint32_t)value;
+            } else if (strcmp(key, "max_formula_length") == 0) {
+                cfg->search.max_formula_length = (uint32_t)value;
+            } else {
+                return -1;
+            }
+        }
+        skip_ws(cur);
+        if (*cur->cur == ',') {
+            cur->cur++;
+            continue;
+        }
+        if (*cur->cur == '}') {
+            cur->cur++;
+            return 0;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+static void strip_comments(char *buffer) {
+    char *src = buffer;
+    char *dst = buffer;
+    int in_string = 0;
+    while (*src) {
+        if (!in_string && src[0] == '/' && src[1] == '/') {
+            src += 2;
+            while (*src && *src != '\n') {
+                src++;
+            }
+            continue;
+        }
+        if (!in_string && src[0] == '/' && src[1] == '*') {
+            src += 2;
+            while (src[0] && !(src[0] == '*' && src[1] == '/')) {
+                src++;
+            }
+            if (src[0] == '*' && src[1] == '/') {
+                src += 2;
+            }
+            continue;
+        }
+        if (*src == '"' && (src == buffer || src[-1] != '\\')) {
+            in_string = !in_string;
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
 }
 
 int config_load(const char *path, kolibri_config_t *cfg) {
@@ -418,13 +562,19 @@ int config_load(const char *path, kolibri_config_t *cfg) {
         errno = EINVAL;
         return -1;
     }
-    set_defaults(cfg);
-    kolibri_config_t tmp = *cfg;
 
-    FILE *fp = fopen(path, "r");
+    set_defaults(cfg);
+
+    if (!path) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    FILE *fp = fopen(path, "rb");
     if (!fp) {
         return -1;
     }
+
     if (fseek(fp, 0, SEEK_END) != 0) {
         fclose(fp);
         return -1;
@@ -438,194 +588,120 @@ int config_load(const char *path, kolibri_config_t *cfg) {
         fclose(fp);
         return -1;
     }
-    char *buf = calloc(1, (size_t)len + 1);
-    if (!buf) {
+
+    char *buffer = calloc(1, (size_t)len + 1);
+    if (!buffer) {
         fclose(fp);
         return -1;
     }
-    size_t read = fread(buf, 1, (size_t)len, fp);
+
+    size_t read = fread(buffer, 1, (size_t)len, fp);
     fclose(fp);
-    buf[read] = '\0';
+    buffer[read] = '\0';
 
-    strip_comments(buf);
+    strip_comments(buffer);
 
+    json_cursor_t cur = {buffer};
+    kolibri_config_t tmp = *cfg;
 
-
-    int rc = -1;
-    struct json_object *root = json_tokener_parse(buf);
-    if (!root || !json_object_is_type(root, json_type_object)) {
-        errno = EINVAL;
-        goto cleanup;
-    }
-
-    struct json_object *http_obj = NULL;
-    struct json_object *vm_obj = NULL;
-
-    struct json_object *value = NULL;
-
-    if (!json_object_object_get_ex(root, "http", &http_obj) ||
-        !json_object_is_type(http_obj, json_type_object)) {
-        errno = EINVAL;
-        goto cleanup;
-    }
-
-    if (!json_object_object_get_ex(http_obj, "host", &value) ||
-        !json_object_is_type(value, json_type_string)) {
-
-
+    if (consume_char(&cur, '{') != 0) {
+        free(buffer);
         errno = EINVAL;
         return -1;
     }
-    p++;
 
-    bool seen_http = false;
-    bool seen_vm = false;
-    bool seen_seed = false;
+    int saw_http = 0;
+    int saw_vm = 0;
+    int saw_seed = 0;
 
-    while (*p) {
-        skip_ws(&p);
-        if (*p == '}') {
-            p++;
+    while (*cur.cur) {
+        skip_ws(&cur);
+        if (*cur.cur == '}') {
+            cur.cur++;
             break;
         }
+
         char key[32];
-        if (parse_string_token(&p, key, sizeof(key)) != 0) {
+        if (parse_string(&cur, key, sizeof(key)) != 0) {
+            free(buffer);
             errno = EINVAL;
-            free(buf);
             return -1;
         }
-        skip_ws(&p);
-        if (*p != ':') {
+
+        if (consume_char(&cur, ':') != 0) {
+            free(buffer);
             errno = EINVAL;
-            free(buf);
             return -1;
         }
-        p++;
-        skip_ws(&p);
 
         if (strcmp(key, "http") == 0) {
-            if (parse_http_object(&p, &tmp) != 0) {
+            if (parse_http_object(&cur, &tmp, &saw_http) != 0) {
+                free(buffer);
                 errno = EINVAL;
-                free(buf);
                 return -1;
             }
-            seen_http = true;
         } else if (strcmp(key, "vm") == 0) {
-            if (parse_vm_object(&p, &tmp) != 0) {
+            if (parse_vm_object(&cur, &tmp, &saw_vm) != 0) {
+                free(buffer);
                 errno = EINVAL;
-                free(buf);
                 return -1;
             }
-            seen_vm = true;
         } else if (strcmp(key, "seed") == 0) {
             uint64_t value = 0;
-            if (parse_uint64_token(&p, &value) != 0 || value > UINT32_MAX) {
+            if (parse_uint(&cur, &value) != 0 || value > UINT32_MAX) {
+                free(buffer);
                 errno = EINVAL;
-                free(buf);
                 return -1;
             }
             tmp.seed = (uint32_t)value;
-            seen_seed = true;
-        } else {
-            if (skip_value(&p) != 0) {
+            saw_seed = 1;
+        } else if (strcmp(key, "ai") == 0) {
+            if (parse_ai_object(&cur, &tmp) != 0) {
+                free(buffer);
                 errno = EINVAL;
-                free(buf);
+                return -1;
+            }
+        } else if (strcmp(key, "selfplay") == 0) {
+            if (parse_selfplay_object(&cur, &tmp) != 0) {
+                free(buffer);
+                errno = EINVAL;
+                return -1;
+            }
+        } else if (strcmp(key, "search") == 0) {
+            if (parse_search_object(&cur, &tmp) != 0) {
+                free(buffer);
+                errno = EINVAL;
+                return -1;
+            }
+        } else {
+            if (skip_value(&cur) != 0) {
+                free(buffer);
+                errno = EINVAL;
                 return -1;
             }
         }
 
-        skip_ws(&p);
-        if (*p == ',') {
-            p++;
+        skip_ws(&cur);
+        if (*cur.cur == ',') {
+            cur.cur++;
             continue;
         }
-        if (*p == '}') {
-            p++;
+        if (*cur.cur == '}') {
+            cur.cur++;
             break;
         }
+        free(buffer);
         errno = EINVAL;
-        free(buf);
         return -1;
     }
 
+    free(buffer);
 
-    if (json_object_object_get_ex(root, "selfplay", &selfplay_obj) &&
-        json_object_is_type(selfplay_obj, json_type_object)) {
-        if (json_object_object_get_ex(selfplay_obj, "tasks_per_iteration", &value) &&
-            json_object_is_type(value, json_type_int)) {
-            int64_t tasks = json_object_get_int64(value);
-            if (tasks >= 0 && tasks <= UINT32_MAX) {
-                cfg->selfplay.tasks_per_iteration = (uint32_t)tasks;
-            }
-        }
-        if (json_object_object_get_ex(selfplay_obj, "max_difficulty", &value) &&
-            json_object_is_type(value, json_type_int)) {
-            int64_t diff = json_object_get_int64(value);
-            if (diff < 0) {
-                diff = 0;
-            }
-            if (diff > UINT32_MAX) {
-                diff = UINT32_MAX;
-            }
-            cfg->selfplay.max_difficulty = (uint32_t)diff;
-        }
-    }
-
-    if (json_object_object_get_ex(root, "search", &search_obj) &&
-        json_object_is_type(search_obj, json_type_object)) {
-        if (json_object_object_get_ex(search_obj, "max_candidates", &value) &&
-            json_object_is_type(value, json_type_int)) {
-            int64_t v = json_object_get_int64(value);
-            if (v >= 0 && v <= UINT32_MAX) {
-                cfg->search.max_candidates = (uint32_t)v;
-            }
-        }
-
-        if (json_object_object_get_ex(search_obj, "max_terms", &value) &&
-            json_object_is_type(value, json_type_int)) {
-            int64_t v = json_object_get_int64(value);
-            if (v > 0 && v <= UINT32_MAX) {
-                cfg->search.max_terms = (uint32_t)v;
-            }
-        }
-
-        if (json_object_object_get_ex(search_obj, "max_coefficient", &value) &&
-            json_object_is_type(value, json_type_int)) {
-            int64_t v = json_object_get_int64(value);
-            if (v > 0 && v <= UINT32_MAX) {
-                cfg->search.max_coefficient = (uint32_t)v;
-            }
-        }
-
-        if (json_object_object_get_ex(search_obj, "max_formula_length", &value) &&
-            json_object_is_type(value, json_type_int)) {
-            int64_t v = json_object_get_int64(value);
-            if (v > 0 && v <= UINT32_MAX) {
-                cfg->search.max_formula_length = (uint32_t)v;
-            }
-        }
-
-        if (json_object_object_get_ex(search_obj, "base_effectiveness", &value) &&
-            (json_object_is_type(value, json_type_double) ||
-             json_object_is_type(value, json_type_int))) {
-            double eff = json_object_get_double(value);
-            if (eff > 0.0) {
-                cfg->search.base_effectiveness = eff;
-            }
-        }
-    }
-
-    if (!json_object_object_get_ex(root, "seed", &value) ||
-        !json_object_is_type(value, json_type_int)) {
-
-
-
+    if (!saw_http || !saw_vm || !saw_seed) {
         errno = EINVAL;
-        free(buf);
         return -1;
     }
 
     *cfg = tmp;
-    free(buf);
     return 0;
 }

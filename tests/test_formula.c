@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

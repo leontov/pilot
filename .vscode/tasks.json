@@ -1,71 +1,84 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Build Kolibri Node",
-            "type": "shell",
-            "command": "make",
-            "group": "build",
-            "problemMatcher": ["$gcc"]
-        },
-        {
-            "label": "Run Kolibri Cluster",
-            "type": "shell",
-            "command": "bash scripts/run_cluster.sh 5 9000",
-            "group": "test",
-            "dependsOn": ["Build Kolibri Node"],
-            "detail": "Запуск локального кластера из 5 узлов, начиная с порта 9000"
-        },
-        {
-            "label": "Run Single Kolibri Node",
-            "type": "shell",
-            "command": "./bin/kolibri_node_v1 --id nodeA --port 9000 --data chainA.db --root-key root.key",
-            "group": "test",
-            "dependsOn": ["Build Kolibri Node"],
-            "detail": "Запуск одного узла Kolibri (nodeA) на порту 9000"
-        },
-        {
-            "label": "Run Two Kolibri Nodes",
-            "type": "shell",
-            "command": "bash -c \"./bin/kolibri_node_v1 --id nodeA --port 9000 --data chainA.db --root-key root.key & \\\n./bin/kolibri_node_v1 --id nodeB --port 9001 --data chainB.db --root-key root.key --peer 127.0.0.1:9000\"",
-            "group": "test",
-            "dependsOn": ["Build Kolibri Node"],
-            "detail": "Запуск двух узлов Kolibri (nodeA и nodeB) для проверки взаимодействия"
-        },
-        {
-            "label": "Run 10 Kolibri Nodes Cluster",
-            "type": "shell",
-            "command": "bash scripts/run_cluster.sh 10 9000",
-            "group": "test",
-            "dependsOn": ["Build Kolibri Node"],
-            "detail": "Запуск локального кластера из 10 узлов, начиная с порта 9000"
-        },
-        {
-            "label": "Run Custom Kolibri Cluster",
-            "type": "shell",
-            "command": "bash",
-            "args": [
-                "scripts/run_cluster.sh",
-                "${input:numberOfNodes}",
-                "${input:startPort}"
-            ],
-            "group": "test",
-            "dependsOn": ["Build Kolibri Node"],
-            "detail": "Универсальный запуск кластера с выбором количества узлов и стартового порта"
-        }
-    ],
-    "inputs": [
-        {
-            "id": "numberOfNodes",
-            "type": "promptString",
-            "description": "Количество узлов",
-            "default": "3"
-        },
-        {
-            "id": "startPort",
-            "type": "promptString",
-            "description": "Стартовый порт",
-            "default": "9000"
-        }
-    ]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Kolibri Node",
+      "type": "shell",
+      "command": "make",
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "Run Kolibri Cluster",
+      "type": "shell",
+      "command": "bash scripts/run_cluster.sh 5 9000",
+      "group": "test",
+      "dependsOn": [
+        "Build Kolibri Node"
+      ],
+      "detail": "Запуск локального кластера из 5 узлов, начиная с порта 9000"
+    },
+    {
+      "label": "Run Single Kolibri Node",
+      "type": "shell",
+      "command": "./bin/kolibri_node_v1 --id nodeA --port 9000 --data chainA.db --root-key root.key",
+      "group": "test",
+      "dependsOn": [
+        "Build Kolibri Node"
+      ],
+      "detail": "Запуск одного узла Kolibri (nodeA) на порту 9000"
+    },
+    {
+      "label": "Run Two Kolibri Nodes",
+      "type": "shell",
+      "command": "bash -c \"./bin/kolibri_node_v1 --id nodeA --port 9000 --data chainA.db --root-key root.key & \\\n./bin/kolibri_node_v1 --id nodeB --port 9001 --data chainB.db --root-key root.key --peer 127.0.0.1:9000\"",
+      "group": "test",
+      "dependsOn": [
+        "Build Kolibri Node"
+      ],
+      "detail": "Запуск двух узлов Kolibri (nodeA и nodeB) для проверки взаимодействия"
+    },
+    {
+      "label": "Run 10 Kolibri Nodes Cluster",
+      "type": "shell",
+      "command": "bash scripts/run_cluster.sh 10 9000",
+      "group": "test",
+      "dependsOn": [
+        "Build Kolibri Node"
+      ],
+      "detail": "Запуск локального кластера из 10 узлов, начиная с порта 9000"
+    },
+    {
+      "label": "Run Custom Kolibri Cluster",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "scripts/run_cluster.sh",
+        "${input:numberOfNodes}",
+        "${input:startPort}"
+      ],
+      "group": "test",
+      "dependsOn": [
+        "Build Kolibri Node"
+      ],
+      "detail": "Универсальный запуск кластера с выбором количества узлов и стартового порта"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "numberOfNodes",
+      "type": "promptString",
+      "description": "Количество узлов",
+      "default": "3"
+    },
+    {
+      "id": "startPort",
+      "type": "promptString",
+      "description": "Стартовый порт",
+      "default": "9000"
+    }
+  ],
+  "copyright": "Copyright (c) 2024 Кочуров Владислав Евгеньевич"
 }

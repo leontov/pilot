@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Кочуров Владислав Евгеньевич
+
 # KolibriAI CMake configuration
 cmake_minimum_required(VERSION 3.10)
 project(KolibriAI C)

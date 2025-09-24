@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef KOLIBRI_FKV_FKV_H
 #define KOLIBRI_FKV_FKV_H
 

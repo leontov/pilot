@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #include "kolibri_ai.h"
 #include "formula.h"
 
@@ -143,7 +145,7 @@ static void add_mock_formula(KolibriAI *ai,
 }
 
 int main(void) {
-    KolibriAI *ai = kolibri_ai_create();
+    KolibriAI *ai = kolibri_ai_create(NULL);
     assert(ai != NULL);
 
     FormulaTrainingPipeline *pipeline = formula_training_pipeline_create(4);

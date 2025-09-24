@@ -1,3 +1,5 @@
+/* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
+
 #ifndef KOLIBRI_DECIMAL_CELL_H
 #define KOLIBRI_DECIMAL_CELL_H
 
