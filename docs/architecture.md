@@ -4,6 +4,7 @@ Kolibri Ω combines a compact decimal virtual machine, fractal key-value memory,
 
 ## Build and runtime pipeline
 - **Native toolchain.** `make build` compiles the C sources listed in the root `Makefile` into the `bin/kolibri_node` executable, linking pthread, JSON-C, math, UUID, OpenSSL crypto, and libcurl for networking and hashing support.【F:Makefile†L1-L38】
+- **Node entrypoint.** `src/main.c` now performs all runtime wiring (config loading, VM execution, F-KV trie, Kolibri AI loop, HTTP boot); the deprecated UDP stub `src/kolibri_node_v1.c` was removed so the build links only modern modules.【F:src/main.c†L1-L118】【F:CMakeLists.txt†L24-L41】
 - **Automated orchestration.** `kolibri.sh up` builds the native node, installs Vite/React dependencies, generates the static web bundle, and launches the node with logs streamed to `logs/kolibri.log`. The script also exposes `stop`, `bench`, and `clean` helpers for lifecycle management.【F:kolibri.sh†L1-L58】
 - **Configuration.** Runtime defaults live in `cfg/kolibri.jsonc`, defining HTTP listen parameters, VM execution limits, the PRNG seed, and AI snapshot persistence; the loader in `util/config.c` (referenced throughout the build targets) hydrates these values into `kolibri_config_t`.【F:cfg/kolibri.jsonc†L1-L22】【F:Makefile†L1-L38】
 
