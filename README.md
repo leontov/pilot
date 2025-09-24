@@ -46,9 +46,14 @@ Other CLI commands:
 
 ```
 ./kolibri.sh stop   # stop running node
-./kolibri.sh bench  # run built-in benchmarks (placeholder)
+./kolibri.sh bench  # run Δ-VM & F-KV microbenchmarks (mean/p95/stddev latency, VM steps)
 ./kolibri.sh clean  # remove build artifacts, logs, and data
 ```
+
+The suite runs three deterministic Δ-VM programs plus 1000 `fkv_put`/`fkv_get` prefix lookups. Each line reports mean, p95,
+standard deviation, minimum, and maximum latency in microseconds alongside the achieved throughput (ops/s); Δ-VM entries also
+print average/min/max step counts and the HALT ratio to confirm execution limits while F-KV validates stored values. Results
+are appended to `logs/bench.log` and exported as structured JSON in `logs/bench.json` for programmatic comparison.
 
 ### Console chat mode
 

@@ -54,7 +54,9 @@ case "${1:-}" in
     stop_node
     ;;
   bench)
+    echo "[kolibri] running Δ-VM and F-KV microbenchmarks" >&2
     make -C "$ROOT_DIR" bench
+    echo "[kolibri] benchmark metrics saved to $LOG_DIR/bench.log and $LOG_DIR/bench.json" >&2
     ;;
   clean)
     stop_node || true
