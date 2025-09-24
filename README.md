@@ -94,3 +94,7 @@ The end-to-end development plan is captured in [`docs/roadmap.md`](docs/roadmap.
 ## Demo playbook
 
 For investor-grade demonstrations and product validation scenarios, consult [`docs/demos.md`](docs/demos.md). The playbook now outlines seventy-eight curated demos, associated KPIs, and exact launch instructions for Kolibri Studio and the public HTTP API.
+
+## Technical documentation
+
+For a subsystem-by-subsystem walkthrough of the runtime, storage, AI loop, HTTP shell, and tooling, read the [technical overview](docs/architecture.md). It links source files, configuration surfaces, and test harnesses so contributors can quickly orient themselves within the decimal-native codebase.
