@@ -59,46 +59,50 @@ Initiate a decimal-first dialogue turn.
 ```
 
 ### POST /api/v1/vm/run
-Execute explicit Δ-VM bytecode.
+Execute explicit Δ-VM bytecode provided as decimal opcodes.
 
 **Request**
 ```json
 {
-  "program": "PUSHd 2; PUSHd 2; ADD10; HALT",
-  "input_stack": ["optional decimals"],
-  "gas_limit": 1024
+  "bytecode": [1, 2, 1, 2, 2, 18],
+  "max_steps": 256,
+  "max_stack": 128,
+  "trace": true
 }
 ```
 
 **Response**
 ```json
 {
+  "status": "ok",
   "result": "4",
-  "stack": ["4"],
-  "trace": { ... },
-  "gas_used": 4
+  "steps": 4,
+  "halted": true,
+  "trace": [
+    { "step": 0, "ip": 0, "opcode": 1, "stack_top": 0, "gas_left": 256 }
+  ]
 }
 ```
 
-Errors include `invalid_opcode`, `gas_exhausted`, `sandbox_violation`.
+Errors include `invalid_opcode`, `stack_underflow`, `stack_overflow`, and `gas_exhausted`.
 
 ### GET /api/v1/fkv/get
 Retrieve values matching a decimal prefix.
 
 **Query Parameters**
-* `prefix` (required): decimal namespace prefix, e.g. `S/geo/country/RU`.
-* `limit` (optional): maximum entries to return (default 32).
+* `prefix` (required): decimal digits representing the trie prefix, e.g. `123`.
+* `limit` (optional): maximum entries to return (default 16, capped at 128).
 
 **Response**
 ```json
 {
+  "prefix": "123",
   "values": [
-    { "key": "S/geo/country/RU", "value": "Москва", "poe": "0.99", "mdl": "8.1" }
+    { "key": "123", "value": "456" }
   ],
   "programs": [
-    { "program_id": "prog_12345", "score": "0.93" }
-  ],
-  "topk": [ ... ]
+    { "key": "1234", "bytecode": "10221018" }
+  ]
 }
 ```
 
@@ -108,35 +112,33 @@ Submit a candidate Δ-VM program for evaluation.
 **Request**
 ```json
 {
-  "bytecode": "PUSHd 2; PUSHd 3; MUL10; HALT",
-  "metadata": {
-    "origin": "synthesis", "description": "multiply 2 and 3"
-  }
+  "program_id": "prog-1",
+  "content": "PUSHd 2; PUSHd 2; ADD10; HALT",
+  "representation": "text",
+  "effectiveness": 0.82
 }
 ```
 
 **Response**
 ```json
 {
-  "program_id": "prog_67890",
-  "poe": "0.95",
-  "mdl": "10.2",
-  "score": "0.71",
+  "program_id": "prog-1",
+  "poe": 0.82,
+  "mdl": 24.0,
+  "score": 0.58,
   "accepted": true
 }
 ```
 
-On rejection the response includes `accepted: false` and `reasons: []` with MDL/PoE commentary.
+If the candidate fails validation the response contains `"accepted": false` with an explanatory score payload.
 
 ### POST /api/v1/chain/submit
-Publish a program ID for inclusion in the PoU blockchain.
+Publish a previously submitted program ID for inclusion in the PoU blockchain.
 
 **Request**
 ```json
 {
-  "program_id": "prog_67890",
-  "nonce": "123456",
-  "signature": "<Ed25519 signature>"
+  "program_id": "prog-1"
 }
 ```
 
@@ -145,11 +147,11 @@ Publish a program ID for inclusion in the PoU blockchain.
 {
   "status": "accepted",
   "block_hash": "0009ABC...",
-  "height": 42
+  "height": 3
 }
 ```
 
-Failures may include `poe_below_threshold`, `invalid_signature`, `stale_parent`.
+If the program was not submitted earlier the handler returns `404 not_found`.
 
 ### GET /api/v1/health
 Report readiness/liveness information.
@@ -158,23 +160,42 @@ Report readiness/liveness information.
 ```json
 {
   "status": "ok",
-  "uptime_seconds": 1234,
-  "version": "1.0.0",
-  "peers": 4,
-  "blocks": 128
+  "uptime_ms": 1234,
+  "requests": 42,
+  "errors": 1,
+  "blockchain_attached": true,
+  "ai_attached": true
 }
 ```
 
 ### GET /api/v1/metrics
-Expose Prometheus-compatible counters.
+Expose Prometheus-compatible counters. The response is UTF-8 plaintext following the `text/plain; version=0.0.4` format with
+`kolibri_http_requests_total`, `kolibri_http_route_requests_total`, `kolibri_http_route_errors_total`,
+`kolibri_http_request_duration_ms_sum`, and `kolibri_blockchain_blocks` metrics.
 
-**Response**
+**Example**
 ```
-# HELP kolibri_vm_latency_ms Δ-VM latency in milliseconds
-kolibri_vm_latency_ms{quantile="0.5"} 12
-kolibri_vm_latency_ms{quantile="0.95"} 45
-...
+# HELP kolibri_http_requests_total Total HTTP requests handled by Kolibri
+# TYPE kolibri_http_requests_total counter
+kolibri_http_requests_total 7
 ```
+
+### GET /api/v1/ai/state
+Return a serialized snapshot of the Kolibri AI orchestrator state.
+
+### GET /api/v1/ai/formulas
+List the top formulas tracked by the AI library. Accepts `limit` query parameter (default: all available entries).
+
+### GET /api/v1/ai/snapshot
+Export the full AI snapshot (memory + dataset) as JSON. Useful for backups or debugging.
+
+### POST /api/v1/ai/snapshot
+Import a previously exported snapshot. The body must contain the JSON blob returned by the GET variant. On success the handler
+returns `{ "status": "ok" }`.
+
+### GET /api/v1/studio/state
+Return aggregated telemetry for Kolibri Studio dashboards, including HTTP route counters, uptime, blockchain height, and AI
+attachment status.
 
 ## WebSocket (Planned)
 Future releases expose `/api/v1/events` streaming VM traces, block offers, and synthesis updates. Investors can subscribe during demos for live dashboards.

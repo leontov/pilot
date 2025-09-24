@@ -59,6 +59,12 @@ static server_state_t server = {
     .queue_tail = NULL,
 };
 
+static uint64_t monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
+}
+
 static int create_listen_socket(const char *host, uint16_t port) {
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
@@ -257,6 +263,7 @@ static void send_payload_too_large(int client) {
 }
 
 static void handle_client(int client) {
+    uint64_t start_ms = monotonic_ms();
     char *buffer = NULL;
     size_t received = 0;
     size_t header_len = 0;
@@ -267,9 +274,11 @@ static void handle_client(int client) {
                           server.cfg.http.max_body_size);
     if (rc == -2) {
         send_payload_too_large(client);
+        log_warn("{\"event\":\"http_request\",\"status\":413,\"reason\":\"body_limit\"}");
         return;
     }
     if (rc != 0) {
+        log_warn("{\"event\":\"http_request\",\"status\":400,\"reason\":\"read_error\"}");
         return;
     }
 
@@ -295,13 +304,30 @@ static void handle_client(int client) {
     }
 
     http_response_t resp = {0};
-    if (http_handle_request(&server.cfg, method, path, body, body_len, &resp) != 0 && resp.status == 0) {
+    int handler_rc = http_handle_request(&server.cfg, method, path, body, body_len, &resp);
+    if (handler_rc != 0 && resp.status == 0) {
         resp.status = 500;
         snprintf(resp.content_type, sizeof(resp.content_type), "application/json");
         resp.data = strdup("{\"error\":\"internal\"}");
-        resp.len = strlen(resp.data);
+        if (resp.data) {
+            resp.len = strlen(resp.data);
+        } else {
+            resp.len = 0;
+        }
     }
     send_response(client, &resp);
+    uint64_t end_ms = monotonic_ms();
+    double duration = (double)(end_ms - start_ms);
+    int status = resp.status ? resp.status : 200;
+    log_info("{\"event\":\"http_request\",\"method\":\"%s\",\"path\":\"%s\",\"status\":%d,"
+             "\"duration_ms\":%.3f,\"bytes_in\":%zu,\"bytes_out\":%zu}",
+             method,
+             path,
+             status,
+             duration,
+             received,
+             resp.len);
+    http_metrics_observe(method, path, status, duration, received, resp.len);
     http_response_free(&resp);
     free(buffer);
 }
