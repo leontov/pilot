@@ -59,84 +59,84 @@ Initiate a decimal-first dialogue turn.
 ```
 
 ### POST /api/v1/vm/run
-Execute explicit Δ-VM bytecode.
+Execute a decimal expression on Δ-VM.
 
 **Request**
 ```json
 {
-  "program": "PUSHd 2; PUSHd 2; ADD10; HALT",
-  "input_stack": ["optional decimals"],
-  "gas_limit": 1024
+  "program": "2+2",
+  "gas_limit": 256
 }
 ```
+
+* `program` — arithmetic expression composed of decimal digits and `+`, `-`, `*`, `/`. Alternate keys `formula` and `expression` are accepted. For advanced scenarios a numeric `bytecode` array may be supplied instead.
+* `gas_limit` — optional override for the configured VM step limit.
 
 **Response**
 ```json
 {
   "result": "4",
   "stack": ["4"],
-  "trace": { ... },
+  "trace": { "steps": [] },
   "gas_used": 4
 }
 ```
 
-Errors include `invalid_opcode`, `gas_exhausted`, `sandbox_violation`.
+Errors return an object in the common format with codes such as `bad_request` (invalid payload) or `vm_error` (runtime failure).
 
 ### GET /api/v1/fkv/get
 Retrieve values matching a decimal prefix.
 
 **Query Parameters**
-* `prefix` (required): decimal namespace prefix, e.g. `S/geo/country/RU`.
+* `prefix` (required): decimal prefix expressed as digits (`12` → keys starting with `1,2`).
 * `limit` (optional): maximum entries to return (default 32).
 
 **Response**
 ```json
 {
   "values": [
-    { "key": "S/geo/country/RU", "value": "Москва", "poe": "0.99", "mdl": "8.1" }
+    { "key": "123", "value": "42" }
   ],
   "programs": [
-    { "program_id": "prog_12345", "score": "0.93" }
-  ],
-  "topk": [ ... ]
+    { "key": "124", "program": "99" }
+  ]
 }
 ```
 
+Keys and payloads are rendered as decimal strings derived from the trie digits.
+
 ### POST /api/v1/program/submit
-Submit a candidate Δ-VM program for evaluation.
+Submit a candidate Δ-VM program for evaluation and storage.
 
 **Request**
 ```json
 {
-  "bytecode": "PUSHd 2; PUSHd 3; MUL10; HALT",
-  "metadata": {
-    "origin": "synthesis", "description": "multiply 2 and 3"
-  }
+  "program": "3+4"
 }
 ```
+
+* `program` — decimal expression to evaluate. Synonyms `formula` and `content` are accepted for compatibility. The handler compiles the expression to Δ-VM bytecode before execution.
 
 **Response**
 ```json
 {
-  "program_id": "prog_67890",
-  "poe": "0.95",
-  "mdl": "10.2",
-  "score": "0.71",
+  "program_id": "prog-000001",
+  "poe": 1.000000,
+  "mdl": 4.000000,
+  "score": 0.960000,
   "accepted": true
 }
 ```
 
-On rejection the response includes `accepted: false` and `reasons: []` with MDL/PoE commentary.
+The Kolibri AI library records accepted formulas (when attached) and heuristic PoE/MDL metrics are derived via the blockchain scoring helpers. Errors follow the common format with `bad_request` or `vm_error` codes.
 
 ### POST /api/v1/chain/submit
-Publish a program ID for inclusion in the PoU blockchain.
+Publish a previously accepted program ID for inclusion in the knowledge blockchain.
 
 **Request**
 ```json
 {
-  "program_id": "prog_67890",
-  "nonce": "123456",
-  "signature": "<Ed25519 signature>"
+  "program_id": "prog-000001"
 }
 ```
 
@@ -144,12 +144,13 @@ Publish a program ID for inclusion in the PoU blockchain.
 ```json
 {
   "status": "accepted",
-  "block_hash": "0009ABC...",
-  "height": 42
+  "block_hash": "000af3...",
+  "height": 3,
+  "program_id": "prog-000001"
 }
 ```
 
-Failures may include `poe_below_threshold`, `invalid_signature`, `stale_parent`.
+Errors report `not_found` when the program is unknown or `unavailable` if the blockchain subsystem is detached.
 
 ### GET /api/v1/health
 Report readiness/liveness information.

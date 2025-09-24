@@ -27,6 +27,7 @@ Key subsystems delivered in this milestone:
 
 * **Δ-VM v2** – A decimal stack virtual machine with the initial opcode set (PUSHd–RET) and deterministic execution limits.
 * **Fractal KV (F-KV)** – An in-memory decimal trie with prefix lookup. Persistence hooks and compression points are stubbed for later milestones.
+* **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/dialog`, `/api/v1/vm/run`, `/api/v1/fkv/get`, `/api/v1/program/submit`, and `/api/v1/chain/submit`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **HTTP + CLI** – Minimal HTTP server exposing `/api/v1/health`, `/api/v1/metrics`, `/api/v1/vm/run`, `/api/v1/dialog`, and `/api/v1/fkv/get`. The CLI script `./kolibri up` builds the project, prepares the web assets, and boots the node.
 * **Web Studio** – Lightweight Vite + TypeScript SPA that connects to the HTTP API and renders console-style panels for dialog, VM trace, and memory previews.
 
@@ -111,7 +112,7 @@ Requests to `/api/v1/fkv/get` or the CLI will surface entries in recency order b
 make test
 ```
 
-Unit tests cover the Δ-VM arithmetic instructions and the F-KV prefix lookup.
+Unit tests cover the Δ-VM arithmetic instructions, the F-KV prefix lookup, and the HTTP routing layer (`make test-http-routes`).
 
 ## Roadmap
 
