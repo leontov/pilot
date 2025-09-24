@@ -21,11 +21,9 @@ SRC := \
   src/http/http_server.c \
   src/http/http_routes.c \
   src/blockchain.c \
-
   src/formula_runtime.c \
   src/synthesis/search.c \
-  src/synthesis/formula_vm_eval.c
-
+  src/synthesis/formula_vm_eval.c \
   src/formula_stub.c \
   src/protocol/swarm.c
 
