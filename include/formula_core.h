@@ -4,10 +4,6 @@
 
 /* Copyright (c) 2024 Кочуров Владислав Евгеньевич */
 
-#ifndef FORMULA_CORE_H
-#define FORMULA_CORE_H
-
-
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
@@ -47,4 +43,4 @@ typedef struct {
     size_t best_count;
 } FormulaCollection;
 
-#endif
+#endif /* KOLIBRI_FORMULA_CORE_H */

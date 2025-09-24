@@ -4,7 +4,7 @@ CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
 
-LDFLAGS := -lpthread -ljson-c -lm -luuid -lcrypto -lcurl
+LDFLAGS := -lpthread -lm -luuid -lcrypto -lcurl
 
 
 BUILD_DIR := build/obj
@@ -21,14 +21,24 @@ SRC := \
   src/http/http_server.c \
   src/http/http_routes.c \
   src/blockchain.c \
+
+  src/formula_runtime.c \
+  src/synthesis/search.c \
+  src/synthesis/formula_vm_eval.c
+
   src/formula_stub.c \
   src/protocol/swarm.c
+
 
 TEST_VM_SRC := tests/unit/test_vm.c src/vm/vm.c src/util/log.c src/util/config.c src/fkv/fkv.c
 TEST_FKV_SRC := tests/unit/test_fkv.c src/fkv/fkv.c src/util/log.c src/util/config.c
 TEST_CONFIG_SRC := tests/unit/test_config.c src/util/config.c src/util/log.c
+
+TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c src/synthesis/search.c src/synthesis/formula_vm_eval.c src/vm/vm.c src/fkv/fkv.c
+
 TEST_KOLIBRI_ITER_SRC := tests/test_kolibri_ai_iterations.c src/kolibri_ai.c src/formula_runtime.c
 TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c
+
 
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
@@ -87,7 +97,7 @@ test-config: $(BUILD_DIR)/tests/unit/test_config
 
 $(BUILD_DIR)/tests/test_kolibri_ai_iterations: $(TEST_KOLIBRI_ITER_SRC)
 	@mkdir -p $(BUILD_DIR)/tests
-	$(CC) $(CFLAGS) $(TEST_KOLIBRI_ITER_SRC) -o $@ $(filter-out -ljson-c -luuid,$(LDFLAGS))
+	$(CC) $(CFLAGS) $(TEST_KOLIBRI_ITER_SRC) -o $@ $(LDFLAGS)
 
 test-kolibri-ai: $(BUILD_DIR)/tests/test_kolibri_ai_iterations
 	$<
