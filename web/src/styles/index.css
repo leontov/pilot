@@ -291,6 +291,143 @@ body {
   margin-top: 12px;
 }
 
+.chat-panel {
+  margin-top: clamp(20px, 4vw, 32px);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 96%, transparent),
+      color-mix(in srgb, var(--color-surface-alt) 88%, transparent));
+  box-shadow: 0 28px 70px rgba(7, 14, 28, 0.45);
+  padding: clamp(20px, 3vw, 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.chat-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-strong));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1.4rem;
+  color: white;
+  box-shadow: 0 18px 40px rgba(49, 94, 251, 0.45);
+}
+
+.chat-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.chat-status {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.chat-message {
+  display: inline-flex;
+  padding: 12px 16px;
+  border-radius: 16px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  max-width: 100%;
+  box-shadow: 0 12px 30px rgba(8, 12, 24, 0.3);
+}
+
+.chat-message span {
+  word-break: break-word;
+}
+
+.chat-message-user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-strong));
+  color: white;
+}
+
+.chat-message-ai {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--color-surface-alt) 92%, transparent);
+  border: 1px solid var(--color-border);
+}
+
+.chat-input {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.chat-input input {
+  flex: 1 1 auto;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-alt) 88%, transparent);
+  color: var(--color-text);
+  padding: 12px 18px;
+  font-size: 0.95rem;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.chat-input input::placeholder {
+  color: color-mix(in srgb, var(--color-text-muted) 85%, transparent);
+}
+
+.chat-input input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.chat-input button {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 12px 22px;
+  font-weight: 600;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-strong));
+  color: white;
+  cursor: pointer;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.chat-input button:hover,
+.chat-input button:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  box-shadow: 0 16px 40px rgba(49, 94, 251, 0.45);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
 .metric-card {
   background: color-mix(in srgb, var(--color-surface-alt) 88%, transparent);
   border: 1px solid var(--color-border);

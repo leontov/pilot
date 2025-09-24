@@ -1,9 +1,14 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type ThemeMode = "light" | "dark";
 type Language = "ru" | "en";
+
+type ChatMessage = {
+  role: "user" | "ai";
+  content: string;
+};
 
 const THEME_STORAGE_KEY = "kolibri-theme";
 const LANGUAGE_STORAGE_KEY = "kolibri-language";
@@ -22,6 +27,15 @@ const copy: Record<Language, {
   architecture: { title: string; description: string }[];
   timeline: { label: string; description: string }[];
   cta: { title: string; description: string; action: string };
+  chat: {
+    title: string;
+    status: string;
+    ariaLabel: string;
+    placeholder: string;
+    send: string;
+    initialMessages: ChatMessage[];
+    autoReplies: string[];
+  };
   footer: string;
 }> = {
   ru: {
@@ -104,6 +118,23 @@ const copy: Record<Language, {
       description:
         "Инвесторы, исследователи и инженеры — давайте вместе зададим новый стандарт интеллектуальных систем, основанных на цифрах и формулах.",
       action: "Назначить встречу",
+    },
+    chat: {
+      title: "Kolibri ИИ",
+      status: "Онлайн",
+      ariaLabel: "Окно чата Kolibri ИИ",
+      placeholder: "Спросите о возможностях Kolibri...",
+      send: "Отправить",
+      initialMessages: [
+        { role: "ai", content: "Привет! Я Kolibri ИИ и помогу разобраться в десятичном интеллекте." },
+        { role: "user", content: "Какие компоненты входят в платформу?" },
+        { role: "ai", content: "Δ-VM, фрактальная память F-KV и блокчейн знаний объединены в единую систему." },
+      ],
+      autoReplies: [
+        "Мы показываем трассировку Δ-VM и PoE-метрики в Kolibri Studio в реальном времени.",
+        "Колибри легко внедряется: компактное ядро и HTTP API v1 запускаются за минуты.",
+        "Узлы сети обмениваются программами через Proof-of-Use, сохраняя качество знаний.",
+      ],
     },
     footer: "© 2024 Kolibri Ω. Все знания — в цифрах.",
   },
@@ -188,6 +219,23 @@ const copy: Record<Language, {
         "Investors, researchers, and engineers — let’s define the new standard for digit- and formula-native intelligence together.",
       action: "Book a meeting",
     },
+    chat: {
+      title: "Kolibri AI",
+      status: "Online",
+      ariaLabel: "Kolibri AI chat window",
+      placeholder: "Ask about Kolibri’s capabilities...",
+      send: "Send",
+      initialMessages: [
+        { role: "ai", content: "Hello! I’m Kolibri AI, ready to guide you through decimal-native intelligence." },
+        { role: "user", content: "What components power the platform?" },
+        { role: "ai", content: "Δ-VM, fractal F-KV memory, and the knowledge blockchain operate as one system." },
+      ],
+      autoReplies: [
+        "We surface Δ-VM traces and PoE metrics live inside Kolibri Studio.",
+        "Kolibri deploys fast: the compact core and HTTP API v1 are production-ready within minutes.",
+        "Network nodes exchange programs via Proof-of-Use while preserving knowledge quality.",
+      ],
+    },
     footer: "© 2024 Kolibri Ω. Knowledge rendered in digits.",
   },
 };
@@ -218,6 +266,11 @@ function determineInitialLanguage(): Language {
 export default function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => determineInitialTheme());
   const [language, setLanguage] = useState<Language>(() => determineInitialLanguage());
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(
+    () => [...copy[determineInitialLanguage()].chat.initialMessages]
+  );
+  const [chatInput, setChatInput] = useState("");
+  const [autoReplyIndex, setAutoReplyIndex] = useState(0);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -228,6 +281,9 @@ export default function App() {
   useEffect(() => {
     document.documentElement.lang = language;
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    setChatMessages([...copy[language].chat.initialMessages]);
+    setChatInput("");
+    setAutoReplyIndex(0);
   }, [language]);
 
   const toggleTheme = useCallback(() => {
@@ -251,6 +307,30 @@ export default function App() {
 
   const themeToggleText =
     theme === "light" ? (language === "ru" ? "Тёмная тема" : "Dark") : language === "ru" ? "Светлая тема" : "Light";
+
+  const handleChatSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = chatInput.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const replies = copy[language].chat.autoReplies;
+      const reply = replies.length > 0 ? replies[autoReplyIndex % replies.length] : "";
+
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "user", content: trimmed },
+        ...(reply ? [{ role: "ai", content: reply }] : []),
+      ]);
+      setChatInput("");
+      if (replies.length > 0) {
+        setAutoReplyIndex((prev) => (prev + 1) % replies.length);
+      }
+    },
+    [autoReplyIndex, chatInput, language]
+  );
 
   return (
     <div className="landing">
@@ -315,6 +395,38 @@ export default function App() {
                 </div>
               ))}
             </div>
+            <aside className="chat-panel" aria-label={content.chat.ariaLabel}>
+              <header className="chat-header">
+                <div className="chat-avatar" aria-hidden="true">
+                  Ω
+                </div>
+                <div>
+                  <p className="chat-title">{content.chat.title}</p>
+                  <p className="chat-status">{content.chat.status}</p>
+                </div>
+              </header>
+              <div className="chat-messages" role="log" aria-live="polite">
+                {chatMessages.map((message, index) => (
+                  <div key={`${message.role}-${index}`} className={`chat-message chat-message-${message.role}`}>
+                    <span>{message.content}</span>
+                  </div>
+                ))}
+              </div>
+              <form className="chat-input" onSubmit={handleChatSubmit}>
+                <label className="sr-only" htmlFor="chat-entry">
+                  {content.chat.placeholder}
+                </label>
+                <input
+                  id="chat-entry"
+                  type="text"
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder={content.chat.placeholder}
+                  autoComplete="off"
+                />
+                <button type="submit">{content.chat.send}</button>
+              </form>
+            </aside>
           </div>
           <div className="hero-visual" aria-hidden="true">
             <div className="orb" />
