@@ -21,7 +21,7 @@ Kolibri Ω is organised as a stack of modular subsystems communicating over deci
 ### 2.2 Fractal Key-Value Store (F-KV v2)
 * **Topology:** 10-ary trie addressing decimal prefixes for semantic, episodic, and procedural namespaces.
 * **Storage Semantics:** Each node stores top-K entries ranked by PoE and MDL, with arithmetic coding hooks for compression.
-* **APIs:** `fkv_put`, `fkv_get_prefix`, `fkv_topk_programs` deliver millisecond-level lookups for millions of keys.
+* **APIs:** `fkv_put`, `fkv_put_scored`, `fkv_get_prefix`, `fkv_topk_programs` deliver millisecond-level lookups for millions of keys.
 * **Consistency:** Writes are idempotent; CRDT OR-Set deltas enable conflict-free replication across nodes.
 
 ### 2.3 Knowledge Synthesis Orchestrator
