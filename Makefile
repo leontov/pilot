@@ -66,8 +66,7 @@ SRC := \
     src/util/json_compat.c \
     src/util/log.c \
     src/vm/vm.c
-    src/vm/vm.c \
-    src/protocol/swarm.c
+
 
 
 
@@ -167,6 +166,8 @@ TEST_HTTP_ROUTES_SRC := tests/unit/test_http_routes.c \
 
 
 OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
+
+
 
 .PHONY: all build clean run test test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-synthesis-search bench
 
@@ -278,6 +279,13 @@ $(BUILD_DIR)/tests/test_synthesis_search: $(TEST_SYNTH_SEARCH_SRC)
 test-synthesis-search: $(BUILD_DIR)/tests/test_synthesis_search
 	$<
 
+$(BUILD_DIR)/tests/test_synthesis_search: $(TEST_SYNTH_SEARCH_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-synthesis-search: $(BUILD_DIR)/tests/test_synthesis_search
+	$<
+
 BENCH_ARGS ?=
 
 
@@ -285,6 +293,10 @@ bench: build
 	$(TARGET) --bench $(BENCH_ARGS)
 
 
+test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-synthesis-search
+
+
 test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-swarm-exchange test-blockchain-storage test-gossip-cluster
+
 
 

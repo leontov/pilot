@@ -14,6 +14,19 @@
 # endif
 #endif
 
+
+static void formula_reset_metadata(Formula *formula) {
+    if (!formula) {
+        return;
+    }
+    formula->effectiveness = 0.0;
+    formula->created_at = 0;
+    formula->tests_passed = 0;
+    formula->confirmations = 0;
+    formula->representation = FORMULA_REPRESENTATION_TEXT;
+    formula->type = FORMULA_LINEAR;
+    formula->content[0] = '\0';
+
 static size_t stub_strnlen(const char *s, size_t max_len) {
     size_t len = 0;
     if (!s) {
@@ -47,6 +60,7 @@ static void stub_copy_string(char *dest, size_t dest_size, const char *src) {
     memcpy(dest, src, len);
 
     dest[len] = '\0';
+
 }
 
 void formula_clear(Formula *formula) WEAK_ATTR;
@@ -57,6 +71,7 @@ int formula_collection_add(FormulaCollection *collection, const Formula *formula
 size_t formula_collection_get_top(const FormulaCollection *collection,
                                   const Formula **out_formulas,
                                   size_t max_results) WEAK_ATTR;
+
 int validate_formula(const Formula *formula) WEAK_ATTR;
 char *serialize_formula(const Formula *formula) WEAK_ATTR;
 Formula *deserialize_formula(const char *json) WEAK_ATTR;
@@ -64,15 +79,46 @@ FormulaMemorySnapshot formula_memory_snapshot_clone(const FormulaMemoryFact *fac
                                                    size_t count) WEAK_ATTR;
 void formula_memory_snapshot_release(FormulaMemorySnapshot *snapshot) WEAK_ATTR;
 
+
 void formula_clear(Formula *formula) {
     if (!formula) {
         return;
     }
     free(formula->coefficients);
+    free(formula->expression);
     formula->coefficients = NULL;
+    formula->expression = NULL;
     formula->coeff_count = 0;
+
+    formula_reset_metadata(formula);
+}
+
+static int copy_dynamic_fields(Formula *dest, const Formula *src) {
+    if (src->coeff_count > 0 && src->coefficients) {
+        dest->coefficients = malloc(sizeof(double) * src->coeff_count);
+        if (!dest->coefficients) {
+            return -1;
+        }
+        memcpy(dest->coefficients, src->coefficients, sizeof(double) * src->coeff_count);
+    }
+    dest->coeff_count = src->coeff_count;
+
+    if (src->expression) {
+        size_t len = strlen(src->expression);
+        dest->expression = malloc(len + 1);
+        if (!dest->expression) {
+            free(dest->coefficients);
+            dest->coefficients = NULL;
+            dest->coeff_count = 0;
+            return -1;
+        }
+        memcpy(dest->expression, src->expression, len + 1);
+    }
+    return 0;
+
     free(formula->expression);
     formula->expression = NULL;
+
 }
 
 int formula_copy(Formula *dest, const Formula *src) {
@@ -88,27 +134,13 @@ int formula_copy(Formula *dest, const Formula *src) {
     dest->confirmations = src->confirmations;
     dest->representation = src->representation;
     dest->type = src->type;
-    if (src->representation == FORMULA_REPRESENTATION_TEXT) {
-        stub_copy_string(dest->content, sizeof(dest->content), src->content);
-    } else if (src->representation == FORMULA_REPRESENTATION_ANALYTIC) {
-        dest->coeff_count = src->coeff_count;
-        if (src->coeff_count > 0 && src->coefficients) {
-            dest->coefficients = malloc(sizeof(double) * src->coeff_count);
-            if (!dest->coefficients) {
-                formula_clear(dest);
-                return -1;
-            }
-            memcpy(dest->coefficients, src->coefficients, sizeof(double) * src->coeff_count);
-        }
-        if (src->expression) {
-            size_t len = strlen(src->expression);
-            dest->expression = malloc(len + 1);
-            if (!dest->expression) {
-                formula_clear(dest);
-                return -1;
-            }
-            memcpy(dest->expression, src->expression, len + 1);
-        }
+
+    memcpy(dest->content, src->content, sizeof(dest->content));
+
+    if (copy_dynamic_fields(dest, src) != 0) {
+        formula_clear(dest);
+        return -1;
+
     }
     return 0;
 }
@@ -128,8 +160,10 @@ FormulaCollection *formula_collection_create(size_t initial_capacity) {
     }
     collection->capacity = initial_capacity;
     collection->count = 0;
-    collection->best_indices[0] = SIZE_MAX;
-    collection->best_indices[1] = SIZE_MAX;
+
+    collection->best_indices[0] = 0;
+    collection->best_indices[1] = 0;
+
     collection->best_count = 0;
     return collection;
 }
@@ -147,26 +181,28 @@ void formula_collection_destroy(FormulaCollection *collection) {
     free(collection);
 }
 
-static void update_best(FormulaCollection *collection) {
-    if (!collection) {
+
+static void formula_collection_update_top(FormulaCollection *collection) {
+    if (!collection || collection->count == 0) {
+        collection->best_count = 0;
         return;
     }
-    collection->best_indices[0] = SIZE_MAX;
-    collection->best_indices[1] = SIZE_MAX;
-    collection->best_count = 0;
-    for (size_t i = 0; i < collection->count; ++i) {
+    size_t best = 0;
+    size_t second = (collection->count > 1) ? 1 : 0;
+    for (size_t i = 1; i < collection->count; ++i) {
         double score = collection->formulas[i].effectiveness;
-        if (collection->best_count == 0 ||
-            score > collection->formulas[collection->best_indices[0]].effectiveness) {
-            collection->best_indices[1] = collection->best_indices[0];
-            collection->best_indices[0] = i;
-            collection->best_count = collection->best_count == 0 ? 1 : 2;
-        } else if (collection->best_count < 2 ||
-                   score > collection->formulas[collection->best_indices[1]].effectiveness) {
-            collection->best_indices[1] = i;
-            collection->best_count = collection->best_count == 0 ? 1 : 2;
+        if (score > collection->formulas[best].effectiveness) {
+            second = best;
+            best = i;
+        } else if (collection->count > 1 && i != best &&
+                   score > collection->formulas[second].effectiveness) {
+            second = i;
         }
     }
+    collection->best_indices[0] = best;
+    collection->best_indices[1] = (collection->count > 1) ? second : best;
+    collection->best_count = collection->count < 2 ? collection->count : 2;
+
 }
 
 int formula_collection_add(FormulaCollection *collection, const Formula *formula) {
@@ -175,6 +211,14 @@ int formula_collection_add(FormulaCollection *collection, const Formula *formula
     }
     if (collection->count >= collection->capacity) {
         size_t new_capacity = collection->capacity ? collection->capacity * 2 : 4;
+
+        Formula *new_storage = realloc(collection->formulas, new_capacity * sizeof(Formula));
+        if (!new_storage) {
+            return -1;
+        }
+        memset(new_storage + collection->capacity, 0, (new_capacity - collection->capacity) * sizeof(Formula));
+        collection->formulas = new_storage;
+
         Formula *resized = realloc(collection->formulas, new_capacity * sizeof(Formula));
         if (!resized) {
             return -1;
@@ -182,15 +226,22 @@ int formula_collection_add(FormulaCollection *collection, const Formula *formula
         memset(resized + collection->capacity, 0,
                (new_capacity - collection->capacity) * sizeof(Formula));
         collection->formulas = resized;
+
         collection->capacity = new_capacity;
     }
-    Formula *dest = &collection->formulas[collection->count];
-    if (formula_copy(dest, formula) != 0) {
-        memset(dest, 0, sizeof(*dest));
+    Formula *slot = &collection->formulas[collection->count];
+    memset(slot, 0, sizeof(*slot));
+    if (formula_copy(slot, formula) != 0) {
+        memset(slot, 0, sizeof(*slot));
         return -1;
     }
+
+    collection->count += 1;
+    formula_collection_update_top(collection);
+
     collection->count++;
     update_best(collection);
+
     return 0;
 }
 
@@ -200,6 +251,19 @@ size_t formula_collection_get_top(const FormulaCollection *collection,
     if (!collection || !out_formulas || max_results == 0) {
         return 0;
     }
+
+    size_t available = collection->best_count;
+    if (available > max_results) {
+        available = max_results;
+    }
+    for (size_t i = 0; i < available; ++i) {
+        size_t index = collection->best_indices[i];
+        if (index < collection->count) {
+            out_formulas[i] = &collection->formulas[index];
+        } else {
+            out_formulas[i] = NULL;
+        }
+
     size_t produced = 0;
     if (collection->best_count == 0) {
         return 0;
@@ -342,9 +406,9 @@ FormulaMemorySnapshot formula_memory_snapshot_clone(const FormulaMemoryFact *fac
 void formula_memory_snapshot_release(FormulaMemorySnapshot *snapshot) {
     if (!snapshot) {
         return;
+
     }
     free(snapshot->facts);
     snapshot->facts = NULL;
     snapshot->count = 0;
 }
-

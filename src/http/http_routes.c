@@ -3,99 +3,20 @@
 #define _POSIX_C_SOURCE 200809L
 #include "http/http_routes.h"
 
-#include "blockchain.h"
-#include "fkv/fkv.h"
-#include "kolibri_ai.h"
-#include "synthesis/formula_vm_eval.h"
-
-#include <ctype.h>
-#include <math.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#include "blockchain.h"
+#include "kolibri_ai.h"
 
 static uint64_t routes_start_time = 0;
 static Blockchain *routes_blockchain = NULL;
 static KolibriAI *routes_ai = NULL;
-
-typedef struct {
-    Formula formula;
-    double poe;
-    double mdl;
-    double score;
-} stored_program_t;
-
-static stored_program_t *stored_programs = NULL;
-static size_t stored_program_count = 0;
-static size_t stored_program_capacity = 0;
-static uint64_t stored_program_seq = 0;
-
-typedef struct {
-    char *data;
-    size_t len;
-    size_t cap;
-} json_buffer_t;
-
-#define _POSIX_C_SOURCE 200809
-#include "http/http_routes.h
-#include <ctype.h>
-#include "blockchain.h"
-#include "http/http_routes.h"
-#include "fkv/fkv.h"
-#include "formula.h"
-#include "vm/vm.h"
-#include <json-c/json.h>
-#include <ctype.h>
-#include <math.h>
-#include "kolibri_ai.h"
-#include "synthesis/formula_vm_eval.h"
-#include "vm/vm.h"
-#include <ctype.h>
-#include <limits.h>
-#include <pthread.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-
-
-typedef struct {
-    char id[64];
-    double poe;
-    double mdl;
-    double score;
-    int accepted;
-    uint8_t *bytecode;
-    size_t bytecode_len;
-    time_t submitted_at;
-} program_record_t;
-
-typedef struct {
-    uint64_t total_requests;
-    uint64_t total_errors;
-    uint64_t vm_runs;
-    uint64_t fkv_queries;
-    uint64_t program_submissions;
-    uint64_t chain_submissions;
-    time_t last_block_time;
-} route_metrics_t;
-
-static uint64_t routes_start_time = 0;
-static Blockchain *routes_blockchain = NULL;
-static route_metrics_t routes_metrics = {0};
-static program_record_t program_records[64];
-static size_t program_record_count = 0;
-static uint64_t program_id_counter = 0;
-
-#include "formula_core.h"
-
-static uint64_t routes_start_time = 0;
-static Blockchain *routes_blockchain = NULL;
-static KolibriAI *routes_ai = NULL;
+static const char *const k_error_template = "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}";
+static const char *const k_health_template = "{\"status\":\"ok\",\"uptime_ms\":%llu}";
+static const char *const k_metrics_template = "{\"metrics\":{\"poe\":%.6f,\"mdl\":%.6f}}";
 
 
 typedef struct {
@@ -126,10 +47,15 @@ static char *duplicate_string(const char *src) {
     return copy;
 }
 
-static uint64_t now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
+void http_response_free(http_response_t *resp) {
+    if (!resp) {
+        return;
+    }
+    free(resp->data);
+    resp->data = NULL;
+    resp->len = 0;
+    resp->status = 0;
+    resp->content_type[0] = '\0';
 }
 
 static const char *vm_status_to_string(vm_status_t status) {
@@ -175,12 +101,13 @@ static int respond_json(http_response_t *resp, const char *json, int status) {
     if (!resp || !json) {
         return -1;
     }
-    char *data = duplicate_string(json);
-    if (!data) {
+    char *payload = duplicate_string(json);
+    if (!payload) {
         return -1;
     }
-    resp->data = data;
-    resp->len = strlen(data);
+    http_response_free(resp);
+    resp->data = payload;
+    resp->len = strlen(payload);
     resp->status = status;
     snprintf(resp->content_type, sizeof(resp->content_type), "application/json");
     if (status >= 400) {
@@ -188,8 +115,6 @@ static int respond_json(http_response_t *resp, const char *json, int status) {
     }
     return 0;
 }
-
-
 static int respond_with_json_object(http_response_t *resp,
                                     struct json_object *obj,
                                     int status) {
@@ -239,17 +164,18 @@ static int respond_error(http_response_t *resp, int status, const char *code, co
         message = "internal error";
     }
     char buffer[256];
-    int written = snprintf(buffer,
-                           sizeof(buffer),
-                           "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}",
-                           code,
-                           message);
-    if (written < 0) {
+    int written = snprintf(buffer, sizeof(buffer), k_error_template, code, message);
+    if (written < 0 || written >= (int)sizeof(buffer)) {
         return -1;
     }
     return respond_json(resp, buffer, status);
 }
 
+static int handle_health(http_response_t *resp) {
+    struct timespec ts;
+    uint64_t now_ms = 0;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        now_ms = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
 typedef struct {
     char *data;
     size_t len;
@@ -1402,10 +1328,16 @@ static int handle_chain_submit(const char *body, http_response_t *resp) {
     if (!entry) {
         return respond_error(resp, 404, "not_found", "program is unknown");
     }
-    Formula *formulas[1] = {&entry->formula};
-    if (!blockchain_add_block(routes_blockchain, formulas, 1)) {
-        return respond_error(resp, 500, "internal_error", "blockchain rejected block");
+    uint64_t uptime_ms = 0;
+    if (routes_start_time != 0 && now_ms >= routes_start_time) {
+        uptime_ms = now_ms - routes_start_time;
     }
+    char buffer[256];
+    int written = snprintf(buffer,
+                           sizeof(buffer),
+                           k_health_template,
+                           (unsigned long long)uptime_ms);
+    if (written < 0 || written >= (int)sizeof(buffer)) {
     const char *hash = blockchain_get_last_hash(routes_blockchain);
     size_t height = routes_blockchain->block_count;
     char buffer[256];
@@ -1446,6 +1378,50 @@ static void iso8601_from_time(time_t value, char *buffer, size_t buffer_len) {
 }
 
 static int handle_metrics(http_response_t *resp) {
+    (void)routes_blockchain;
+    char buffer[256];
+    int written = snprintf(buffer, sizeof(buffer), k_metrics_template, 0.0, 0.0);
+    if (written < 0 || written >= (int)sizeof(buffer)) {
+        return -1;
+    }
+    return respond_json(resp, buffer, 200);
+}
+
+static int handle_not_implemented(http_response_t *resp) {
+    return respond_error(resp, 501, "not_implemented", "route not available");
+}
+
+int http_handle_request(const kolibri_config_t *cfg,
+                        const char *method,
+                        const char *path,
+                        const char *body,
+                        size_t body_len,
+                        http_response_t *resp) {
+    (void)cfg;
+    (void)body;
+    (void)body_len;
+    if (!method || !path || !resp) {
+        return -1;
+    }
+
+    if (strcmp(method, "GET") == 0) {
+        if (strcmp(path, "/api/v1/health") == 0) {
+            return handle_health(resp);
+        }
+        if (strcmp(path, "/api/v1/metrics") == 0) {
+            return handle_metrics(resp);
+        }
+        if (strncmp(path, "/api/v1/fkv/get", strlen("/api/v1/fkv/get")) == 0) {
+            return handle_not_implemented(resp);
+        }
+    } else if (strcmp(method, "POST") == 0) {
+        if (strcmp(path, "/api/v1/dialog") == 0 || strcmp(path, "/api/v1/vm/run") == 0 ||
+            strcmp(path, "/api/v1/program/submit") == 0 || strcmp(path, "/api/v1/chain/submit") == 0) {
+            return handle_not_implemented(resp);
+        }
+    }
+
+    return respond_error(resp, 404, "not_found", "route not found");
 
     struct json_object *obj = json_object_new_object();
     if (!obj) {
@@ -1681,6 +1657,8 @@ static double compute_program_mdl(size_t program_len) {
     return mdl;
 }
 
+void http_routes_set_blockchain(Blockchain *chain) {
+    routes_blockchain = chain;
 static void append_trace_entry(struct json_object *array, const vm_trace_entry_t *entry) {
     if (!array || !entry) {
         return;
@@ -3125,8 +3103,10 @@ void http_routes_set_blockchain(Blockchain *chain) {
 
 void http_routes_set_ai(KolibriAI *ai) {
     routes_ai = ai;
+
 }
 
 void http_routes_set_ai(KolibriAI *ai) {
     routes_ai = ai;
+    (void)routes_ai;
 }

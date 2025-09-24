@@ -78,12 +78,14 @@ static int number_to_digits(int64_t value, uint8_t *digits, size_t *len) {
 
     size_t n = (size_t)written;
     if (n >= sizeof(buf) || n > *len) {
+
         return -1;
     }
     for (size_t i = 0; i < n; ++i) {
         if (buf[i] < '0' || buf[i] > '9') {
 
     if (value < 0) {
+
         return -1;
     }
 
