@@ -174,6 +174,107 @@ static int node_insert_top_entry(fkv_node_t *node, fkv_entry_record_t *entry) {
     return 0;
 }
 
+static void fkv_delta_entry_cleanup(fkv_delta_entry_t *entry) {
+    if (!entry) {
+        return;
+    }
+    free(entry->key);
+    free(entry->value);
+    entry->key = NULL;
+    entry->value = NULL;
+    entry->key_len = 0;
+    entry->value_len = 0;
+}
+
+static int fkv_delta_reserve(fkv_delta_t *delta, size_t needed) {
+    if (!delta) {
+        return -1;
+    }
+    if (delta->capacity >= needed) {
+        return 0;
+    }
+    size_t new_capacity = delta->capacity ? delta->capacity : 4;
+    while (new_capacity < needed) {
+        new_capacity *= 2;
+    }
+    fkv_delta_entry_t *entries =
+        realloc(delta->entries, new_capacity * sizeof(fkv_delta_entry_t));
+    if (!entries) {
+        return -1;
+    }
+    for (size_t i = delta->capacity; i < new_capacity; ++i) {
+        memset(&entries[i], 0, sizeof(entries[i]));
+    }
+    delta->entries = entries;
+    delta->capacity = new_capacity;
+    return 0;
+}
+
+static int fkv_delta_append_entry(fkv_delta_t *delta, const fkv_entry_record_t *rec) {
+    if (!delta || !rec) {
+        return -1;
+    }
+    size_t next_index = delta->count + 1;
+    if (fkv_delta_reserve(delta, next_index) != 0) {
+        return -1;
+    }
+    fkv_delta_entry_t *entry = &delta->entries[delta->count];
+    memset(entry, 0, sizeof(*entry));
+
+    if (rec->key_len > 0) {
+        entry->key = malloc(rec->key_len);
+        if (!entry->key) {
+            return -1;
+        }
+        memcpy(entry->key, rec->key, rec->key_len);
+        entry->key_len = rec->key_len;
+    }
+    if (rec->value_len > 0) {
+        entry->value = malloc(rec->value_len);
+        if (!entry->value) {
+            free(entry->key);
+            entry->key = NULL;
+            entry->key_len = 0;
+            return -1;
+        }
+        memcpy(entry->value, rec->value, rec->value_len);
+        entry->value_len = rec->value_len;
+    }
+    entry->type = rec->type;
+    entry->priority = rec->priority;
+
+    if (delta->count == 0 || rec->priority < delta->min_sequence) {
+        delta->min_sequence = rec->priority;
+    }
+    if (rec->priority > delta->max_sequence) {
+        delta->max_sequence = rec->priority;
+    }
+    delta->total_bytes += entry->key_len + entry->value_len;
+    delta->count++;
+    return 0;
+}
+
+static int fkv_collect_delta_entries(const fkv_node_t *node,
+                                     uint64_t since_sequence,
+                                     fkv_delta_t *delta) {
+    if (!node) {
+        return 0;
+    }
+    if (node->self_entry && node->self_entry->priority > since_sequence) {
+        if (fkv_delta_append_entry(delta, node->self_entry) != 0) {
+            return -1;
+        }
+    }
+    for (size_t i = 0; i < 10; ++i) {
+        if (node->children[i]) {
+            if (fkv_collect_delta_entries(node->children[i], since_sequence, delta) != 0) {
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
 static int fkv_put_locked_internal(const uint8_t *key,
                                    size_t kn,
                                    const uint8_t *val,
@@ -657,4 +758,114 @@ size_t fkv_get_topk_limit(void) {
     size_t limit = fkv_topk_limit;
     pthread_mutex_unlock(&fkv_lock);
     return limit;
+}
+
+uint64_t fkv_current_sequence(void) {
+    pthread_mutex_lock(&fkv_lock);
+    uint64_t seq = fkv_sequence;
+    pthread_mutex_unlock(&fkv_lock);
+    if (seq == 0) {
+        return 0;
+    }
+    return seq - 1;
+}
+
+uint16_t fkv_delta_compute_checksum(const fkv_delta_t *delta) {
+    if (!delta || delta->count == 0) {
+        return 0;
+    }
+    uint32_t hash = 0;
+    for (size_t i = 0; i < delta->count; ++i) {
+        const fkv_delta_entry_t *entry = &delta->entries[i];
+        for (size_t j = 0; j < entry->key_len; ++j) {
+            hash = hash * 131u + (uint32_t)entry->key[j];
+        }
+        for (size_t j = 0; j < entry->value_len; ++j) {
+            hash = hash * 131u + (uint32_t)entry->value[j];
+        }
+        hash = hash * 131u + (uint32_t)entry->type;
+        for (unsigned shift = 0; shift < 64; shift += 8) {
+            hash = hash * 131u + (uint32_t)((entry->priority >> shift) & 0xFFu);
+        }
+    }
+    return (uint16_t)(hash % 65521u);
+}
+
+int fkv_export_delta(uint64_t since_sequence, fkv_delta_t *delta) {
+    if (!delta) {
+        return -1;
+    }
+    memset(delta, 0, sizeof(*delta));
+    delta->min_sequence = UINT64_MAX;
+    delta->max_sequence = since_sequence;
+
+    pthread_mutex_lock(&fkv_lock);
+    if (!fkv_root) {
+        pthread_mutex_unlock(&fkv_lock);
+        delta->min_sequence = 0;
+        delta->checksum = 0;
+        return 0;
+    }
+    int rc = fkv_collect_delta_entries(fkv_root, since_sequence, delta);
+    pthread_mutex_unlock(&fkv_lock);
+
+    if (rc != 0) {
+        fkv_delta_free(delta);
+        return -1;
+    }
+
+    if (delta->count == 0) {
+        delta->min_sequence = since_sequence;
+        delta->max_sequence = since_sequence;
+        delta->checksum = 0;
+    } else {
+        delta->checksum = fkv_delta_compute_checksum(delta);
+    }
+
+    return 0;
+}
+
+int fkv_apply_delta(const fkv_delta_t *delta) {
+    if (!delta) {
+        return -1;
+    }
+    if (delta->count == 0) {
+        return 0;
+    }
+    uint16_t checksum = fkv_delta_compute_checksum(delta);
+    if (checksum != delta->checksum) {
+        return -1;
+    }
+    for (size_t i = 0; i < delta->count; ++i) {
+        const fkv_delta_entry_t *entry = &delta->entries[i];
+        if (!entry->key || entry->key_len == 0 || !entry->value || entry->value_len == 0) {
+            return -1;
+        }
+        if (fkv_put_scored(entry->key,
+                           entry->key_len,
+                           entry->value,
+                           entry->value_len,
+                           entry->type,
+                           entry->priority) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+void fkv_delta_free(fkv_delta_t *delta) {
+    if (!delta) {
+        return;
+    }
+    for (size_t i = 0; i < delta->count; ++i) {
+        fkv_delta_entry_cleanup(&delta->entries[i]);
+    }
+    free(delta->entries);
+    delta->entries = NULL;
+    delta->count = 0;
+    delta->capacity = 0;
+    delta->min_sequence = 0;
+    delta->max_sequence = 0;
+    delta->total_bytes = 0;
+    delta->checksum = 0;
 }

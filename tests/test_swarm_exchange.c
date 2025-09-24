@@ -1,6 +1,7 @@
 #include "protocol/swarm_node.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -20,21 +21,21 @@ static void fill_ping_frame(SwarmFrame *frame, uint32_t nonce, uint32_t latency)
     frame->payload.ping.latency_hint_ms = latency;
 }
 
-static void fill_program_offer(SwarmFrame *frame) {
+static void fill_program_offer(SwarmFrame *frame, uint16_t poe_milli) {
     memset(frame, 0, sizeof(*frame));
     frame->type = SWARM_FRAME_PROGRAM_OFFER;
     memcpy(frame->payload.program_offer.program_id, "0000000000009001", SWARM_PROGRAM_ID_DIGITS + 1);
-    frame->payload.program_offer.poe_milli = 950;
+    frame->payload.program_offer.poe_milli = poe_milli;
     frame->payload.program_offer.mdl_score = 1200;
     frame->payload.program_offer.gas_used = 4200;
 }
 
-static void fill_block_offer(SwarmFrame *frame) {
+static void fill_block_offer(SwarmFrame *frame, uint16_t poe_milli) {
     memset(frame, 0, sizeof(*frame));
     frame->type = SWARM_FRAME_BLOCK_OFFER;
     memcpy(frame->payload.block_offer.block_id, "0000000000004321", SWARM_BLOCK_ID_DIGITS + 1);
     frame->payload.block_offer.height = 42;
-    frame->payload.block_offer.poe_milli = 870;
+    frame->payload.block_offer.poe_milli = poe_milli;
     frame->payload.block_offer.program_count = 8;
 }
 
@@ -80,15 +81,33 @@ int main(void) {
     assert(outbound.frame.type == SWARM_FRAME_PING);
     assert(outbound.frame.payload.ping.nonce == 777);
 
-    fill_program_offer(&frame);
+    fill_program_offer(&frame, 950);
     assert(swarm_node_submit_frame(node, peer_id, &frame, 1) == SWARM_DECISION_ACCEPT);
-    fill_block_offer(&frame);
+    assert(swarm_node_get_peer_snapshot(node, peer_id, &snapshot) == 0);
+    assert(snapshot.programs_accepted == 1);
+    assert(snapshot.programs_rejected == 0);
+    int32_t score_after_program = snapshot.reputation_score;
+
+    fill_program_offer(&frame, 500);
     assert(swarm_node_submit_frame(node, peer_id, &frame, 1) == SWARM_DECISION_ACCEPT);
+    assert(swarm_node_get_peer_snapshot(node, peer_id, &snapshot) == 0);
+    assert(snapshot.programs_rejected == 1);
+    assert(snapshot.reputation_score < score_after_program);
+
+    fill_block_offer(&frame, 870);
+    assert(swarm_node_submit_frame(node, peer_id, &frame, 1) == SWARM_DECISION_ACCEPT);
+    assert(swarm_node_get_peer_snapshot(node, peer_id, &snapshot) == 0);
+    assert(snapshot.blocks_accepted == 1);
+
+    fill_block_offer(&frame, 300);
+    assert(swarm_node_submit_frame(node, peer_id, &frame, 1) == SWARM_DECISION_ACCEPT);
+    assert(swarm_node_get_peer_snapshot(node, peer_id, &snapshot) == 0);
+    assert(snapshot.blocks_rejected == 1);
     fill_fkv_delta(&frame);
     assert(swarm_node_submit_frame(node, peer_id, &frame, 1) == SWARM_DECISION_ACCEPT);
 
     assert(swarm_node_get_peer_snapshot(node, peer_id, &snapshot) == 0);
-    assert(snapshot.frames[SWARM_FRAME_PROGRAM_OFFER] == 1);
+    assert(snapshot.frames[SWARM_FRAME_PROGRAM_OFFER] == 2);
     assert(strcmp(snapshot.program_offer.program_id, "0000000000009001") == 0);
     assert(snapshot.block_offer.height == 42);
     assert(snapshot.fkv_delta.entry_count == 5);

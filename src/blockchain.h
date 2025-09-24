@@ -42,6 +42,8 @@ const char* blockchain_get_last_hash(const Blockchain* chain);
 
 double blockchain_score_formula(const Formula* formula, double* poe_out, double* mdl_out);
 
+int blockchain_sync(Blockchain* dest, const Blockchain* src);
+
 // Освобождение ресурсов
 void blockchain_destroy(Blockchain* chain);
 

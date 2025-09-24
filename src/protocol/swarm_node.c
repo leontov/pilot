@@ -7,6 +7,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -55,6 +56,10 @@ typedef struct {
     SwarmProgramOfferPayload program_offer;
     SwarmBlockOfferPayload block_offer;
     SwarmFkvDeltaPayload fkv_delta;
+    uint32_t programs_accepted;
+    uint32_t programs_rejected;
+    uint32_t blocks_accepted;
+    uint32_t blocks_rejected;
 } SwarmPeerContext;
 
 struct SwarmNode {
@@ -223,7 +228,7 @@ static SwarmPeerContext *get_or_create_peer(SwarmNode *node, const char *peer_id
     return NULL;
 }
 
-static void handle_hello(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
+static bool handle_hello(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
     peer->hello = frame->payload.hello;
     peer->frames[SWARM_FRAME_HELLO] += 1;
     SwarmFrame reply = {.type = SWARM_FRAME_HELLO};
@@ -233,9 +238,10 @@ static void handle_hello(SwarmNode *node, SwarmPeerContext *peer, const SwarmFra
     reply.payload.hello.services = node->options.services;
     reply.payload.hello.reputation = (uint16_t)peer->state.reputation.score;
     outbox_push(&node->outbox, peer->peer_id, &reply);
+    return true;
 }
 
-static void handle_ping(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame, uint64_t now_ms) {
+static bool handle_ping(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame, uint64_t now_ms) {
     (void)now_ms;
     peer->ping = frame->payload.ping;
     peer->frames[SWARM_FRAME_PING] += 1;
@@ -247,24 +253,43 @@ static void handle_ping(SwarmNode *node, SwarmPeerContext *peer, const SwarmFram
     }
     reply.payload.ping.latency_hint_ms = latency;
     outbox_push(&node->outbox, peer->peer_id, &reply);
+    return true;
 }
 
-static void handle_program_offer(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
+static bool handle_program_offer(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
     (void)node;
     peer->program_offer = frame->payload.program_offer;
     peer->frames[SWARM_FRAME_PROGRAM_OFFER] += 1;
+    bool accepted = frame->payload.program_offer.poe_milli >= 800;
+    if (accepted) {
+        peer->programs_accepted += 1;
+    } else {
+        peer->programs_rejected += 1;
+    }
+    return accepted;
 }
 
-static void handle_block_offer(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
+static bool handle_block_offer(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
     (void)node;
     peer->block_offer = frame->payload.block_offer;
     peer->frames[SWARM_FRAME_BLOCK_OFFER] += 1;
+    bool accepted = frame->payload.block_offer.poe_milli >= 800;
+    if (accepted) {
+        peer->blocks_accepted += 1;
+    } else {
+        peer->blocks_rejected += 1;
+    }
+    return accepted;
 }
 
-static void handle_fkv_delta(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
+static bool handle_fkv_delta(SwarmNode *node, SwarmPeerContext *peer, const SwarmFrame *frame) {
     (void)node;
     peer->fkv_delta = frame->payload.fkv_delta;
     peer->frames[SWARM_FRAME_FKV_DELTA] += 1;
+    if (frame->payload.fkv_delta.entry_count == 0 || frame->payload.fkv_delta.checksum == 0) {
+        return false;
+    }
+    return true;
 }
 
 static SwarmAcceptDecision process_event(SwarmNode *node, SwarmFrameEvent *event) {
@@ -282,28 +307,33 @@ static SwarmAcceptDecision process_event(SwarmNode *node, SwarmFrameEvent *event
         pthread_mutex_unlock(&node->peers_mutex);
         return decision;
     }
+    bool accepted = false;
     switch (event->frame.type) {
         case SWARM_FRAME_HELLO:
-            handle_hello(node, peer, &event->frame);
+            accepted = handle_hello(node, peer, &event->frame);
             break;
         case SWARM_FRAME_PING:
-            handle_ping(node, peer, &event->frame, now_ms);
+            accepted = handle_ping(node, peer, &event->frame, now_ms);
             break;
         case SWARM_FRAME_PROGRAM_OFFER:
-            handle_program_offer(node, peer, &event->frame);
+            accepted = handle_program_offer(node, peer, &event->frame);
             break;
         case SWARM_FRAME_BLOCK_OFFER:
-            handle_block_offer(node, peer, &event->frame);
+            accepted = handle_block_offer(node, peer, &event->frame);
             break;
         case SWARM_FRAME_FKV_DELTA:
-            handle_fkv_delta(node, peer, &event->frame);
+            accepted = handle_fkv_delta(node, peer, &event->frame);
             break;
         default:
             swarm_peer_report_violation(&peer->state, event->frame.type);
             pthread_mutex_unlock(&node->peers_mutex);
             return SWARM_DECISION_REPUTATION_BLOCKED;
     }
-    swarm_peer_report_success(&peer->state, event->frame.type);
+    if (accepted) {
+        swarm_peer_report_success(&peer->state, event->frame.type);
+    } else {
+        swarm_peer_report_violation(&peer->state, event->frame.type);
+    }
     pthread_mutex_unlock(&node->peers_mutex);
     return SWARM_DECISION_ACCEPT;
 }
@@ -461,6 +491,10 @@ int swarm_node_get_peer_snapshot(SwarmNode *node,
     out->infractions = peer->state.reputation.infractions;
     out->successes = peer->state.reputation.successes;
     out->last_seen_ms = peer->last_seen_ms;
+    out->programs_accepted = peer->programs_accepted;
+    out->programs_rejected = peer->programs_rejected;
+    out->blocks_accepted = peer->blocks_accepted;
+    out->blocks_rejected = peer->blocks_rejected;
     out->hello = peer->hello;
     out->ping = peer->ping;
     out->program_offer = peer->program_offer;
