@@ -138,3 +138,16 @@ For investor-grade demonstrations and product validation scenarios, consult [`do
 * [Whitepaper](docs/whitepaper.md) – full architecture and research narrative for the decimal-first intelligence stack.
 * [HTTP API Specification](docs/api_spec.md) – endpoint catalogue, payload schemas, and operational policies for `/api/v1`.
 * [Technical overview](docs/architecture.md) – subsystem walkthrough linking source code and configuration surfaces.
+* [macOS application plan](docs/macos_app_plan.md) – scope and milestones for the native Kolibri Ω desktop companion.
+
+### macOS companion app
+
+An investor-friendly SwiftUI client lives in [`macos/KolibriOmegaApp`](macos/KolibriOmegaApp). The project is a Swift Package executable target that can be compiled into a `.app` bundle on macOS 13+:
+
+```
+cd macos/KolibriOmegaApp
+swift build --configuration release
+open .build/release/KolibriOmegaApp.app
+```
+
+The app ships with bundled mock data so it can demonstrate the dashboard, health monitor, dialog console, and F-KV explorer even when a Kolibri Ω node is not running locally. Point the client to a live node by updating `AppConfiguration.apiBaseURL`.

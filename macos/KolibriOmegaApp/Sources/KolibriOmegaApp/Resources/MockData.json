@@ -1,0 +1,65 @@
+{
+  "health": {
+    "uptimeSeconds": 1284,
+    "memoryMegabytes": 42.5,
+    "peerCount": 3,
+    "blockHeight": 12,
+    "latencyMillis": 18
+  },
+  "dashboard": {
+    "activePrograms": 56,
+    "proofOfEffectiveness": 0.92,
+    "modelDescriptionLength": 12.3,
+    "runtimeMillis": 38,
+    "gasUsed": 184
+  },
+  "dialog": {
+    "answer": "Δ-VM сообщает: 2+2=4. Память обновлена.",
+    "trace": [
+      {
+        "id": "4D6F10E9-A08F-4AF4-BB90-47FDE97D35A1",
+        "opcode": "PUSHd 2",
+        "stack": ["2"],
+        "gasRemaining": 255,
+        "description": "Положили 2 на стек"
+      },
+      {
+        "id": "8C1DBF1C-CC54-4F25-A1E0-9F4E4E97D02E",
+        "opcode": "PUSHd 2",
+        "stack": ["2", "2"],
+        "gasRemaining": 254,
+        "description": "Положили вторую двойку"
+      },
+      {
+        "id": "52C3242B-75F0-4A3E-B768-8A4F94C4F327",
+        "opcode": "ADD10",
+        "stack": ["4"],
+        "gasRemaining": 253,
+        "description": "Сложение в десятичной арифметике"
+      }
+    ]
+  },
+  "memory": [
+    {
+      "id": "6D668214-8F7A-4A5D-8A1A-15215A2CBDF0",
+      "key": "dialog:0001",
+      "value": "2+2=4",
+      "kind": "episodic",
+      "score": 0.78
+    },
+    {
+      "id": "0F02D7A8-814F-4B16-8866-77C54CBE3557",
+      "key": "fact:moscow",
+      "value": "Москва — столица России",
+      "kind": "semantic",
+      "score": 0.94
+    },
+    {
+      "id": "9AD8CD2F-4B19-4B89-91DA-BC3EAF4C66D5",
+      "key": "program:add10",
+      "value": "PUSHd 2; PUSHd 2; ADD10; HALT",
+      "kind": "procedural",
+      "score": 0.88
+    }
+  ]
+}
