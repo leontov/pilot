@@ -2,12 +2,7 @@ CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
 
-LDFLAGS := -lpthread -ljson-c -lm -luuid
-
-LDFLAGS := -lpthread -lm -lcrypto
-
-
-LDFLAGS := -lpthread -ljson-c -lcurl
+LDFLAGS := -lpthread -ljson-c -lm -luuid -lcrypto -lcurl
 
 
 BUILD_DIR := build/obj
@@ -20,7 +15,6 @@ SRC := \
   src/util/config.c \
   src/vm/vm.c \
   src/fkv/fkv.c \
-
   src/kolibri_ai.c \
   src/http/http_server.c \
   src/http/http_routes.c \
