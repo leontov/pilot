@@ -203,6 +203,14 @@ static void count_entries(const fkv_node_t *node, size_t *count) {
     }
 }
 
+size_t fkv_entry_count(void) {
+    pthread_mutex_lock(&fkv_lock);
+    size_t count = 0;
+    count_entries(fkv_root, &count);
+    pthread_mutex_unlock(&fkv_lock);
+    return count;
+}
+
 static int serialize_node(FILE *fp, const fkv_node_t *node) {
     if (!node) {
         return 0;

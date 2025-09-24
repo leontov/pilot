@@ -230,29 +230,69 @@ static const char *status_reason(int status) {
     }
 }
 
-static void send_response(int client, const http_response_t *resp) {
+static uint64_t monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
+}
+
+static size_t send_response(int client, const http_response_t *resp) {
     int status = resp->status ? resp->status : 200;
     const char *reason = status_reason(status);
     char header[256];
-    snprintf(header, sizeof(header),
-             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
-             status,
-             reason,
-             resp->content_type[0] ? resp->content_type : "application/json",
-             resp->len);
-    send(client, header, strlen(header), 0);
-    if (resp->data && resp->len > 0) {
-        send(client, resp->data, resp->len, 0);
+    int header_len = snprintf(header,
+                              sizeof(header),
+                              "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
+                              status,
+                              reason,
+                              resp->content_type[0] ? resp->content_type : "application/json",
+                              resp->len);
+    size_t total_sent = 0;
+    if (header_len > 0) {
+        ssize_t n = send(client, header, (size_t)header_len, 0);
+        if (n > 0) {
+            total_sent += (size_t)n;
+        }
     }
+    if (resp->data && resp->len > 0) {
+        ssize_t n = send(client, resp->data, resp->len, 0);
+        if (n > 0) {
+            total_sent += (size_t)n;
+        }
+    }
+    return total_sent;
 }
 
-static void send_payload_too_large(int client) {
+static void send_payload_too_large(int client, const char *method, const char *path) {
     http_response_t resp = {0};
     resp.status = 413;
     snprintf(resp.content_type, sizeof(resp.content_type), "application/json");
     resp.data = strdup("{\"error\":\"payload too large\"}");
-    resp.len = strlen(resp.data);
-    send_response(client, &resp);
+    if (resp.data) {
+        resp.len = strlen(resp.data);
+    }
+    size_t sent = send_response(client, &resp);
+    http_routes_metrics_record(method, path, resp.status, 0, sent);
+    http_response_free(&resp);
+}
+
+static void send_bad_request(int client, const char *method, const char *path, const char *reason) {
+    const char *tag = reason ? reason : "bad_request";
+    char payload[256];
+    int written = snprintf(payload, sizeof(payload), "{\"error\":\"%s\"}", tag);
+    if (written < 0 || (size_t)written >= sizeof(payload)) {
+        strcpy(payload, "{\"error\":\"bad_request\"}");
+    }
+
+    http_response_t resp = {0};
+    resp.status = 400;
+    snprintf(resp.content_type, sizeof(resp.content_type), "application/json");
+    resp.data = strdup(payload);
+    if (resp.data) {
+        resp.len = strlen(resp.data);
+    }
+    size_t sent = send_response(client, &resp);
+    http_routes_metrics_record(method, path, resp.status, 0, sent);
     http_response_free(&resp);
 }
 
@@ -260,27 +300,25 @@ static void handle_client(int client) {
     char *buffer = NULL;
     size_t received = 0;
     size_t header_len = 0;
-    int rc = read_request(client,
-                          &buffer,
-                          &received,
-                          &header_len,
-                          server.cfg.http.max_body_size);
+    int rc = read_request(client, &buffer, &received, &header_len, server.cfg.http.max_body_size);
     if (rc == -2) {
-        send_payload_too_large(client);
+        send_payload_too_large(client, NULL, NULL);
         return;
     }
     if (rc != 0) {
         return;
     }
 
-    char method[8];
-    char path[256];
+    char method[8] = {0};
+    char path[256] = {0};
     if (sscanf(buffer, "%7s %255s", method, path) != 2) {
+        send_bad_request(client, NULL, NULL, "malformed_request_line");
         free(buffer);
         return;
     }
 
     if (header_len == 0 || header_len > received) {
+        send_bad_request(client, method, path, "invalid_headers");
         free(buffer);
         return;
     }
@@ -289,19 +327,24 @@ static void handle_client(int client) {
     char *body = buffer + header_len;
 
     if (server.cfg.http.max_body_size > 0 && body_len > server.cfg.http.max_body_size) {
-        send_payload_too_large(client);
+        send_payload_too_large(client, method, path);
         free(buffer);
         return;
     }
 
+    uint64_t start_ms = monotonic_ms();
     http_response_t resp = {0};
     if (http_handle_request(&server.cfg, method, path, body, body_len, &resp) != 0 && resp.status == 0) {
         resp.status = 500;
         snprintf(resp.content_type, sizeof(resp.content_type), "application/json");
         resp.data = strdup("{\"error\":\"internal\"}");
-        resp.len = strlen(resp.data);
+        if (resp.data) {
+            resp.len = strlen(resp.data);
+        }
     }
-    send_response(client, &resp);
+    size_t bytes_sent = send_response(client, &resp);
+    uint64_t duration_ms = monotonic_ms() - start_ms;
+    http_routes_metrics_record(method, path, resp.status ? resp.status : 200, duration_ms, bytes_sent);
     http_response_free(&resp);
     free(buffer);
 }

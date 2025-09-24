@@ -27,6 +27,11 @@ int http_handle_request(const kolibri_config_t *cfg,
 void http_response_free(http_response_t *resp);
 void http_routes_set_start_time(uint64_t ms_since_epoch);
 void http_routes_set_blockchain(Blockchain *chain);
+void http_routes_metrics_record(const char *method,
+                                const char *path,
+                                int status,
+                                uint64_t duration_ms,
+                                size_t bytes_sent);
 
 
 #endif

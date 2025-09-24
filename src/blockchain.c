@@ -318,10 +318,17 @@ const char* blockchain_get_last_hash(const Blockchain* chain) {
     if (!chain || chain->block_count == 0) {
         return GENESIS_PREV_HASH;
     }
-    
+
     static char hash[65];
     calculate_hash(chain->blocks[chain->block_count - 1], hash);
     return hash;
+}
+
+size_t blockchain_get_block_count(const Blockchain* chain) {
+    if (!chain) {
+        return 0;
+    }
+    return chain->block_count;
 }
 
 void blockchain_destroy(Blockchain* chain) {

@@ -117,10 +117,21 @@ static void test_load_overwrites_existing(void) {
     unlink(snapshot);
 }
 
+static void test_entry_count(void) {
+    fkv_init();
+    assert(fkv_entry_count() == 0);
+    insert_sample("10", "1", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("11", "2", FKV_ENTRY_TYPE_VALUE);
+    insert_sample("12", "3", FKV_ENTRY_TYPE_PROGRAM);
+    assert(fkv_entry_count() == 3);
+    fkv_shutdown();
+}
+
 int main(void) {
     test_prefix();
     test_serialization_roundtrip();
     test_load_overwrites_existing();
+    test_entry_count();
     printf("fkv tests passed\n");
     return 0;
 }

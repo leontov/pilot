@@ -39,6 +39,7 @@ bool blockchain_verify(const Blockchain* chain);
 
 // Получение хэша последнего блока
 const char* blockchain_get_last_hash(const Blockchain* chain);
+size_t blockchain_get_block_count(const Blockchain* chain);
 
 double blockchain_score_formula(const Formula* formula, double* poe_out, double* mdl_out);
 
