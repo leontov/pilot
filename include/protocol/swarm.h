@@ -20,7 +20,7 @@ typedef enum {
 #define SWARM_BLOCK_ID_DIGITS 16
 #define SWARM_PREFIX_DIGITS 12
 
-#define SWARM_MAX_FRAME_SIZE 128
+#define SWARM_MAX_FRAME_SIZE 256
 #define SWARM_SIGNATURE_BYTES 64
 
 typedef struct {
