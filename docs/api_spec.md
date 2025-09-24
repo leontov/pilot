@@ -59,11 +59,23 @@ Initiate a decimal-first dialogue turn.
 ```
 
 ### POST /api/v1/vm/run
+
+Execute explicit Δ-VM bytecode or compile a decimal expression on the fly.
+
 Execute a decimal expression on Δ-VM.
+
 
 **Request**
 ```json
 {
+
+  "program": "PUSHd 2; PUSHd 2; ADD10; HALT",
+  "gas_limit": 1024
+}
+```
+
+The field `program` may also be an array of opcode integers (0–255). When omitted the endpoint returns `400 bad_request`.
+
   "program": "2+2",
   "gas_limit": 256
 }
@@ -72,11 +84,27 @@ Execute a decimal expression on Δ-VM.
 * `program` — arithmetic expression composed of decimal digits and `+`, `-`, `*`, `/`. Alternate keys `formula` and `expression` are accepted. For advanced scenarios a numeric `bytecode` array may be supplied instead.
 * `gas_limit` — optional override for the configured VM step limit.
 
+
 **Response**
 ```json
 {
+  "status": "ok",
   "result": "4",
   "stack": ["4"],
+
+  "halted": true,
+  "steps": 4,
+  "gas_used": 4,
+  "program_source": "PUSHd 2; PUSHd 2; ADD10; HALT",
+  "trace": [
+    { "step": 0, "ip": 0, "opcode": 1, "stack_top": 2, "gas_left": 1024 },
+    { "step": 1, "ip": 1, "opcode": 1, "stack_top": 2, "gas_left": 1023 }
+  ]
+}
+```
+
+Failures return the VM status in the `status` field (`invalid_opcode`, `div_by_zero`, `gas_exhausted`, …) while preserving a `200 OK` HTTP code.
+
   "trace": { "steps": [] },
   "gas_used": 4
 }
@@ -84,17 +112,36 @@ Execute a decimal expression on Δ-VM.
 
 Errors return an object in the common format with codes such as `bad_request` (invalid payload) or `vm_error` (runtime failure).
 
+
 ### GET /api/v1/fkv/get
 Retrieve values matching a decimal prefix.
 
 **Query Parameters**
+
+* `prefix` (required): decimal namespace prefix encoded as digits (e.g. `123`).
+
 * `prefix` (required): decimal prefix expressed as digits (`12` → keys starting with `1,2`).
+
 * `limit` (optional): maximum entries to return (default 32).
 
 **Response**
 ```json
 {
   "values": [
+
+    { "key": "123", "value": "45" }
+  ],
+  "programs": [
+    { "key": "880", "program": "987" }
+  ]
+}
+```
+
+Missing prefixes return `400 bad_request`. Prefixes that match no entries respond with empty arrays and `200 OK`.
+
+### POST /api/v1/program/submit
+Submit a candidate Δ-VM program for evaluation. The payload accepts either `program` (string or opcode array) or `bytecode` (opcode array). Unsupported payloads are rejected with `400 bad_request`.
+
     { "key": "123", "value": "42" }
   ],
   "programs": [
@@ -108,10 +155,15 @@ Keys and payloads are rendered as decimal strings derived from the trie digits.
 ### POST /api/v1/program/submit
 Submit a candidate Δ-VM program for evaluation and storage.
 
+
 **Request**
 ```json
 {
+
+  "program": "PUSHd 2; PUSHd 3; MUL10; HALT"
+
   "program": "3+4"
+
 }
 ```
 
@@ -120,6 +172,21 @@ Submit a candidate Δ-VM program for evaluation and storage.
 **Response**
 ```json
 {
+
+  "program_id": "program-42",
+  "poe": 0.94,
+  "mdl": 18.0,
+  "score": 0.76,
+  "accepted": true,
+  "vm_status": "ok"
+}
+```
+
+The endpoint stores accepted programs in-memory for later blockchain submission and updates the Kolibri AI library when available.
+
+### POST /api/v1/chain/submit
+Publish a previously accepted program ID for inclusion in the PoU blockchain.
+
   "program_id": "prog-000001",
   "poe": 1.000000,
   "mdl": 4.000000,
@@ -133,10 +200,15 @@ The Kolibri AI library records accepted formulas (when attached) and heuristic P
 ### POST /api/v1/chain/submit
 Publish a previously accepted program ID for inclusion in the knowledge blockchain.
 
+
 **Request**
 ```json
 {
+
+  "program_id": "program-42"
+
   "program_id": "prog-000001"
+
 }
 ```
 
@@ -144,6 +216,17 @@ Publish a previously accepted program ID for inclusion in the knowledge blockcha
 ```json
 {
   "status": "accepted",
+
+  "block_hash": "0009ABC...",
+  "height": 42,
+  "poe": 0.94,
+  "mdl": 18.0,
+  "score": 0.76
+}
+```
+
+If the program ID is unknown the server returns `404 not_found`. When the blockchain subsystem is not attached the endpoint returns `503 service_unavailable`.
+
   "block_hash": "000af3...",
   "height": 3,
   "program_id": "prog-000001"
@@ -151,6 +234,7 @@ Publish a previously accepted program ID for inclusion in the knowledge blockcha
 ```
 
 Errors report `not_found` when the program is unknown or `unavailable` if the blockchain subsystem is detached.
+
 
 ### GET /api/v1/health
 Report readiness/liveness information.
