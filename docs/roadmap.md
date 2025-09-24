@@ -17,12 +17,13 @@
 
 ## Sprint Breakdown
 
-### Sprint 1 (Weeks 1–2) — Boot the Core
-- Wire `KolibriAI` into the node lifecycle, expose `/api/v1/ai/state` & `/api/v1/ai/formulas`, and hydrate default datasets.
-- Finalise Δ-VM opcode tests, add property-based coverage for arithmetic and gas handling.
-- Implement F-KV persistence stubs (WAL + snapshot hooks) and benchmark prefix queries against the 1 M key target.
-- Harden CLI: `./kolibri.sh up|stop|bench|clean` idempotency, log rotation, health checks.
-- Deliverables: smoke demo (arithmetic + memory recall), CI pipeline (clang-tidy, unit, property tests), initial Studio tabs (Dialog, Memory) with live traces.
+### Sprint 1 (Weeks 1–2) — Stabilise the Core Node
+- **Δ-VM v2.** Property-based coverage for every opcode (`PUSHd`, arithmetic, branching, calls, F-KV I/O, system ops, `HALT`), a built-in profiler that records gas and wall-clock timing per step, and JSON trace dumps ready for Kolibri Studio ingestion.
+- **F-KV v2.** Background snapshot pipeline with nightly compaction to keep trie latency and footprint within targets, plus top-K optimisation via per-node LRU caching.
+- **AI Core.** Automatic history trimming driven by the MDL/PoE scoring rule `Score = W1 * PoE – W2 * MDL – W3 * Runtime – W4 * GasUsed`, configurable through `cfg/kolibri.jsonc`.
+- **Kolibri Studio.** Ship dedicated tabs for “Trace” (step-by-step VM playback sourced from JSON dumps) and “Memory” (F-KV explorer with key/value and top-K views).
+- **CI/CD.** End-to-end unit and integration suites covering Δ-VM and F-KV, enforced through GitHub Actions jobs that run linters, builds, and tests on every push.
+- **Deliverable.** A restartable demonstration node exercising arithmetic, memory, and profiling flows without crashes, suitable for investor demos.
 
 ### Sprint 2 (Week 3) — Observability & QA Baseline
 - Add structured logging (JSON) and Prometheus metrics endpoints.
