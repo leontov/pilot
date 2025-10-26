@@ -1,9 +1,10 @@
-// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+// Copyright (c) 2025 Кочуров Владислав Евгеньевич
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
+  base: "./",
   plugins: [react()],
   server: {
     host: "0.0.0.0",

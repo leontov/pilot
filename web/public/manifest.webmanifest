@@ -1,0 +1,43 @@
+{
+  "name": "Kolibri Ω Studio",
+  "short_name": "Kolibri Ω",
+  "description": "Колибри Ω — двуязычная SPA/PWA для демонстрации десятичного интеллекта с Δ-VM, фрактальной памятью и блокчейном знаний.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
+  "background_color": "#070b14",
+  "theme_color": "#315efb",
+  "lang": "ru",
+  "dir": "ltr",
+  "categories": ["productivity", "business", "education"],
+  "icons": [
+    {
+      "src": "./icons/kolibri-orbit.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/kolibri-orbit.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Kolibri chat",
+      "short_name": "Chat",
+      "description": "Открыть чат с Kolibri ИИ",
+      "url": "./#vision"
+    },
+    {
+      "name": "Architecture",
+      "short_name": "Δ-VM",
+      "description": "Перейти к архитектуре Kolibri Ω",
+      "url": "./#architecture"
+    }
+  ],
+  "prefer_related_applications": false
+}
