@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Кочуров Владислав Евгеньевич
+// Copyright (c) 2025 Кочуров Владислав Евгеньевич
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -432,7 +432,21 @@ function determineInitialTheme(): ThemeMode {
   if (stored === "light" || stored === "dark") {
     return stored;
   }
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
+}
+
+function determineInitialLanguage(): Language {
+  if (typeof window === "undefined") {
+    return "ru";
+  }
+  const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  if (stored === "ru" || stored === "en") {
+    return stored;
+  }
+  const browser = window.navigator.language.toLowerCase();
+  return browser.startsWith("ru") ? "ru" : "en";
 }
 
 function determineInitialLanguage(): Language {

@@ -2,11 +2,19 @@
 # Copyright (c) 2025 Кочуров Владислав Евгеньевич
 
 CC ?= gcc
-CFLAGS := -std=c11 -Wall -Wextra -O2 -Isrc -Iinclude -I/usr/include/json-c -pthread
 
+JSONC_CFLAGS := $(shell pkg-config --cflags json-c 2>/dev/null)
+JSONC_LIBS := $(shell pkg-config --libs json-c 2>/dev/null)
 
-LDFLAGS := -lpthread -lm -luuid -lcrypto -lcurl
+CFLAGS ?= -std=c11 -Wall -Wextra -O2
+CFLAGS += -Isrc -Iinclude -pthread
+CFLAGS += $(JSONC_CFLAGS)
+CFLAGS += -I/usr/include/json-c
 
+LDFLAGS ?=
+LDFLAGS += -lpthread -lm -luuid -lcrypto -lcurl
+LDFLAGS += $(JSONC_LIBS)
+LDFLAGS += -l:libjson-c.so.5
 
 BUILD_DIR := build/obj
 BIN_DIR := bin
@@ -38,23 +46,22 @@ TEST_SWARM_PROTOCOL_SRC := tests/unit/test_swarm_protocol.c src/protocol/swarm.c
 
 
 
-OBJ := $(SRC:src/%.c=$(BUILD_DIR)/%.o)
 
 all: build
-
-$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
 
 build: $(TARGET)
 
 $(TARGET): $(OBJ) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $(OBJ) -o $@ $(LDFLAGS)
 
-$(BUILD_DIR):
-	@mkdir -p $@
+$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BIN_DIR):
+	@mkdir -p $@
+
+$(BUILD_DIR):
 	@mkdir -p $@
 
 run: build
@@ -63,48 +70,92 @@ run: build
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR) logs/* data/* web/node_modules web/dist
 
-.PHONY: test test-vm test-fkv test-config test-kolibri-ai test-http-routes bench clean run build
-
-
-
-test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol
-
-
 $(BUILD_DIR)/tests/unit/test_vm: $(TEST_VM_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_VM_SRC) -o $@ $(LDFLAGS)
-
-$(BUILD_DIR)/tests/unit/test_fkv: $(TEST_FKV_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_FKV_SRC) -o $@ $(LDFLAGS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 test-vm: $(BUILD_DIR)/tests/unit/test_vm
 	$<
 
+$(BUILD_DIR)/tests/unit/test_fkv: $(TEST_FKV_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 test-fkv: $(BUILD_DIR)/tests/unit/test_fkv
 	$<
 
-
 $(BUILD_DIR)/tests/unit/test_config: $(TEST_CONFIG_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_CONFIG_SRC) -o $@ $(LDFLAGS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 test-config: $(BUILD_DIR)/tests/unit/test_config
 	$<
 
 $(BUILD_DIR)/tests/test_kolibri_ai_iterations: $(TEST_KOLIBRI_ITER_SRC)
-	@mkdir -p $(BUILD_DIR)/tests
-	$(CC) $(CFLAGS) $(TEST_KOLIBRI_ITER_SRC) -o $@ $(LDFLAGS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 test-kolibri-ai: $(BUILD_DIR)/tests/test_kolibri_ai_iterations
 	$<
 
 $(BUILD_DIR)/tests/unit/test_swarm_protocol: $(TEST_SWARM_PROTOCOL_SRC)
-	@mkdir -p $(BUILD_DIR)/tests/unit
-	$(CC) $(CFLAGS) $(TEST_SWARM_PROTOCOL_SRC) -o $@ $(filter-out -ljson-c -luuid,$(LDFLAGS))
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 test-swarm-protocol: $(BUILD_DIR)/tests/unit/test_swarm_protocol
 	$<
 
+$(BUILD_DIR)/tests/unit/test_http_routes: $(TEST_HTTP_ROUTES_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-http-routes: $(BUILD_DIR)/tests/unit/test_http_routes
+	$<
+
+$(BUILD_DIR)/tests/test_synthesis_search: $(TEST_SYNTH_SEARCH_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-synthesis-search: $(BUILD_DIR)/tests/test_synthesis_search
+	$<
+
+$(BUILD_DIR)/tests/test_blockchain_verifier: $(TEST_REGRESS_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-regress: $(BUILD_DIR)/tests/test_blockchain_verifier
+	$<
+
+$(BUILD_DIR)/tests/test_swarm_exchange: $(TEST_SWARM_EXCHANGE_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-swarm-exchange: $(BUILD_DIR)/tests/test_swarm_exchange
+	$<
+
+$(BUILD_DIR)/tests/test_blockchain_storage: $(TEST_BLOCKCHAIN_STORAGE_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-blockchain-storage: $(BUILD_DIR)/tests/test_blockchain_storage
+	$<
+
+$(BUILD_DIR)/tests/test_gossip_cluster: $(TEST_GOSSIP_CLUSTER_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-gossip-cluster: $(BUILD_DIR)/tests/test_gossip_cluster
+	$<
+
+test: test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-synthesis-search
+
 bench: build
+
+	$(TARGET) --bench $(BENCH_ARGS)
+
+
+test: build test-vm test-fkv test-config test-kolibri-ai test-swarm-protocol test-http-routes test-regress test-swarm-exchange test-blockchain-storage test-gossip-cluster
+
+
 	$(TARGET) --bench
+

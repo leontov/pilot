@@ -1,9 +1,12 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiClient, HealthResponse, MetricsResponse } from "../api/client";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
+import { ToggleSwitch } from "../components/ToggleSwitch";
+import { usePersistentState } from "../hooks/usePersistentState";
+import { useAutoRefresh } from "../hooks/useAutoRefresh";
 
 function formatDuration(seconds: number | undefined) {
   if (!seconds && seconds !== 0) {
@@ -31,8 +34,9 @@ export function StatusView() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = usePersistentState("kolibri-status-auto-refresh", true);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
       const [healthResponse, metricsResponse] = await Promise.all([apiClient.health(), apiClient.metrics()]);
@@ -44,11 +48,13 @@ export function StatusView() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
+
+  useAutoRefresh(refresh, autoRefresh, { intervalMs: 15000, runImmediately: true });
 
   return (
     <section className="view" aria-labelledby="status-tab">
@@ -58,9 +64,18 @@ export function StatusView() {
             <h2>Состояние узла</h2>
             <p>Оперативные метрики ядра Kolibri Ω.</p>
           </div>
-          <button type="button" className="inline" onClick={refresh} disabled={isLoading}>
-            {isLoading ? <Spinner /> : "Обновить"}
-          </button>
+          <div className="inline-actions">
+            <ToggleSwitch
+              id="status-auto-refresh"
+              checked={autoRefresh}
+              onChange={setAutoRefresh}
+              label="Автообновление"
+              description="15 секунд"
+            />
+            <button type="button" className="inline" onClick={refresh} disabled={isLoading}>
+              {isLoading ? <Spinner /> : "Обновить"}
+            </button>
+          </div>
         </header>
         {health ? (
           <div className="metrics-grid">

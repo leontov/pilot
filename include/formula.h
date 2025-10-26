@@ -5,6 +5,7 @@
 
 #include "formula_core.h"
 #include "vm/vm.h"
+#include "synthesis/search.h"
 
 
 // High level categories used by legacy evaluators.
@@ -25,6 +26,9 @@ Formula* formula_collection_find(FormulaCollection* collection, const char* id);
 size_t formula_collection_get_top(const FormulaCollection* collection,
                                   const Formula** out_formulas,
                                   size_t max_results);
+void formula_collection_reset_top(FormulaCollection* collection);
+void formula_collection_consider_index(FormulaCollection* collection, size_t index);
+void formula_collection_recompute_top(FormulaCollection* collection);
 
 // Text-based formula utilities.
 int get_formula_type(const char* content);
@@ -46,7 +50,7 @@ typedef struct {
     time_t timestamp;
 } FormulaMemoryFact;
 
-typedef struct {
+typedef struct FormulaMemorySnapshot {
     FormulaMemoryFact* facts;
     size_t count;
 } FormulaMemorySnapshot;
@@ -125,6 +129,11 @@ typedef struct {
     FormulaTransformerModel transformer_model;
     unsigned char* weights;
     size_t weights_size;
+    char dataset_path[256];
+    FormulaSearchConfig search_config;
+    FormulaMutationConfig mutation_config;
+    FormulaMctsConfig planner_config;
+    FormulaScoreWeights score_weights;
 
 } FormulaTrainingPipeline;
 
@@ -134,6 +143,8 @@ void formula_memory_snapshot_release(FormulaMemorySnapshot* snapshot);
 
 FormulaTrainingPipeline* formula_training_pipeline_create(size_t capacity);
 void formula_training_pipeline_destroy(FormulaTrainingPipeline* pipeline);
+void formula_training_pipeline_set_search_config(FormulaTrainingPipeline* pipeline,
+                                                const FormulaSearchConfig* config);
 int formula_training_pipeline_load_dataset(FormulaTrainingPipeline* pipeline,
                                           const char* path);
 int formula_training_pipeline_load_weights(FormulaTrainingPipeline* pipeline,

@@ -1,9 +1,12 @@
 // Copyright (c) 2024 Кочуров Владислав Евгеньевич
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { apiClient, ChainSubmitResponse, MetricsResponse } from "../api/client";
 import { Spinner } from "../components/Spinner";
 import { useNotifications } from "../components/NotificationCenter";
+import { ToggleSwitch } from "../components/ToggleSwitch";
+import { usePersistentState } from "../hooks/usePersistentState";
+import { useAutoRefresh } from "../hooks/useAutoRefresh";
 
 interface ChainEntry {
   timestamp: string;
@@ -23,6 +26,7 @@ export function ChainView() {
   const [history, setHistory] = useState<ChainEntry[]>([]);
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
+  const [autoRefreshMetrics, setAutoRefreshMetrics] = usePersistentState("kolibri-chain-auto-refresh", true);
 
   const submitChain = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -49,7 +53,7 @@ export function ChainView() {
     }
   };
 
-  const refreshMetrics = async () => {
+  const refreshMetrics = useCallback(async () => {
     setIsLoadingMetrics(true);
     try {
       const data = await apiClient.metrics();
@@ -60,11 +64,13 @@ export function ChainView() {
     } finally {
       setIsLoadingMetrics(false);
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
     void refreshMetrics();
-  }, []);
+  }, [refreshMetrics]);
+
+  useAutoRefresh(refreshMetrics, autoRefreshMetrics, { intervalMs: 20000, runImmediately: true });
 
   return (
     <section className="view" aria-labelledby="chain-tab">
@@ -93,9 +99,18 @@ export function ChainView() {
             <h3>Метрики цепочки</h3>
             <p>Кол-во блоков, активные задачи и время последнего блока.</p>
           </div>
-          <button type="button" className="inline" onClick={refreshMetrics} disabled={isLoadingMetrics}>
-            {isLoadingMetrics ? <Spinner /> : "Обновить"}
-          </button>
+          <div className="inline-actions">
+            <ToggleSwitch
+              id="chain-auto-refresh"
+              checked={autoRefreshMetrics}
+              onChange={setAutoRefreshMetrics}
+              label="Автообновление"
+              description="20 секунд"
+            />
+            <button type="button" className="inline" onClick={refreshMetrics} disabled={isLoadingMetrics}>
+              {isLoadingMetrics ? <Spinner /> : "Обновить"}
+            </button>
+          </div>
         </header>
         {metrics ? (
           <div className="metrics-grid">
